@@ -36,7 +36,9 @@ const SHARE_MAX: f32 = 240.0;
 /// Double-click: big if it's smaller than this, small otherwise.
 const MIDDLE: f32 = 150.0;
 const RING: f32 = 2.5;
-const EDGE: u32 = 0x1d1f26;
+/// The button under the cursor, and what it keeps from the shape's edge.
+const DISMISS: f32 = 24.0;
+const DISMISS_INSET: f32 = 5.0;
 /// Too small for a name.
 const TINY: f32 = 76.0;
 
@@ -107,6 +109,16 @@ fn radius(who: &Who, w: f32, h: f32) -> f32 {
     } else {
         shape(who, h, 1.0).1
     }
+}
+
+/// Where the button goes in a bubble `w` wide with corners of radius `r`
+/// (its top-left corner): on the diagonal of the top right corner, wholly
+/// inside the shape. The window is cut to the shape, so anything on the rim
+/// would be cut with it.
+fn dismiss_at(w: f32, r: f32) -> (f32, f32) {
+    let half = DISMISS / 2.0;
+    let along = (r - half - DISMISS_INSET).max(0.0) * std::f32::consts::FRAC_1_SQRT_2;
+    (w - r + along - half, r - along - half)
 }
 
 /// Opens out of sight; the widget places it and shows it.
@@ -228,28 +240,21 @@ impl Bubble {
             .relative()
             .bg(avatar_background(&member.name))
             .child(content)
-            .child(ring(
-                r,
-                RING,
-                if speaking { rgb(SPEAKING) } else { rgb(EDGE) },
-            ))
+            // No border of its own: only the green of someone speaking.
+            .when(speaking, |el| el.child(ring(r, RING, rgb(SPEAKING))))
             .children(label)
     }
 
     /// The button that shows under the cursor: your camera off, or their
-    /// video out of sight. On a circle it sits on the rim, at 45°.
-    fn dismiss(&self, w: f32, h: f32, cx: &mut Context<Self>) -> Stateful<Div> {
-        let (left, top) = if w <= h + 0.5 {
-            (w * 0.854 - 12.0, h * 0.146 - 12.0)
-        } else {
-            (w - 32.0, 8.0)
-        };
+    /// video out of sight. In the top right corner, inside the shape.
+    fn dismiss(&self, w: f32, r: f32, cx: &mut Context<Self>) -> Stateful<Div> {
+        let (left, top) = dismiss_at(w, r);
         div()
             .id("dismiss")
             .absolute()
-            .left(px(left.max(0.0)))
-            .top(px(top.max(0.0)))
-            .size(px(24.0))
+            .left(px(left))
+            .top(px(top))
+            .size(px(DISMISS))
             .rounded_full()
             .bg(rgb(PILL))
             .border_1()
@@ -280,7 +285,6 @@ impl Bubble {
                     .object_fit(ObjectFit::Contain)
                     .size_full()
             }))
-            .child(ring(SHARE_RADIUS, RING, rgb(EDGE)))
             .child(
                 div()
                     .absolute()
@@ -341,7 +345,7 @@ impl Render for Bubble {
             (_, None) => div().size_full().bg(rgb(0x0b0c0f)),
         };
         let dismiss = (self.hovered && self.who != Who::Share && member.is_some())
-            .then(|| self.dismiss(w, h, cx));
+            .then(|| self.dismiss(w, r, cx));
         div()
             .id("bubble")
             .size_full()
@@ -393,6 +397,25 @@ mod tests {
         assert_eq!(shape(&who, 300.0, 1.0), (400.0, TILE_RADIUS));
         assert_eq!(radius(&who, 400.0, 300.0), TILE_RADIUS);
         assert_eq!(radius(&who, 112.0, 112.0), 56.0);
+    }
+
+    #[test]
+    fn the_button_stays_inside_the_shape() {
+        // Circles from the smallest to the biggest, then tiles.
+        for h in [MIN, 84.0, 112.0, 180.0, 215.0, 300.0, MAX] {
+            let who = Who::Me;
+            let (w, r) = shape(&who, h, 1.0);
+            let (left, top) = dismiss_at(w, r);
+            let half = DISMISS / 2.0;
+            // The button's middle, from the middle of the corner's arc.
+            let (dx, dy) = (left + half - (w - r), r - (top + half));
+            assert!(dx >= 0.0 && dy >= 0.0, "{h}: {left}, {top}");
+            assert!(
+                dx.hypot(dy) + half <= r - DISMISS_INSET + 0.01,
+                "{h}: cut by the edge"
+            );
+            assert!(left + DISMISS <= w && top >= 0.0, "{h}");
+        }
     }
 
     #[test]

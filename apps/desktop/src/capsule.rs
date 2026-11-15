@@ -892,29 +892,31 @@ impl Capsule {
             0.0
         };
         let (gap, float_gap, main) = (GAP as f64, FLOAT_GAP as f64, MAIN as f64);
-        let riding: Vec<_> = self
-            .riding(plan)
-            .filter(|(who, ..)| self.dragging.as_ref() != Some(who))
-            .collect();
+        // A bubble under the mouse button keeps its place in the row until
+        // it has moved away: the others don't slide under it on a press.
+        let riding: Vec<_> = self.riding(plan).collect();
+        let held = |who: &Who| self.dragging.as_ref() == Some(who);
         if self.tucked.is_some() {
             // What rode on the pill goes with it.
             for (_, slot, ..) in &riding {
                 put(slot, Rect::default(), 0.0, false, true);
             }
         } else if self.column {
-            let total: f64 =
-                riding.iter().map(|b| b.3 as f64).sum::<f64>() + gap * riding.len() as f64;
+            let total: f64 = riding.iter().map(|b| b.3 as f64).sum::<f64>()
+                + gap * riding.len().saturating_sub(1) as f64;
             let mut y = (corner.1 + caption)
                 .min(visible.top() - total)
                 .max(visible.y);
-            for (_, slot, w, h, r) in riding.iter().rev() {
+            for (who, slot, w, h, r) in riding.iter().rev() {
                 let (w, h) = (*w as f64, *h as f64);
                 let x = if self.side_right {
                     corner.0 + float_gap
                 } else {
                     corner.0 - main - float_gap - w
                 };
-                put(slot, Rect { x, y, w, h }, *r, true, false);
+                if !held(who) {
+                    put(slot, Rect { x, y, w, h }, *r, true, false);
+                }
                 y += h + gap;
             }
         } else {
@@ -922,14 +924,16 @@ impl Capsule {
                 + gap * riding.len().saturating_sub(1) as f64;
             let most = (visible.right() - MARGIN - total).max(visible.x + MARGIN);
             let mut x = (corner.0 - total).clamp(visible.x + MARGIN, most);
-            for (_, slot, w, h, r) in &riding {
+            for (who, slot, w, h, r) in &riding {
                 let (w, h) = (*w as f64, *h as f64);
                 let y = if self.dock_up {
                     corner.1 + main + float_gap + caption
                 } else {
                     corner.1 - float_gap - caption - h
                 };
-                put(slot, Rect { x, y, w, h }, *r, true, false);
+                if !held(who) {
+                    put(slot, Rect { x, y, w, h }, *r, true, false);
+                }
                 x += w + gap;
             }
         }
