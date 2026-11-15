@@ -1,0 +1,1115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call widget · round 5</title>
+<style>
+:root{color-scheme:light dark}
+html,body{margin:0}
+body{font-family:var(--font-sans,-apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif);color:var(--foreground,#1d1d1f);-webkit-font-smoothing:antialiased}
+body.standalone{background:#0e0f12;color:#e8e9ec;--foreground:#e8e9ec;--muted-foreground:#8f95a0;--border:rgba(255,255,255,.12);--secondary:rgba(255,255,255,.08);--background:#0e0f12}
+body.standalone #board{padding:32px 24px 64px}
+body:not(.standalone) .head h1{display:none}
+[hidden]{display:none !important}
+#board{max-width:1000px;margin:0 auto;padding:4px 0 32px;
+ --q-text:#f2f3f5;--q-dim:#9ba1ac;--q-accent:#4f8cff;--q-live:#3fd07a;--q-danger:#e5484d;--q-rec:#ff6b61;
+ --q-solid:#17181d;--q-solid-2:#1b1c22;--q-hair:rgba(255,255,255,.09);--q-gbtn:rgba(255,255,255,.10);--q-edge:#1d1f26;
+ --ease:cubic-bezier(.2,.8,.2,1)}
+.head h1{font-size:20px;line-height:1.25;margin:0 0 6px;font-weight:650;letter-spacing:-.01em}
+.head p,.lede{margin:0;font-size:13.5px;line-height:1.55;color:var(--muted-foreground,#8a8f98);max-width:78ch}
+section{margin-top:36px}
+section h2{font-size:16px;margin:0 0 4px;font-weight:650}
+.pctl{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;margin-top:12px;font-size:12px;color:var(--muted-foreground,#8a8f98)}
+.pctl>span{display:flex;align-items:center;gap:8px}
+.seg{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--border,rgba(128,128,128,.3));border-radius:8px}
+.seg button,.pbtn{all:unset;cursor:pointer;padding:3px 10px;border-radius:6px;font-size:12px;line-height:18px;color:var(--muted-foreground,#8a8f98)}
+.seg button:hover,.pbtn:hover{color:var(--foreground,#1d1d1f)}
+.seg button[aria-pressed="true"]{background:var(--secondary,rgba(128,128,128,.16));color:var(--foreground,#1d1d1f)}
+.pbtn{border:1px solid var(--border,rgba(128,128,128,.3));padding:5px 10px;border-radius:8px}
+.pbtn.go{color:var(--foreground,#1d1d1f);font-weight:600}
+.stage{position:relative;margin-top:10px;border-radius:var(--radius,12px);overflow:hidden}
+.canvas{position:absolute;left:0;top:0;transform-origin:0 0;overflow:hidden}
+.notes{margin:14px 0 0;padding-left:20px;font-size:13.5px;line-height:1.55;max-width:84ch}
+.notes li{margin:6px 0}
+.notes b{font-weight:600}
+.wall{background:radial-gradient(70% 60% at 8% 4%,#5d6fe0 0%,transparent 62%),radial-gradient(60% 70% at 96% 100%,#c2578f 0%,transparent 60%),radial-gradient(50% 50% at 72% 18%,#2e9f97 0%,transparent 60%),#1b1f3d}
+.wall.light{background:radial-gradient(70% 60% at 8% 4%,#dfe6ff 0%,transparent 62%),radial-gradient(60% 70% at 96% 100%,#ffe3ee 0%,transparent 60%),#f1efe9}
+
+/* desktop */
+.menubar{position:absolute;left:0;right:0;top:0;height:26px;display:flex;align-items:center;gap:18px;padding:0 14px;font:500 13px -apple-system,system-ui,sans-serif;color:#fff;background:rgba(18,20,38,.28);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.menubar b{font-weight:700}.menubar .r{margin-left:auto}
+.light .menubar{color:#1d1d1f;background:rgba(255,255,255,.55)}
+.ed{position:absolute;left:150px;top:46px;width:660px;height:300px;border-radius:12px;overflow:hidden;background:#1a1c22;box-shadow:0 0 0 .5px rgba(0,0,0,.6),0 24px 60px rgba(0,0,0,.4)}
+.ed-top{height:34px;background:#202229;display:flex;align-items:center;justify-content:center;font:12px -apple-system,system-ui;color:#8d93a0;border-bottom:1px solid rgba(255,255,255,.06);position:relative}
+.light .ed{background:#fff;box-shadow:0 0 0 .5px rgba(0,0,0,.18),0 24px 60px rgba(0,0,0,.16)}
+.light .ed-top{background:#f1f1f3;color:#6b6f78;border-bottom-color:rgba(0,0,0,.08)}
+.lights{position:absolute;left:14px;top:11px;display:flex;gap:7px}.lights i{width:11px;height:11px;border-radius:50%;background:#ff5f57}.lights i+i{background:#febc2e}.lights i+i+i{background:#28c840}
+.cl{display:flex;gap:8px;height:18px;align-items:center}.cl i{height:7px;border-radius:3px;opacity:.7}
+.sharewin{position:absolute;left:24px;top:52px;width:320px;height:200px;border-radius:14px;overflow:hidden;background:#0b0c0f;box-shadow:0 0 0 .5px rgba(0,0,0,.5),0 24px 60px rgba(0,0,0,.45);transition:box-shadow .2s}
+.sharewin.ping{box-shadow:0 0 0 3px var(--q-accent),0 24px 60px rgba(0,0,0,.45)}
+.tag{position:absolute;left:8px;top:8px;height:22px;padding:0 8px;border-radius:7px;background:rgba(10,11,14,.6);color:#fff;font:600 11px -apple-system,system-ui;display:flex;align-items:center;gap:5px}
+.toast{position:absolute;left:50%;top:36px;transform:translateX(-50%);padding:7px 12px;border-radius:9px;background:rgba(18,18,22,.92);color:#fff;font:500 12px -apple-system,system-ui;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9;white-space:nowrap}
+.toast.on{opacity:1}
+.cursor{position:absolute;z-index:20;width:20px;height:20px;margin:-2px 0 0 -4px;display:none;pointer-events:none;transition:left .6s var(--ease),top .6s var(--ease);filter:drop-shadow(0 2px 3px rgba(0,0,0,.5))}
+.cursor.on{display:block}
+.ripple{position:absolute;z-index:19;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;border:2px solid #fff;pointer-events:none;opacity:0}
+.ripple.go{animation:tap .4s ease-out}
+@keyframes tap{from{transform:scale(.3);opacity:1}to{transform:scale(1.3);opacity:0}}
+
+/* the pill: solid, as wide as what's in it; a column at the screen's sides */
+.pill,.card,.slim,.tip,.bub,.nmenu{font:13px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;color:var(--q-text);box-sizing:border-box;text-align:left;-webkit-user-select:none;user-select:none}
+.pill *,.card *,.slim *,.bub *,.nmenu *{box-sizing:border-box}
+:where(.pill,.card,.slim,.bub,.nmenu) button{font:inherit;color:inherit;border:0;padding:0;background:none;cursor:pointer}
+.pill{position:absolute;z-index:4;display:flex;align-items:center;height:52px;padding:0 6px;border-radius:26px;white-space:nowrap;cursor:grab;touch-action:none;
+ background:var(--q-solid);box-shadow:inset 0 0 0 1px var(--q-hair),0 0 0 .5px rgba(0,0,0,.6),0 12px 32px rgba(0,0,0,.36);transition:box-shadow .15s}
+.pill.v{flex-direction:column;width:52px;height:auto;padding:6px 0}
+.pill.drag{cursor:grabbing}
+.pill.away{visibility:hidden}
+.pill.noanim *{transition:none !important}
+.pill.magnet{box-shadow:inset 0 0 0 1.5px var(--q-accent),0 0 0 .5px rgba(0,0,0,.6),0 12px 32px rgba(0,0,0,.36)}
+.faces{display:flex;align-items:center}
+.v .faces{flex-direction:column}
+.face{position:relative;flex:none;width:40px;height:40px;margin:0 6px 0 0;transition:width .22s var(--ease),height .22s var(--ease),margin .22s var(--ease),opacity .18s,transform .22s var(--ease)}
+.v .face{margin:0 0 6px}
+.face.enter,.face.exit{opacity:0;transform:scale(.4)}
+.pill:not(.v) .face.enter,.pill:not(.v) .face.exit{width:0;margin-right:0}
+.v .face.enter,.v .face.exit{height:0;margin-bottom:0}
+.face .clip{position:absolute;left:0;top:0;width:40px;height:40px;border-radius:50%;overflow:hidden;transition:box-shadow .2s,filter .15s}
+.face.speaking .clip{box-shadow:0 0 0 2.5px var(--q-live)}
+.face.can{cursor:pointer}
+.face.can:hover .clip{filter:brightness(1.14)}
+.av{width:100%;height:100%;display:grid;place-items:center;color:#fff;font-weight:600;font-size:16px;border-radius:50%;background:linear-gradient(135deg,hsl(var(--h) 55% 52%),hsl(calc(var(--h) + 29) 60% 38%))}
+.seat-in{position:absolute;inset:1px;border-radius:50%;border:1.5px dashed rgba(255,255,255,.3);display:grid;place-items:center;color:var(--q-dim);transition:border-color .15s,color .15s}
+.face.seat:hover .seat-in{border-color:rgba(255,255,255,.6);color:var(--q-text)}
+.b-share{position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;background:var(--q-accent);color:#fff;display:grid;place-items:center;box-shadow:0 0 0 2px var(--q-solid);z-index:4}
+.b-mute,.b-cam{position:absolute;bottom:-3px;right:-3px;width:16px;height:16px;border-radius:50%;background:var(--q-danger);color:#fff;display:grid;place-items:center;box-shadow:0 0 0 2px var(--q-solid);z-index:4}
+.b-cam{bottom:auto;right:auto;top:-3px;left:-3px;background:#3a3d47;color:var(--q-text)}
+.stack{display:flex;align-items:center;gap:8px;height:44px;padding:2px 11px 2px 2px;margin:0 6px 0 0;border-radius:22px;background:rgba(255,255,255,.06);cursor:pointer;transition:background .15s}
+.v .stack{flex-direction:column;gap:4px;width:44px;height:auto;padding:2px 2px 8px;margin:0 0 6px}
+.stack:hover,.stack.open{background:rgba(255,255,255,.13)}
+.pile{position:relative;flex:none;width:calc(40px + var(--g) * 9px);height:40px}
+.v .pile{width:40px;height:calc(40px + var(--g) * 9px)}
+.pile>span{position:absolute;left:0;top:0;width:40px;height:40px;border-radius:50%;background:var(--q-edge);box-shadow:0 0 0 2px var(--q-solid)}
+.pile .front{z-index:3;box-shadow:none}.pile .front .av{opacity:.75}
+.pile .g1{left:9px;z-index:2}.pile .g1 .av{opacity:.45}
+.pile .g2{left:18px;z-index:1}.pile .g2 .av{opacity:.3}
+.v .pile .g1{left:0;top:9px}.v .pile .g2{left:0;top:18px}
+.cnt{font-size:13px;font-weight:650;color:var(--q-dim)}
+.vsep{width:1px;height:24px;background:rgba(255,255,255,.14);flex:none;margin:0 8px 0 2px}
+.v .vsep{width:24px;height:1px;margin:2px 0 8px}
+.btns{display:flex;gap:6px}
+.v .btns{flex-direction:column}
+.tb{position:relative;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:var(--q-gbtn);flex:none;transition:filter .15s,background .15s}
+.tb:hover{filter:brightness(1.25)}
+.tb.off{background:var(--q-text);color:var(--q-danger)}
+.tb.on{background:var(--q-accent);color:#fff}
+.tb.open{background:var(--q-text);color:#17181d}
+.tb.leave{background:var(--q-danger);color:#fff}
+.tb.rec{background:rgba(255,69,58,.24);color:var(--q-rec)}
+.tb.held{background:var(--q-live);color:#06240f}
+.tb.nudge{animation:nudge .45s ease 2}
+@keyframes nudge{0%,100%{transform:none}25%{transform:translateX(-3px) rotate(-9deg)}75%{transform:translateX(3px) rotate(9deg)}}
+.tb .dot{position:absolute;top:1px;right:1px;width:9px;height:9px;border-radius:50%;background:var(--q-rec);box-shadow:0 0 0 2px var(--q-solid)}
+.i{display:block;flex:none}
+.pghost{position:absolute;z-index:5;display:none;border:1.5px dashed var(--q-accent);background:rgba(79,140,255,.16);pointer-events:none}
+.pghost.on{display:block}
+.tab{position:absolute;z-index:4;display:none;align-items:center;justify-content:center;gap:6px;background:var(--q-solid);box-shadow:inset 0 0 0 1px var(--q-hair),0 4px 14px rgba(0,0,0,.4);cursor:pointer}
+.tab.on{display:flex}
+.tab[data-edge="left"],.tab[data-edge="right"]{flex-direction:column}
+.tab[data-edge="left"]{border-radius:0 9px 9px 0}.tab[data-edge="right"]{border-radius:9px 0 0 9px}
+.tab[data-edge="top"]{border-radius:0 0 9px 9px}.tab[data-edge="bottom"]{border-radius:9px 9px 0 0}
+.tab i{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,.32);flex:none;transition:background .2s}
+.tab i.sp{background:var(--q-live)}.tab i.mu{background:var(--q-danger)}
+
+/* what floats outside the pill: cards, one slim line, names, bubbles */
+.card,.slim{position:absolute;background:var(--q-solid-2);box-shadow:inset 0 0 0 1px var(--q-hair),0 0 0 .5px rgba(0,0,0,.6),0 18px 44px rgba(0,0,0,.45);opacity:0;pointer-events:none}
+.card{z-index:6;min-width:216px;padding:6px;border-radius:16px;transform:translateY(6px) scale(.98);transform-origin:100% 100%;transition:opacity .14s,transform .16s var(--ease)}
+.card[data-side="below"]{transform:translateY(-6px) scale(.98);transform-origin:100% 0}
+.card[data-side="right"]{transform:translateX(-6px) scale(.98);transform-origin:0 100%}
+.card[data-side="left"]{transform:translateX(6px) scale(.98);transform-origin:100% 100%}
+.card.on,.card.on[data-side]{opacity:1;pointer-events:auto;transform:none}
+.slim{z-index:5;padding:5px 6px 5px 12px;border-radius:18px;box-shadow:inset 0 0 0 1px var(--q-hair),0 0 0 .5px rgba(0,0,0,.6),0 8px 22px rgba(0,0,0,.36);transition:opacity .14s}
+.slim.on{opacity:1;pointer-events:auto}
+.slim.capw{padding-right:12px}
+.chead{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:5px 10px 7px;font-size:12px;color:var(--q-dim);font-variant-numeric:tabular-nums}
+.chead b{color:var(--q-text);font-weight:600}
+.mi{display:flex;align-items:center;gap:10px;width:100%;height:34px;padding:0 10px;border-radius:10px;font-weight:500;text-align:left}
+.mi:hover{background:rgba(255,255,255,.08)}
+.mi em{margin-left:auto;font-style:normal;font-size:12px;font-weight:400;color:var(--q-dim)}
+.csep{height:1px;background:rgba(255,255,255,.07);margin:4px 10px}
+.sub{width:244px;padding:4px 6px 6px}
+.back{display:flex;align-items:center;gap:4px;height:26px;margin-left:-4px;padding:0 8px 0 4px;border-radius:8px;font-weight:600}
+.back:hover{background:rgba(255,255,255,.08)}
+.sub p{margin:6px 2px 10px;font-size:12px;line-height:1.45;color:var(--q-dim);white-space:normal}
+.row{display:flex;gap:6px}
+.btn{height:26px;padding:0 11px;border-radius:13px;background:rgba(255,255,255,.1);font-size:12px;font-weight:600;white-space:nowrap}
+.btn:hover{filter:brightness(1.2)}
+.btn.pri{background:var(--q-accent);color:#fff}
+.line{display:flex;align-items:center;gap:8px;height:26px;font-size:12px;color:var(--q-dim);white-space:nowrap;font-variant-numeric:tabular-nums}
+.line b{color:var(--q-text);font-weight:600}
+.line.err{color:#ff8a80}
+.card .line{padding:4px 4px 4px 8px}
+.capt{flex:1;min-width:0;display:flex;justify-content:flex-end;overflow:hidden;color:var(--q-text)}
+.capt span{flex:none;margin-right:auto}
+.capt.cut{-webkit-mask-image:linear-gradient(90deg,transparent,#000 22px);mask-image:linear-gradient(90deg,transparent,#000 22px)}
+.recdot{width:8px;height:8px;border-radius:50%;background:var(--q-rec);flex:none}
+.xb{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;color:var(--q-dim)}
+.xb:hover{background:rgba(255,255,255,.1)}
+.pgrid{display:grid;grid-template-columns:repeat(4,54px);gap:8px 4px;padding:2px 8px 8px}
+.pp{display:flex;flex-direction:column;align-items:center;gap:4px}
+.pface{position:relative;width:34px;height:34px}.pface .av{font-size:13px}
+.pn{font-size:10.5px;color:var(--q-dim);max-width:54px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tip{position:absolute;z-index:7;padding:5px 9px;border-radius:9px;background:#0b0c0f;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),0 6px 18px rgba(0,0,0,.4);font-size:12px;line-height:1.35;color:var(--q-dim);text-align:center;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .12s}
+.tip.on{opacity:1}
+.tip b{color:var(--q-text);font-weight:600}
+.tip small{display:block;font-size:11px;color:#7d838e}
+.nmenu{position:absolute;z-index:8;display:none;min-width:196px;padding:5px;border-radius:8px;background:rgba(42,42,46,.97);box-shadow:0 0 0 .5px rgba(255,255,255,.2),0 12px 32px rgba(0,0,0,.55);color:#ececee}
+.nmenu.on{display:block}
+.nmenu button{position:relative;display:flex;align-items:center;width:100%;height:22px;padding:0 10px 0 24px;border-radius:5px;white-space:nowrap}
+.nmenu button:hover{background:#2f6fe0;color:#fff}
+.nmenu button.chk::before{content:"✓";position:absolute;left:8px;font-size:12px}
+.nmenu hr{border:0;height:1px;margin:5px 10px;background:rgba(255,255,255,.13)}
+.bubs{position:absolute;inset:0;z-index:3;pointer-events:none}
+.bub{position:absolute;pointer-events:auto;cursor:grab;touch-action:none;background:#0b0c0f;box-shadow:0 0 0 2.5px var(--q-edge),0 12px 30px rgba(0,0,0,.4);
+ transition:left .22s var(--ease),top .22s var(--ease),width .22s var(--ease),height .22s var(--ease),border-radius .22s var(--ease),opacity .18s,transform .2s var(--ease),box-shadow .2s}
+.bub.live,.moving .bub{transition:opacity .18s,box-shadow .2s}
+.bub.in,.bub.out{opacity:0;transform:scale(.5)}
+.bub.out{pointer-events:none}
+.bub.speaking{box-shadow:0 0 0 2.5px var(--q-live),0 12px 30px rgba(0,0,0,.4)}
+.bub.drag{cursor:grabbing;box-shadow:0 0 0 2.5px var(--q-edge),0 24px 50px rgba(0,0,0,.55)}
+.bclip{position:absolute;inset:0;border-radius:inherit;overflow:hidden}
+.bclip.swap{animation:swap .35s ease-out}
+@keyframes swap{from{opacity:.15}to{opacity:1}}
+.bname{position:absolute;left:50%;bottom:8%;transform:translateX(-50%);height:18px;padding:0 7px;border-radius:9px;background:rgba(10,11,14,.62);color:#fff;font-size:10.5px;font-weight:600;line-height:18px;display:flex;align-items:center;gap:3px;white-space:nowrap;pointer-events:none}
+.bub.tiny .bname,.bub.tiny .btag{display:none}
+.bx{position:absolute;left:calc(85.4% - 12px);top:calc(14.6% - 12px);width:24px;height:24px;border-radius:50%;background:#17181d;color:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.16);display:grid;place-items:center;opacity:0;transform:scale(.7);transition:opacity .12s,transform .12s}
+.bub:hover .bx{opacity:1;transform:none}
+.bub.drag .bx{opacity:0}
+.bub.share .bx{left:auto;right:8px;top:8px;width:auto;height:22px;padding:0 9px;border-radius:8px;background:var(--q-danger);font-size:11px;font-weight:700;box-shadow:none;opacity:1;transform:none}
+.btag{position:absolute;left:8px;top:8px;height:22px;padding:0 8px;border-radius:8px;background:rgba(10,11,14,.62);color:#fff;font-size:11px;font-weight:600;display:flex;align-items:center;gap:6px;white-space:nowrap;pointer-events:none}
+.btag i{width:7px;height:7px;border-radius:50%;background:var(--q-accent)}
+.vid{position:absolute;inset:0;background:radial-gradient(55% 45% at 78% 12%,hsl(var(--h) 45% 62% / .55),transparent 70%),linear-gradient(170deg,hsl(var(--h) 24% 30%),hsl(calc(var(--h) + 30) 26% 13%))}
+.vid::before{content:"";position:absolute;left:50%;top:22%;height:44%;aspect-ratio:.8;transform:translateX(-50%);border-radius:48% 48% 44% 44%;background:linear-gradient(hsl(var(--hr)) 0 30%,transparent 30%),radial-gradient(circle at 42% 45%,hsl(var(--k)),color-mix(in srgb,hsl(var(--k)) 78%,#000));animation:sway 6s ease-in-out infinite}
+.vid::after{content:"";position:absolute;left:50%;bottom:-22%;height:52%;aspect-ratio:1.9;transform:translateX(-50%);border-radius:50% 50% 0 0;background:hsl(calc(var(--h) + 200) 22% 30%)}
+@keyframes sway{0%,100%{transform:translateX(-50%) rotate(-2deg)}50%{transform:translateX(-47%) translateY(2%) rotate(2deg)}}
+
+/* screen mocks, sized by their box */
+.mk{position:absolute;inset:0;background:#f6f5f1;padding:10% 8%;display:flex;flex-direction:column;gap:6%}
+.mk .h{height:9%;width:45%;border-radius:3px;background:#2b2c33}
+.mk .l{height:5%;border-radius:3px;background:#d8d6cf}
+.mk .bars{flex:1;display:flex;align-items:flex-end;gap:5%}
+.mk .bars i{flex:1;border-radius:3px 3px 0 0;background:#ff7a45}
+.mk.dark{background:#111318}.mk.dark .h{background:#d7dae0}.mk.dark .l{background:#2a2e38}.mk.dark .bars i{background:#7aa2ff}
+
+/* frozen states */
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:18px 16px;margin-top:12px}
+.gitem p{font-size:12.5px;line-height:1.5;margin:7px 2px 0;color:var(--muted-foreground,#8a8f98)}
+.gitem p b{color:var(--foreground,#1d1d1f);font-weight:600}
+.static{pointer-events:none}
+.static *,.static *::before,.static *::after{transition:none !important;animation:none !important}
+
+/* the settings tab */
+.setwin{margin-top:12px;max-width:560px;border-radius:12px;overflow:hidden;background:#141519;color:#f2f3f5;box-shadow:0 0 0 1px rgba(255,255,255,.09);font:13px/1.4 -apple-system,BlinkMacSystemFont,system-ui,sans-serif}
+.settabs{display:flex;gap:4px;padding:10px 12px;border-bottom:1px solid #24262d}
+.settabs span{padding:4px 12px;border-radius:8px;color:#9ba1ac;font-weight:600;font-size:12.5px}
+.settabs .sel{background:#2c2f38;color:#f2f3f5}
+.setrow{display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid #1d1f25}
+.setrow:last-child{border-bottom:0}
+.setrow div{flex:1;min-width:0}
+.setrow b{display:block;font-weight:600}
+.setrow small{color:#9ba1ac;font-size:12px}
+.tog{width:34px;height:20px;border-radius:10px;background:#4f8cff;position:relative;flex:none}
+.tog::after{content:"";position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff}
+.key{padding:3px 9px;border-radius:7px;background:#22242b;box-shadow:inset 0 0 0 1px rgba(255,255,255,.1);font-size:12px;font-weight:600;flex:none}
+.pick{display:inline-flex;padding:2px;border-radius:9px;background:#0f1013;flex:none}
+.pick span{padding:3px 10px;border-radius:7px;font-size:12px;color:#9ba1ac;white-space:nowrap}
+.pick .sel{background:#2c2f38;color:#f2f3f5}
+@media (prefers-reduced-motion:reduce){#board *,#board *::before,#board *::after{transition:none !important;animation:none !important}}
+</style>
+</head>
+<body>
+<div id="board">
+  <header class="head">
+    <h1>Call widget · round 5, second pass</h1>
+    <p>Your answers built in: menus open on click, big bubbles turn into tiles, your share preview stays. New to try: the pill turns into a column at the screen's sides and tucks into an edge, a caption line, the "you're muted" beep, hold to talk, and one bubble that follows the speaker.</p>
+  </header>
+
+  <section>
+    <h2>Live</h2>
+    <div class="pctl">
+      <span>People <span class="seg" id="ctl-n"><button data-v="1">Alone</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="4">4</button><button data-v="8">8</button><button data-v="12">12</button></span></span>
+      <span>Their cameras <span class="seg" id="ctl-cams"><button data-v="0">Off</button><button data-v="1">On</button></span></span>
+      <span>Their video <span class="seg" id="ctl-follow"><button data-v="0">A bubble each</button><button data-v="1">One, follows the speaker</button></span></span>
+      <span>Transcribing <span class="seg" id="ctl-cc"><button data-v="0">Off</button><button data-v="1">On</button></span></span>
+      <span>Conversation <span class="seg" id="ctl-talk"><button data-v="1">Running</button><button data-v="0">Paused</button></span></span>
+      <span>Lee shares <span class="seg" id="ctl-lee"><button data-v="0">No</button><button data-v="1">Yes</button></span></span>
+      <span>Desktop <span class="seg" id="ctl-wall"><button data-v="dark" aria-pressed="true">Dark</button><button data-v="light" aria-pressed="false">Light</button></span></span>
+      <button class="pbtn go" id="ctl-demo">▶ Show me: faces switch video</button>
+      <button class="pbtn" id="ctl-nudge">Talk while muted</button>
+      <button class="pbtn" id="ctl-notice">Show a notice</button>
+    </div>
+    <div class="stage" data-w="960" data-h="560"><div class="canvas wall" id="desk"></div></div>
+    <ol class="notes">
+      <li><b>A face is that person's video switch.</b> Click yours and your camera starts; click it again and it stops. Click Anna's and her video hides; again and it's back. Press <b>▶ Show me</b> to watch it happen.</li>
+      <li><b>Drag the pill to the left or right edge.</b> Pause there and you see the column it will become; let go and it turns. Take the column to the top or bottom edge and it lies down again. In the middle of the screen it keeps its shape.</li>
+      <li><b>Push it right into an edge</b> (the last few pixels) and it tucks away as a tab with a dot per person: green while they speak, red for you muted. Click the tab to bring the call back.</li>
+      <li><b>Mute, then hold the mic button</b> to talk; let go and you're muted again. Space does the same while the cursor is over this desktop. <b>Talk while muted</b> plays the reminder: a note on the mic and one soft beep, here at most every 20 s (5 minutes in the app).</li>
+      <li><b>Transcribing: On</b> shows the caption line. Bubbles ride above it.</li>
+      <li><b>Double-click</b> an empty spot of the pill for the call window. <b>Right-click</b> it for the menu as macOS draws it.</li>
+      <li><b>Bubbles:</b> drag them, scroll over one to zoom, double-click for big or small. Drop one near the pill and it rides again.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Every state</h2>
+    <p class="lede">Frozen.</p>
+    <div class="gallery" id="gallery"></div>
+  </section>
+
+  <section>
+    <h2>Settings › Call</h2>
+    <p class="lede">A third tab, next to Transcription and Recording, for what you asked to be able to turn off.</p>
+    <div class="setwin">
+      <div class="settabs"><span>Transcription</span><span>Recording</span><span class="sel">Call</span></div>
+      <div class="setrow"><div><b>Hold to talk</b><small>Hold the key, or the mic button, to speak while muted.</small></div><span class="key">Right ⌥</span><span class="tog"></span></div>
+      <div class="setrow"><div><b>Tell me when I talk while muted</b><small>A note on the mic button and one soft beep, at most every 5 minutes.</small></div><span class="tog"></span></div>
+      <div class="setrow"><div><b>Caption line over the widget</b><small>The sentence being said, while the call is transcribed.</small></div><span class="tog"></span></div>
+      <div class="setrow"><div><b>Others' video</b><small>In calls of four or more.</small></div><span class="pick"><span>A bubble each</span><span class="sel">Follows the speaker</span></span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Still open</h2>
+    <ol class="notes">
+      <li><b>"4+ participants" counts you?</b> I built it that way: with one or two others nobody ever moves; from three others on, the muted and the quiet go to the stack.</li>
+      <li><b>The green ring.</b> Your avatar keeps it, as you're used to. I took the ring off the mic button: two signals for one thing. The mic button now speaks up only when you talk while muted.</li>
+      <li><b>Which key holds to talk?</b> Right ⌥ is a guess: it's under the thumb and types nothing by itself.</li>
+      <li><b>One bubble for the speaker:</b> on by default in calls of four or more, or only when chosen in Settings?</li>
+    </ol>
+  </section>
+</div>
+
+<script>
+(() => {
+"use strict";
+const IC = {
+ mic:'<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/>',
+ micoff:'<path d="m2 2 20 20"/><path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2"/><path d="M5 10v2a7 7 0 0 0 12 5"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12"/><path d="M12 19v3"/>',
+ video:'<path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
+ videooff:'<path d="M10.66 6H14a2 2 0 0 1 2 2v2.5l5.248-3.062A.5.5 0 0 1 22 7.87v8.196"/><path d="M16 16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2"/><path d="m2 2 20 20"/>',
+ share:'<path d="m9 10 3-3 3 3"/><path d="M12 13V7"/><rect width="20" height="14" x="2" y="3" rx="2"/><path d="M12 17v4"/><path d="M8 21h8"/>',
+ shareoff:'<path d="M17 17H4a2 2 0 0 1-2-2V5c0-1.5 1-2 1-2"/><path d="M22 15V5a2 2 0 0 0-2-2H9"/><path d="M8 21h8"/><path d="M12 17v4"/><path d="m2 2 20 20"/>',
+ /* Leave: the handset alone, laid down. The red says the rest. */
+ hangup:'<g transform="rotate(135 12 12)"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></g>',
+ userplus:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/>',
+ check:'<path d="M20 6 9 17l-5-5"/>',
+ max:'<path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/>',
+ more:'<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+ rec:'<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1"/>',
+ cc:'<rect width="18" height="14" x="3" y="5" rx="2" ry="2"/><path d="M7 15h4M15 15h2M7 11h2M13 11h4"/>',
+ x:'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+ eyeoff:'<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>',
+ chevleft:'<path d="m15 18-6-6 6-6"/>',
+ chevright:'<path d="m9 18 6-6-6-6"/>',
+ plus:'<path d="M5 12h14"/><path d="M12 5v14"/>'
+};
+const ic = (n, s = 16) => `<svg class="i" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n]}</svg>`;
+function hue(seed) { let h = 2166136261; for (const b of new TextEncoder().encode(seed.toLowerCase())) { h ^= b; h = Math.imul(h, 16777619) >>> 0; } return h % 360; }
+const initials = n => n.trim().split(/\s+/).slice(0, 2).map(w => w[0].toUpperCase()).join('');
+const first = n => n.split(' ')[0];
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, Math.max(lo, hi)));
+const clock = sec => { sec = Math.max(0, Math.floor(sec)); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const rnd = (() => { let a = 7; return () => { a = (a * 16807) % 2147483647; return a / 2147483647; }; })();
+const av = name => `<span class="av" style="--h:${hue(name)}">${initials(name)}</span>`;
+
+/* people: who has a camera */
+const P = {
+ anna:{name:'Anna Petrova',video:1,k:'24 52% 76%',hr:'40 62% 64%'}, lee:{name:'Lee Chen',video:1,k:'32 42% 70%',hr:'220 15% 12%'},
+ mia:{name:'Mia Kovač'}, omar:{name:'Omar Haddad',video:1,k:'28 40% 52%',hr:'20 20% 14%'},
+ tom:{name:'Tom Becker'}, max:{name:'Max Orlov',video:1,k:'26 42% 64%',hr:'24 30% 20%'}, sofia:{name:'Sofia Rossi'},
+ dan:{name:'Daniel Park'}, kai:{name:'Kai Müller'}, eva:{name:'Eva Lind'}, june:{name:'June Ito'},
+ me:{name:'Nikita',k:'28 38% 66%',hr:'25 25% 20%'}
+};
+/* [id, muted, spoke seconds ago] */
+const SETS = {
+ 1:[],
+ 2:[['anna',0,2]],
+ 3:[['anna',0,2],['lee',0,8]],
+ 4:[['anna',0,2],['lee',0,8],['tom',1]],
+ 8:[['anna',0,2],['lee',0,6],['mia',0,10],['omar',0,45],['sofia',0,90],['tom',1],['max',1]],
+ 12:[['anna',0,2],['lee',0,6],['mia',0,10],['omar',0,45],['sofia',0,90],['dan',0,120],['tom',1],['max',1],['kai',1],['eva',1],['june',1]]
+};
+/* The row holds 3 others. A call of up to SMALL others never uses the stack. */
+const MAX_ROW = 3, SMALL = 2, QUIET = 20, GAP = 8, BEEP_EVERY = 20;
+const NOTICES = [
+ {text:'Joining…'},
+ {text:'Recording saved', btns:[['Show in Finder','']]},
+ {text:'Tester asks your Mac to transcribe', btns:[['Accept','pri'],['Not now','']]},
+ {text:'Couldn’t reach the server. Trying again…', error:true}
+];
+const SAID = [
+ 'so the deploy goes out tomorrow morning if the tests stay green',
+ 'I can take the migration, it is mostly renames',
+ 'did anyone look at the crash from last night',
+ 'give me a second, I will share my screen',
+ 'we should measure it before we change anything',
+ 'sounds good, then we ship it on Thursday'
+];
+const people = (n, t) => SETS[n].map(([id, muted, ago]) => ({id, muted: !!muted, last: ago == null ? -1e9 : t - ago}));
+const vid = d => `<div class="vid" style="--h:${hue(d.name)};--k:${d.k};--hr:${d.hr}"></div>`;
+const mock = dark => `<div class="mk${dark ? ' dark' : ''}"><div class="h"></div><div class="l" style="width:80%"></div><div class="l" style="width:62%"></div><div class="bars"><i style="height:35%"></i><i style="height:55%"></i><i style="height:42%"></i><i style="height:78%"></i><i style="height:64%"></i><i style="height:90%"></i></div></div>`;
+/* One soft, falling note. */
+function beep() {
+  try {
+    const A = beep.ctx || (beep.ctx = new (window.AudioContext || window.webkitAudioContext)()), t = A.currentTime;
+    const o = A.createOscillator(), g = A.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(587, t); o.frequency.exponentialRampToValueAtTime(440, t + 0.2);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.07, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.36);
+    o.connect(g); g.connect(A.destination); o.start(t); o.stop(t + 0.4);
+  } catch (e) { /* no audio here */ }
+}
+
+/* One desktop with one call on it: the pill, its bubbles, the card, the slim line and the tooltip. */
+class Scene {
+  constructor(root, o = {}) {
+    this.root = root; this.W = o.W; this.H = o.H; this.live = !!o.live;
+    this.top = this.live ? 34 : 8;
+    this.t0 = performance.now() / 1000;
+    const st = o.state || {};
+    this.s = Object.assign({n: 2, cams: true, follow: false, stage: null, lee: false, talking: this.live, speaking: null, rec: null, cc: false, cap: null, notice: 0, orient: 'h', tucked: null, copied: false, slots: []}, st);
+    this.s.me = Object.assign({muted: false, video: false, sharing: false, held: false}, st.me);
+    this.s.hidden = new Set(st.hidden || []);
+    this.s.people = people(this.s.n, this.now());
+    (st.muted || []).forEach(id => { const p = this.get(id); if (p) p.muted = true; });
+    this.geo = {}; this.pop = null; this.z = 10; this.dockH = 0; this.side = 'up'; this.cardSig = ''; this.slimSig = ''; this.stageAt = -1e9; this.beepAt = -1e9;
+    // The pill is placed by its bottom right corner: the end with Leave, which never moves.
+    this.home = {ax: null, ay: this.H - 24};
+    this.pill = Object.assign({}, this.home, o.pill);
+    this.build();
+    this.slots(this.now());
+    this.first = true;
+    this.sync();
+    if (this.pill.ax == null) { this.pill.ax = this.s.orient === 'v' ? 60 : Math.round(this.W / 2 + this.pw / 2); this.place(); }
+    if (o.setup) { o.setup(this); this.sync(); }
+    if (o.after) o.after(this);
+    this.first = false;
+    if (this.live) { this.bind(); setInterval(() => this.tick(), 1800); setInterval(() => this.clocks(), 1000); setInterval(() => this.capTick(), 230); }
+  }
+  now() { return this.live ? performance.now() / 1000 : 1000; }
+  get(id) { return this.s.people.find(p => p.id === id); }
+  k() { return this.root.getBoundingClientRect().width / this.W || 1; }
+  pt(e) { const o = this.root.getBoundingClientRect(), k = o.width / this.W || 1; return {x: (e.clientX - o.left) / k, y: (e.clientY - o.top) / k}; }
+  camOn(id) { return id === 'me' ? this.s.me.video : this.s.cams && !!P[id].video; }
+  muted() { return this.s.me.muted && !this.s.me.held; }
+  frame() { return {l: this.pill.ax - this.pw, t: this.pill.ay - this.ph, w: this.pw, h: this.ph}; }
+
+  build() {
+    this.root.insertAdjacentHTML('beforeend', `<div class="bubs"></div>
+      <div class="pill"><div class="faces"></div><div class="stack" data-pop="people" hidden></div><span class="vsep"></span>
+        <div class="btns">
+          <button class="tb rec" data-pop="rec" data-tip="Recording" hidden>${ic('rec', 17)}</button>
+          <button class="tb cc" data-pop="cc" data-tip="Transcript" hidden>${ic('cc', 17)}<i class="dot"></i></button>
+          <button class="tb more" data-pop="menu" data-tip="More">${ic('more', 17)}</button>
+          <button class="tb share" data-act="share"></button>
+          <button class="tb mic" data-act="mic"></button>
+          <button class="tb leave" data-act="leave" data-tip="Leave">${ic('hangup', 17)}</button>
+        </div></div>
+      <div class="tab"></div><div class="pghost"></div><div class="slim"></div><div class="card"></div><div class="nmenu"></div><div class="tip"></div><div class="toast"></div><div class="ripple"></div>
+      <svg class="cursor" viewBox="0 0 20 20"><path d="M4 2v14l3.6-3.2 2.4 5.4 2.2-1-2.4-5.3H15z" fill="#fff" stroke="#111" stroke-width="1.1" stroke-linejoin="round"/></svg>`);
+    const q = c => this.root.querySelector(c);
+    this.bubsEl = q('.bubs'); this.pillEl = q('.pill'); this.facesEl = q('.faces'); this.stackEl = q('.stack');
+    this.tabEl = q('.tab'); this.ghostEl = q('.pghost'); this.slimEl = q('.slim'); this.cardEl = q('.card'); this.nmEl = q('.nmenu');
+    this.tipEl = q('.tip'); this.toastEl = q('.toast'); this.curEl = q('.cursor'); this.ripEl = q('.ripple'); this.win = q('.sharewin');
+  }
+
+  /* The row: up to 3 recent speakers; a newcomer replaces whoever has been quiet longest.
+     In a call of two or three (you included) nobody is ever moved to the stack. */
+  slots(t) {
+    const s = this.s, sharer = id => s.lee && id === 'lee';
+    const small = s.people.length <= SMALL;
+    const active = p => small || sharer(p.id) || (!p.muted && t - p.last <= QUIET);
+    s.slots = s.slots.filter(id => this.get(id) && active(this.get(id)));
+    const waiting = s.people.filter(p => active(p) && !s.slots.includes(p.id));
+    if (!small) waiting.sort((a, b) => (sharer(b.id) - sharer(a.id)) || b.last - a.last);
+    for (const p of waiting) {
+      if (s.slots.length < MAX_ROW) { s.slots.push(p.id); continue; }
+      const lru = s.slots.filter(x => !sharer(x)).sort((a, b) => this.get(a).last - this.get(b).last)[0];
+      if (lru && (sharer(p.id) || p.last > this.get(lru).last)) {
+        s.slots[s.slots.indexOf(lru)] = p.id;
+        // Their bubble takes the place of the one that left.
+        if (this.geo[lru] && !this.geo[p.id]) { this.geo[p.id] = this.geo[lru]; delete this.geo[lru]; }
+      }
+    }
+  }
+
+  sync() {
+    this.syncFaces(); this.syncStack(); this.syncButtons();
+    if (this.win) this.win.style.display = this.s.lee ? '' : 'none';
+    this.place();
+    if (this.onSync) this.onSync();
+  }
+  place() {
+    const s = this.s, p = this.pillEl, v = s.orient === 'v';
+    if (p.classList.contains('v') !== v) { p.classList.add('noanim'); p.classList.toggle('v', v); requestAnimationFrame(() => p.classList.remove('noanim')); }
+    p.classList.toggle('away', !!s.tucked);
+    this.pw = p.offsetWidth; this.ph = p.offsetHeight;
+    if (!this.dragging && this.pill.ax != null) { this.pill.ax = clamp(this.pill.ax, this.pw + 4, this.W - 4); this.pill.ay = clamp(this.pill.ay, this.top + this.ph, this.H - 4); }
+    p.style.right = (this.W - this.pill.ax) + 'px'; p.style.bottom = (this.H - this.pill.ay) + 'px';
+    this.syncTab(); this.syncSlim(); this.syncBubbles(); this.renderCard();
+  }
+
+  syncFaces() {
+    const s = this.s, box = this.facesEl;
+    const ids = s.people.length ? [...s.slots, 'me'] : ['seat', 'me'];
+    const have = new Map();
+    for (const c of [...box.children]) {
+      if (c.classList.contains('exit')) continue;
+      if (ids.includes(c.dataset.id)) have.set(c.dataset.id, c);
+      else { c.classList.add('exit'); setTimeout(() => c.remove(), 240); }
+    }
+    let cur = box.firstElementChild;
+    for (const id of ids) {
+      while (cur && cur.classList.contains('exit')) cur = cur.nextElementSibling;
+      let node = have.get(id);
+      if (!node) {
+        node = document.createElement('div'); node.className = 'face' + (id === 'seat' ? ' seat' : ''); node.dataset.id = id;
+        if (!this.first) { node.classList.add('enter'); const n = node; requestAnimationFrame(() => requestAnimationFrame(() => n.classList.remove('enter'))); }
+        box.insertBefore(node, cur);
+      } else if (node === cur) cur = cur.nextElementSibling;
+      else box.insertBefore(node, cur);
+      this.paintFace(node, id);
+    }
+  }
+  paintFace(node, id) {
+    const s = this.s; let html, can = true, speaking = false;
+    if (id === 'seat') html = `<span class="seat-in">${ic('plus', 16)}</span>`;
+    else {
+      const d = P[id], me = id === 'me', muted = me ? this.muted() : this.get(id).muted;
+      const sharing = !me && s.lee && id === 'lee', cam = this.camOn(id);
+      speaking = s.speaking === id && !muted; can = me || cam;
+      html = `<div class="clip">${av(d.name)}</div>`
+        + (sharing ? `<button class="b-share" data-act="focus" data-tip="Show ${first(d.name)}’s screen">${ic('share', 10)}</button>` : '')
+        + (muted ? `<span class="b-mute">${ic('micoff', 9)}</span>` : '')
+        + (!me && cam && s.hidden.has(id) ? `<span class="b-cam">${ic('videooff', 9)}</span>` : '');
+    }
+    if (node._sig !== html) { node._sig = html; node.innerHTML = html; }
+    node.classList.toggle('speaking', speaking); node.classList.toggle('can', can);
+  }
+  syncStack() {
+    const s = this.s, el = this.stackEl;
+    const stack = this.stack = s.people.filter(p => !s.slots.includes(p.id)).sort((a, b) => b.last - a.last);
+    el.hidden = !stack.length;
+    if (!stack.length) return;
+    const n = stack.length, ghosts = Math.min(n - 1, 2);
+    const html = `<div class="pile" style="--g:${ghosts}">${ghosts > 1 ? `<span class="g2">${av(P[stack[2].id].name)}</span>` : ''}${ghosts > 0 ? `<span class="g1">${av(P[stack[1].id].name)}</span>` : ''}<span class="front">${av(P[stack[0].id].name)}${stack[0].muted ? `<span class="b-mute">${ic('micoff', 9)}</span>` : ''}</span></div>${n > 1 ? `<span class="cnt">+${n - 1}</span>` : ''}`;
+    if (el._sig !== html) { el._sig = html; el.innerHTML = html; }
+    el.classList.toggle('open', !!this.pop && this.pop.kind === 'people');
+  }
+  syncButtons() {
+    const s = this.s, q = c => this.pillEl.querySelector(c), muted = this.muted();
+    const set = (el, base, icon, cls, tip) => { const sig = icon + cls; if (el._sig !== sig) { el._sig = sig; el.className = `tb ${base} ${cls}`; el.innerHTML = ic(icon, 17); } el.dataset.tip = tip; };
+    set(q('.share'), 'share', s.me.sharing ? 'shareoff' : 'share', s.me.sharing ? 'on' : '', s.me.sharing ? 'Stop sharing' : 'Share screen');
+    set(q('.mic'), 'mic', muted ? 'micoff' : 'mic', s.me.held ? 'held' : muted ? 'off' : '', s.me.held ? '' : muted ? '<b>Unmute</b><small>Hold to talk</small>' : 'Mute');
+    q('.rec').hidden = !s.rec; q('.cc').hidden = !s.cc;
+    q('.more').classList.toggle('open', !!this.pop && this.pop.kind === 'menu');
+  }
+
+  /* ---- tucked into an edge: a tab with a dot per person ---- */
+  tabGeom(edge, f, n) {
+    const len = n * 15 + 14, T = 18;
+    if (edge === 'left' || edge === 'right') return {l: edge === 'left' ? 0 : this.W - T, t: clamp(f.t + f.h / 2 - len / 2, this.top, this.H - len), w: T, h: len};
+    return {l: clamp(f.l + f.w / 2 - len / 2, 0, this.W - len), t: edge === 'top' ? this.top - 8 : this.H - T, w: len, h: T};
+  }
+  syncTab() {
+    const s = this.s, el = this.tabEl;
+    el.classList.toggle('on', !!s.tucked);
+    if (!s.tucked) return;
+    const ids = [...s.slots, 'me'];
+    const html = ids.map(id => { const muted = id === 'me' ? this.muted() : this.get(id).muted; return `<i class="${s.speaking === id && !muted ? 'sp' : id === 'me' && muted ? 'mu' : ''}"></i>`; }).join('');
+    if (el._sig !== html) { el._sig = html; el.innerHTML = html; }
+    el.dataset.edge = s.tucked;
+    el.dataset.tip = `<b>Team standup</b> · ${s.people.length + 1} in the call<small>Click to bring it back</small>`;
+    const g = this.tabGeom(s.tucked, this.frame(), ids.length);
+    el.style.left = g.l + 'px'; el.style.top = g.t + 'px'; el.style.width = g.w + 'px'; el.style.height = g.h + 'px';
+  }
+
+  /* ---- the slim line by the pill: a notice, else the caption ---- */
+  slimKind() { const s = this.s; return s.notice ? 'notice' : s.cc && !s.tucked ? 'cap' : null; }
+  syncSlim() {
+    const s = this.s, el = this.slimEl, kind = this.slimKind();
+    this.slimOn = !!kind;
+    if (!kind) { el.classList.remove('on'); return; }
+    let html;
+    if (kind === 'notice') {
+      const n = NOTICES[s.notice - 1];
+      html = `<div class="line${n.error ? ' err' : ''}"><span>${n.text}</span>${(n.btns || []).map(([label, cls]) => `<button class="btn ${cls}" data-act="dismiss">${label}</button>`).join('')}${n.error ? `<button class="xb" data-act="dismiss">${ic('x', 13)}</button>` : ''}${n.btns || n.error ? '' : '<span style="width:6px"></span>'}</div>`;
+    } else {
+      const c = s.cap;
+      html = c ? `<div class="line"><b>${c.who === 'me' ? 'You' : first(P[c.who].name)}</b><span class="capt"><span></span></span></div>` : '<div class="line"><span>Listening…</span></div>';
+    }
+    if (html !== this.slimSig) { this.slimSig = html; el.innerHTML = html; }
+    el.classList.toggle('capw', kind === 'cap');
+    el.style.width = kind === 'cap' ? (s.orient === 'v' ? 300 : clamp(this.pw, 285, 420)) + 'px' : '';
+    this.capText();
+    this.sw = el.offsetWidth; this.sh = el.offsetHeight;
+    el.classList.add('on');
+  }
+  capText() { const c = this.s.cap, t = this.slimEl.querySelector('.capt span'); if (!c || !t) return; t.textContent = c.words.slice(0, c.n).join(' '); t.parentElement.classList.toggle('cut', t.offsetWidth > t.parentElement.clientWidth); }
+  capTick() { const c = this.s.cap; if (this.s.cc && c && c.n < c.words.length) { c.n++; this.capText(); } }
+
+  /* ---- bubbles ---- */
+  stageWho() {
+    const s = this.s, ok = id => this.get(id) && this.camOn(id) && !s.hidden.has(id);
+    if (!s.stage || !ok(s.stage)) { const c = s.people.filter(p => ok(p.id)).sort((a, b) => b.last - a.last)[0]; s.stage = c ? c.id : null; }
+    return s.stage;
+  }
+  bubbleIds() {
+    const s = this.s, ids = [];
+    if (s.me.sharing) ids.push('share');
+    if (s.follow) { if (this.stageWho()) ids.push('stage'); }
+    else for (const id of s.slots) if (this.camOn(id) && !s.hidden.has(id)) ids.push(id);
+    if (s.me.video) ids.push('me');
+    // Tucked away: what rode on the pill goes with it.
+    return s.tucked ? ids.filter(id => this.geo[id] && !this.geo[id].docked) : ids;
+  }
+  /* A circle up to 180 px; then it widens into a 4:3 tile. */
+  dims(id) {
+    const z = this.geo[id].size;
+    if (id === 'share') return {w: Math.round(z * 1.6), h: Math.round(z), r: 14};
+    if (z <= 180) return {w: Math.round(z), h: Math.round(z), r: Math.round(z / 2)};
+    const t = Math.min(1, (z - 180) / 70);
+    return {w: Math.round(z * (1 + t / 3)), h: Math.round(z), r: Math.round(z / 2 + (26 - z / 2) * t)};
+  }
+  makeBub(id) {
+    const el = document.createElement('div'); el.className = 'bub' + (id === 'share' ? ' share' : ''); el.dataset.id = id;
+    if (id === 'share') el.innerHTML = `<div class="bclip">${mock(false)}</div><span class="btag"><i></i>Sharing · Display 1</span><button class="bx" data-act="stop">Stop</button>`;
+    else el.innerHTML = `<div class="bclip"></div><span class="bname"></span><button class="bx" data-act="${id === 'me' ? 'camoff' : 'hide'}">${ic(id === 'me' ? 'videooff' : 'eyeoff', 12)}</button>`;
+    return el;
+  }
+  syncBubbles() {
+    const s = this.s, box = this.bubsEl, ids = this.bubbleIds(), f = this.frame(), {ax, ay} = this.pill;
+    const els = {};
+    for (const el of [...box.children]) {
+      if (el.classList.contains('out')) continue;
+      if (ids.includes(el.dataset.id)) els[el.dataset.id] = el;
+      else { el.classList.add('out'); setTimeout(() => el.remove(), 220); }
+    }
+    for (const id of ids) {
+      if (!this.geo[id]) this.geo[id] = {size: id === 'me' ? 84 : id === 'share' ? 124 : 112, docked: true, x: 0, y: 0};
+      if (els[id]) continue;
+      const el = els[id] = this.makeBub(id);
+      if (!this.first) { el.classList.add('in'); requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('in'))); }
+      box.appendChild(el);
+    }
+    const docked = ids.filter(id => this.geo[id].docked), dd = docked.map(id => this.dims(id));
+    const slim = this.slimOn, sl = this.slimEl;
+    if (s.orient === 'h') {
+      // A row over the pill, ending at its right edge. The caption sits between; a lone notice keeps off the bubbles.
+      const total = dd.reduce((a, d) => a + d.w, 0) + GAP * Math.max(0, dd.length - 1);
+      const dockH = this.dockH = dd.reduce((a, d) => Math.max(a, d.h), 0);
+      const adjacent = slim && (this.slimKind() === 'cap' || !dockH);
+      const up = f.t - GAP - dockH - (adjacent ? this.sh + (dockH ? GAP : 0) : 0) >= this.top;
+      this.side = up ? 'up' : 'down';
+      const off = adjacent ? this.sh + GAP : 0, over = f.t - GAP, under = f.t + f.h + GAP;
+      if (slim) {
+        let top;
+        if (adjacent) top = up ? over - this.sh : under;
+        else if (up) top = under + this.sh <= this.H - 4 ? under : over - dockH - GAP - this.sh;
+        else top = over - this.sh >= this.top ? over - this.sh : under + dockH + GAP;
+        sl.style.left = clamp(ax - this.sw, 8, this.W - 8 - this.sw) + 'px'; sl.style.top = top + 'px';
+      }
+      let x = clamp(ax - total, 8, this.W - 8 - total);
+      docked.forEach((id, i) => { const g = this.geo[id], d = dd[i]; g.x = x; g.y = up ? over - off - d.h : under + off; x += d.w + GAP; });
+    } else {
+      // A column beside the pill, on the side with the screen, ending at the pill's bottom.
+      const right = f.l + f.w / 2 < this.W / 2;
+      this.side = right ? 'right' : 'left'; this.dockH = 0;
+      const colX = w => right ? f.l + f.w + GAP : f.l - GAP - w;
+      const colH = dd.reduce((a, d) => a + d.h + GAP, 0) + (slim ? this.sh : -GAP);
+      let bottom = Math.max(ay, this.top + colH);
+      if (slim) { sl.style.left = clamp(colX(this.sw), 8, this.W - 8 - this.sw) + 'px'; sl.style.top = (bottom - this.sh) + 'px'; bottom -= this.sh + GAP; }
+      for (let i = docked.length - 1; i >= 0; i--) { const g = this.geo[docked[i]], d = dd[i]; g.x = colX(d.w); g.y = bottom - d.h; bottom -= d.h + GAP; }
+    }
+    for (const id of ids) {
+      const el = els[id], g = this.geo[id], d = this.dims(id);
+      el.style.left = g.x + 'px'; el.style.top = g.y + 'px'; el.style.width = d.w + 'px'; el.style.height = d.h + 'px'; el.style.borderRadius = d.r + 'px';
+      el.classList.toggle('tiny', d.h < 76);
+      if (id === 'share') continue;
+      const who = id === 'stage' ? s.stage : id, me = who === 'me', person = P[who];
+      if (el._who !== who) {
+        const clip = el.querySelector('.bclip'), swapped = el._who != null;
+        el._who = who; clip.innerHTML = vid(person);
+        if (swapped) { clip.classList.remove('swap'); void clip.offsetWidth; clip.classList.add('swap'); }
+        el.querySelector('.bx').dataset.tip = me ? 'Turn camera off' : `Hide ${first(person.name)}’s video`;
+      }
+      const muted = me ? this.muted() : this.get(who).muted;
+      el.classList.toggle('speaking', s.speaking === who && !muted);
+      const name = (muted ? ic('micoff', 9) : '') + (me ? 'You' : first(person.name));
+      const label = el.querySelector('.bname');
+      if (label._sig !== name) { label._sig = name; label.innerHTML = name; }
+    }
+  }
+  /* Close enough to the pill to ride on it again. */
+  dockable(id) {
+    const g = this.geo[id], d = this.dims(id), f = this.frame();
+    if (this.s.orient === 'v') {
+      const off = this.side === 'right' ? g.x - (f.l + f.w + GAP) : g.x + d.w - (f.l - GAP);
+      return Math.abs(off) < 24 && g.y < f.t + f.h + 24 && g.y + d.h > f.t - 24;
+    }
+    const up = f.t - GAP - Math.max(d.h, this.dockH) >= this.top;
+    const off = up ? g.y + d.h - (f.t - GAP) : g.y - (f.t + f.h + GAP);
+    return Math.abs(off) < 24 + (this.slimOn ? this.sh + GAP : 0) && g.x < f.l + f.w + 24 && g.x + d.w > f.l - 24;
+  }
+  snap(id) {
+    const g = this.geo[id], d = this.dims(id), m = 10;
+    if (g.x < m + 16) g.x = m; else if (g.x + d.w > this.W - m - 16) g.x = this.W - m - d.w;
+    if (g.y < this.top + 16) g.y = this.top + (this.live ? 2 : 0); else if (g.y + d.h > this.H - m - 16) g.y = this.H - m - d.h;
+  }
+  dragBub(e) {
+    const el = e.target.closest('.bub');
+    if (!el || e.button || e.target.closest('.bx') || el.classList.contains('out')) return;
+    e.preventDefault();
+    const id = el.dataset.id, g = this.geo[id], k = this.k(), sx = e.clientX, sy = e.clientY, gx = g.x, gy = g.y;
+    let moved = false;
+    const move = ev => {
+      const dx = (ev.clientX - sx) / k, dy = (ev.clientY - sy) / k;
+      if (!moved) {
+        if (Math.hypot(dx, dy) < 4) return;
+        moved = true; g.docked = false; this.dragging = true; this.hideTip();
+        el.classList.add('live', 'drag'); el.style.zIndex = ++this.z;
+      }
+      const d = this.dims(id);
+      g.x = clamp(gx + dx, 4, this.W - 4 - d.w); g.y = clamp(gy + dy, this.top, this.H - 4 - d.h);
+      this.pillEl.classList.toggle('magnet', !this.s.tucked && this.dockable(id));
+      this.syncBubbles();
+    };
+    const up = () => {
+      removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up);
+      if (!moved) return;
+      this.dragging = false; el.classList.remove('live', 'drag'); this.pillEl.classList.remove('magnet');
+      if (!this.s.tucked && this.dockable(id)) g.docked = true; else this.snap(id);
+      this.place();
+    };
+    addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+  }
+  resize(el, size) {
+    const id = el.dataset.id, g = this.geo[id], before = this.dims(id), share = id === 'share';
+    g.size = clamp(size, share ? 70 : 56, share ? 240 : 340);
+    const after = this.dims(id);
+    if (!g.docked) {
+      g.x = clamp(g.x + (before.w - after.w) / 2, 4, this.W - 4 - after.w);
+      g.y = clamp(g.y + (before.h - after.h) / 2, this.top, this.H - 4 - after.h);
+    }
+    this.place();
+  }
+  zoom(e) {
+    const el = e.target.closest('.bub'); if (!el) return;
+    e.preventDefault();
+    this.hideTip();
+    el.classList.add('live'); clearTimeout(el._live); el._live = setTimeout(() => el.classList.remove('live'), 140);
+    this.resize(el, this.geo[el.dataset.id].size * Math.exp(-e.deltaY * (e.ctrlKey ? 0.012 : 0.0025)));
+  }
+  dbl(e) {
+    const el = e.target.closest('.bub'); if (!el || e.target.closest('.bx')) return;
+    const share = el.dataset.id === 'share', z = this.geo[el.dataset.id].size;
+    this.resize(el, share ? (z < 150 ? 200 : 124) : (z < 150 ? 230 : 96));
+  }
+
+  /* ---- the card: menu, people, recording, transcript ---- */
+  cardHTML(pop) {
+    const s = this.s;
+    const mi = (act, icon, label, state, chev) => `<button class="mi" data-act="${act}">${ic(icon, 16)}<span>${label}</span>${state ? `<em>${state}</em>` : ''}${chev ? `<em>${ic('chevright', 14)}</em>` : ''}</button>`;
+    const back = label => `<button class="back" data-act="back">${ic('chevleft', 14)}${label}</button>`;
+    if (pop.kind === 'menu' && pop.page === 'record') return `<div class="sub">${back('Record')}<p>Saved on this Mac, in Movies › Quipcall. Everyone sees that the call is recorded.</p><div class="row"><button class="btn pri" data-act="rec-audio">Audio</button><button class="btn" data-act="rec-screen">Audio and screen</button></div></div>`;
+    if (pop.kind === 'menu' && pop.page === 'transcribe') return `<div class="sub">${back('Transcribe')}<p>Parakeet v3 on this Mac. Everyone sees it.</p><div class="row"><button class="btn pri" data-act="cc-start">Start</button><button class="btn" data-act="settings">Settings</button></div></div>`;
+    if (pop.kind === 'menu') return `<div class="chead"><b>Team standup</b><span data-clock="call"></span></div>`
+      + mi('cam', s.me.video ? 'video' : 'videooff', 'Camera', s.me.video ? 'On' : 'Off')
+      + mi('invite', s.copied ? 'check' : 'userplus', s.copied ? 'Link copied' : 'Invite')
+      + mi('window', 'max', 'Call window')
+      + (s.rec && s.cc ? '' : '<div class="csep"></div>')
+      + (s.rec ? '' : mi('record', 'rec', 'Record', '', true))
+      + (s.cc ? '' : mi('transcribe', 'cc', 'Transcribe', '', true));
+    if (pop.kind === 'people') return `<div class="chead"><b>Muted or quiet</b><span>${this.stack.length}</span></div><div class="pgrid">${this.stack.map(p => `<div class="pp"><span class="pface">${av(P[p.id].name)}${p.muted ? `<span class="b-mute">${ic('micoff', 9)}</span>` : ''}</span><span class="pn">${first(P[p.id].name)}</span></div>`).join('')}</div>`;
+    if (pop.kind === 'rec') return `<div class="line"><i class="recdot"></i><span><b>Recording</b> ${s.rec && s.rec.screen ? 'screen' : 'audio'} · <span data-clock="rec"></span></span><button class="btn" data-act="rec-stop">Stop</button></div>`;
+    return `<div class="line"><i class="recdot"></i><span>On your Mac · Parakeet v3</span><button class="btn" data-act="transcript">Transcript</button><button class="btn" data-act="cc-stop">Stop</button></div>`;
+  }
+  renderCard() {
+    const s = this.s, c = this.cardEl;
+    if (this.pop && this.pop.kind === 'people' && !this.stack.length) this.pop = null;
+    if (this.pop && this.pop.kind === 'rec' && !s.rec) this.pop = null;
+    if (this.pop && this.pop.kind === 'cc' && !s.cc) this.pop = null;
+    if (!this.pop || s.tucked) { c.classList.remove('on'); return; }
+    const html = this.cardHTML(this.pop);
+    if (html !== this.cardSig) { this.cardSig = html; c.innerHTML = html; this.clocks(); }
+    const f = this.frame(), w = c.offsetWidth, h = c.offsetHeight;
+    let left, top;
+    if (s.orient === 'v') {
+      // Beside the column, its foot at the column's foot, where the buttons are.
+      left = this.side === 'right' ? f.l + f.w + GAP : f.l - GAP - w;
+      top = clamp(this.pill.ay - h, this.top, this.H - 8 - h); c.dataset.side = this.side;
+    } else {
+      // Above the pill, or under it when the screen ends first.
+      const up = f.t - GAP - h;
+      top = up >= this.top ? up : f.t + f.h + GAP; left = clamp(this.pill.ax - w, 8, this.W - 8 - w);
+      c.dataset.side = top < f.t ? 'above' : 'below';
+    }
+    c.style.left = left + 'px'; c.style.top = top + 'px';
+    c.classList.add('on');
+  }
+  clocks() {
+    for (const el of this.root.querySelectorAll('[data-clock]')) {
+      el.textContent = el.dataset.clock === 'rec' ? (this.s.rec ? clock(this.now() - this.s.rec.since) : '')
+        : clock(724 + (this.live ? performance.now() / 1000 - this.t0 : 0));
+    }
+  }
+  openPop(kind) { this.pop = {kind, page: 'root'}; this.hideTip(); this.sync(); }
+  closePop() { if (this.pop) { this.pop = null; this.sync(); } }
+  /* Right-click: the same things, as macOS draws a menu. */
+  openNative(p) {
+    const s = this.s, m = this.nmEl, it = (act, label, chk) => `<button data-act="${act}"${chk ? ' class="chk"' : ''}>${label}</button>`;
+    m.innerHTML = it('cam', 'Camera', s.me.video) + it('copy', 'Copy Invite Link') + it('window', 'Open Call Window') + '<hr>'
+      + (s.rec ? it('rec-stop', 'Stop Recording') : it('record', 'Record…')) + (s.cc ? it('cc-stop', 'Stop Transcribing') : it('transcribe', 'Transcribe…'))
+      + '<hr>' + it('leave', 'Leave Call');
+    m.classList.add('on');
+    const w = m.offsetWidth, h = m.offsetHeight;
+    m.style.left = clamp(p.x, 4, this.W - 4 - w) + 'px'; m.style.top = (p.y + h > this.H - 4 ? Math.max(this.top, p.y - h) : p.y) + 'px';
+  }
+  closeNative() { this.nmEl.classList.remove('on'); }
+
+  /* ---- names and labels ---- */
+  status(id) {
+    const s = this.s, p = this.get(id);
+    if (s.lee && id === 'lee') return 'sharing their screen';
+    if (p.muted) return 'muted';
+    if (s.speaking === id) return 'speaking';
+    const ago = Math.round(this.now() - p.last);
+    return ago > 1e6 ? 'quiet' : ago < 60 ? `active ${Math.max(1, ago)} s ago` : `active ${Math.floor(ago / 60)} min ago`;
+  }
+  tipHTML(el) {
+    const s = this.s;
+    if (!el.classList.contains('face')) return el.dataset.tip || '';
+    const id = el.dataset.id;
+    if (id === 'seat') return '<b>Copy invite link</b><small>The first guest takes this seat</small>';
+    if (id === 'me') return `<b>You</b> · ${this.muted() ? 'muted' : 'unmuted'}<small>Click to ${s.me.video ? 'turn your camera off' : 'start your camera'}</small>`;
+    const hint = !this.camOn(id) ? '' : `<small>Click to ${s.hidden.has(id) ? 'show' : 'hide'} video</small>`;
+    return `<b>${P[id].name}</b> · ${this.status(id)}${hint}`;
+  }
+  rel(el) {
+    const r = el.getBoundingClientRect(), o = this.root.getBoundingClientRect(), k = o.width / this.W || 1;
+    return {x: (r.left - o.left) / k, y: (r.top - o.top) / k, w: r.width / k, h: r.height / k};
+  }
+  showTip(el, text) {
+    const html = text || this.tipHTML(el); if (!html) return;
+    const t = this.tipEl; t.innerHTML = html;
+    const r = this.rel(el), w = t.offsetWidth, h = t.offsetHeight, f = this.frame();
+    let left = r.x + r.w / 2 - w / 2, top = r.y + r.h / 2 - h / 2;
+    const edge = el.classList.contains('tab') ? el.dataset.edge : null;
+    if (el.closest('.pill') && this.s.orient === 'v') left = this.side === 'right' ? f.l + f.w + 8 : f.l - 8 - w;   // beside the column
+    else if (edge === 'left') left = r.x + r.w + 8;
+    else if (edge === 'right') left = r.x - 8 - w;
+    else if (edge === 'top') top = r.y + r.h + 8;
+    else {
+      // Labels for the pill sit over the pill, all at one height.
+      if (el.closest('.pill')) { r.y = f.t; r.h = f.h; }
+      top = r.y - 8 - h; if (top < this.top) top = r.y + r.h + 8;
+    }
+    t.style.left = clamp(left, 6, this.W - 6 - w) + 'px'; t.style.top = clamp(top, this.top, this.H - 4 - h) + 'px';
+    t.classList.add('on'); this.tipOn = true;
+  }
+  hideTip() {
+    clearTimeout(this.tipT); clearTimeout(this.nudgeT);
+    if (this.tipOn) this.tipHid = performance.now();
+    this.tipOn = false; this.tipFor = null; this.tipEl.classList.remove('on');
+  }
+  say(text, ms = 1500) { const t = this.toastEl; t.textContent = text; t.classList.add('on'); clearTimeout(this.sayT); this.sayT = setTimeout(() => t.classList.remove('on'), ms); }
+  /* You talk while muted: the mic button says so, with one soft beep, not more often than every so often. */
+  nudge(still) {
+    const s = this.s, mic = this.pillEl.querySelector('.mic');
+    if (!this.muted()) { s.speaking = 'me'; this.sync(); this.say('You’re unmuted: everyone hears you. Mute first.', 2200); return; }
+    if (s.tucked) { s.tucked = null; this.sync(); }
+    mic.classList.remove('nudge'); void mic.offsetWidth; mic.classList.add('nudge');
+    this.hideTip(); this.showTip(mic, '<b>You’re muted</b><small>Click to unmute, or hold to talk</small>');
+    if (still) return;
+    this.nudgeT = setTimeout(() => this.hideTip(), 2800);
+    const t = this.now(), since = t - this.beepAt;
+    if (since > BEEP_EVERY) { this.beepAt = t; beep(); this.say('One soft beep'); }
+    else this.say(`No beep: the last one was ${Math.round(since)} s ago`);
+  }
+  hold(on) { const s = this.s; if (s.me.held === on) return; s.me.held = on; s.speaking = on ? 'me' : null; this.hideTip(); this.sync(); }
+
+  /* ---- turning and tucking: where a drag would put the pill ---- */
+  zone(p) {
+    const s = this.s, W = this.W, H = this.H, top = this.top, E = 12, S = 64, m = 8;
+    const len = s.orient === 'h' ? this.pw : this.ph;
+    const column = edge => ({orient: 'v', edge, w: 52, h: len, ax: edge === 'left' ? m + 52 : W - m, ay: clamp(p.y + len / 2, top + len + 2, H - m)});
+    const lying = edge => ({orient: 'h', edge, w: len, h: 52, ax: clamp(p.x + len / 2, len + m, W - m), ay: edge === 'top' ? top + 56 : H - 12});
+    const edge = p.x < E ? 'left' : p.x > W - E ? 'right' : p.y > H - E ? 'bottom' : p.y < top + E ? 'top' : null;
+    if (edge) return Object.assign(edge === 'left' || edge === 'right' ? column(edge) : lying(edge), {kind: 'tuck'});
+    if (s.orient === 'h' && (p.x < S || p.x > W - S)) return Object.assign(column(p.x < S ? 'left' : 'right'), {kind: 'turn'});
+    if (s.orient === 'v' && (p.y < top + S || p.y > H - S)) return Object.assign(lying(p.y < top + S ? 'top' : 'bottom'), {kind: 'turn'});
+    return null;
+  }
+  /* Paused over an edge: the outline of what a drop makes. */
+  showGhost(z) {
+    const g = this.ghostEl;
+    if (!z) { g.classList.remove('on'); return; }
+    let r = {l: z.ax - z.w, t: z.ay - z.h, w: z.w, h: z.h};
+    if (z.kind === 'tuck') r = this.tabGeom(z.edge, r, this.s.slots.length + 1);
+    g.style.left = r.l + 'px'; g.style.top = r.t + 'px'; g.style.width = r.w + 'px'; g.style.height = r.h + 'px';
+    g.style.borderRadius = z.kind === 'tuck' ? '8px' : '26px';
+    g.classList.add('on');
+  }
+  cursorAt(x, y) { const c = this.curEl; c.style.left = x + 'px'; c.style.top = y + 'px'; c.classList.add('on'); }
+
+  /* ---- input ---- */
+  bind() {
+    const root = this.root, pill = this.pillEl, act = e => { const a = e.target.closest('[data-act]'); if (a) this.act(a.dataset.act); };
+    pill.addEventListener('pointerdown', e => this.dragPill(e));
+    pill.addEventListener('click', e => this.clickPill(e));
+    pill.addEventListener('dblclick', e => { if (!e.target.closest('.face, .stack, button')) this.say('Opens the call window'); });
+    pill.addEventListener('contextmenu', e => { e.preventDefault(); this.pop = null; this.hideTip(); this.sync(); this.openNative(this.pt(e)); });
+    this.cardEl.addEventListener('click', act);
+    this.slimEl.addEventListener('click', act);
+    this.nmEl.addEventListener('click', e => { const a = e.target.closest('[data-act]'); if (!a) return; this.closeNative(); if (a.dataset.act === 'copy') this.say('Invite link copied'); else this.act(a.dataset.act); });
+    this.tabEl.addEventListener('click', () => { this.s.tucked = null; this.hideTip(); this.sync(); });
+    this.bubsEl.addEventListener('pointerdown', e => this.dragBub(e));
+    this.bubsEl.addEventListener('wheel', e => this.zoom(e), {passive: false});
+    this.bubsEl.addEventListener('dblclick', e => this.dbl(e));
+    this.bubsEl.addEventListener('click', e => { const a = e.target.closest('.bx'); if (a) this.act(a.dataset.act, a.closest('.bub').dataset.id); });
+    root.addEventListener('mouseover', e => this.over(e));
+    root.addEventListener('mouseout', e => { const to = e.relatedTarget; if (this.tipFor && !(to && this.tipFor.contains(to))) this.hideTip(); });
+    root.addEventListener('mouseenter', () => { this.inside = true; });
+    root.addEventListener('mouseleave', () => { this.inside = false; });
+    document.addEventListener('pointerdown', e => {
+      const on = sel => !!(e.target.closest && e.target.closest(sel));
+      if (this.pop && !on('.card, [data-pop]')) this.closePop();
+      if (!on('.nmenu')) this.closeNative();
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { this.closePop(); this.closeNative(); }
+      if (e.code === 'Space' && this.inside) { e.preventDefault(); if (!e.repeat && this.s.me.muted) this.hold(true); }
+    });
+    document.addEventListener('keyup', e => { if (e.code === 'Space') this.hold(false); });
+  }
+  over(e) {
+    if (this.dragging || this.demoing) return;
+    const el = e.target.closest('[data-tip], .face');
+    if (el === this.tipFor) return;
+    this.hideTip();
+    if (!el || el.classList.contains('exit')) return;
+    if (el.dataset.pop && this.pop && this.pop.kind === el.dataset.pop) return;
+    this.tipFor = el;
+    const quick = performance.now() - (this.tipHid || 0) < 400;
+    this.tipT = setTimeout(() => { if (this.tipFor === el && el.isConnected) this.showTip(el); }, quick ? 60 : 420);
+  }
+  block() { this.suppress = true; setTimeout(() => { this.suppress = false; }, 0); }
+  dragPill(e) {
+    if (e.button) return;
+    const s = this.s, k = this.k(), sx = e.clientX, sy = e.clientY, ax = this.pill.ax, ay = this.pill.ay;
+    let moved = false, zone = null, pauseT, holdT;
+    if (e.target.closest('.mic') && s.me.muted) holdT = setTimeout(() => this.hold(true), 280);
+    const move = ev => {
+      if (s.me.held) return;
+      const dx = (ev.clientX - sx) / k, dy = (ev.clientY - sy) / k;
+      if (!moved) {
+        if (Math.hypot(dx, dy) < 4) return;
+        moved = true; clearTimeout(holdT); this.dragging = true; this.closePop(); this.closeNative(); this.hideTip();
+        this.pillEl.classList.add('drag'); this.root.classList.add('moving');
+      }
+      this.pill.ax = clamp(ax + dx, this.pw + 4, this.W - 4); this.pill.ay = clamp(ay + dy, this.top + this.ph, this.H - 4);
+      this.place();
+      // Still for a moment over an edge: show what a drop would make.
+      clearTimeout(pauseT); this.showGhost(null);
+      zone = this.zone(this.pt(ev));
+      if (zone) pauseT = setTimeout(() => this.showGhost(zone), 240);
+    };
+    const up = () => {
+      removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up);
+      clearTimeout(holdT); clearTimeout(pauseT); this.showGhost(null);
+      if (s.me.held) { this.hold(false); this.block(); return; }
+      if (!moved) return;
+      this.dragging = false; this.pillEl.classList.remove('drag'); this.root.classList.remove('moving'); this.block();
+      if (zone) { s.orient = zone.orient; s.tucked = zone.kind === 'tuck' ? zone.edge : null; this.pill.ax = zone.ax; this.pill.ay = zone.ay; }
+      this.sync();
+    };
+    addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+  }
+  clickPill(e) {
+    if (this.suppress) return;
+    const act = e.target.closest('[data-act]');
+    if (act) return this.act(act.dataset.act);
+    const trigger = e.target.closest('[data-pop]');
+    if (trigger) {
+      const kind = trigger.dataset.pop;
+      if (this.pop && this.pop.kind === kind) this.closePop(); else this.openPop(kind);
+      return;
+    }
+    const face = e.target.closest('.face');
+    if (face && !face.classList.contains('exit')) this.faceClick(face.dataset.id);
+  }
+  /* A face is that person's video switch. */
+  faceClick(id) {
+    const s = this.s;
+    if (id === 'seat') return this.say('Invite link copied');
+    if (id === 'me') s.me.video = !s.me.video;
+    else if (!this.camOn(id)) return;
+    else if (s.hidden.has(id)) s.hidden.delete(id); else s.hidden.add(id);
+    this.hideTip(); this.sync();
+  }
+  act(name, id) {
+    const s = this.s; let close = true;
+    switch (name) {
+      case 'share': s.me.sharing = !s.me.sharing; break;
+      case 'stop': s.me.sharing = false; break;
+      case 'mic': s.me.muted = !s.me.muted; break;
+      case 'leave': this.say('Leave: the call ends, Home opens'); break;
+      case 'focus': if (this.win) { this.win.classList.add('ping'); setTimeout(() => this.win.classList.remove('ping'), 900); } this.say('Lee’s screen comes to the front'); break;
+      case 'cam': s.me.video = !s.me.video; break;
+      case 'camoff': s.me.video = false; break;
+      case 'hide': s.hidden.add(id === 'stage' ? s.stage : id); break;
+      case 'invite': s.copied = true; close = false; setTimeout(() => { s.copied = false; this.sync(); }, 1400); break;
+      case 'window': this.say('Opens the call window'); break;
+      case 'record': this.pop = {kind: 'menu', page: 'record'}; close = false; break;
+      case 'transcribe': this.pop = {kind: 'menu', page: 'transcribe'}; close = false; break;
+      case 'back': this.pop = {kind: 'menu', page: 'root'}; close = false; break;
+      case 'rec-audio': s.rec = {screen: false, since: this.now()}; break;
+      case 'rec-screen': s.rec = {screen: true, since: this.now()}; break;
+      case 'rec-stop': s.rec = null; s.notice = 2; break;
+      case 'cc-start': s.cc = true; break;
+      case 'cc-stop': s.cc = false; s.cap = null; break;
+      case 'transcript': this.say('Opens the transcript window'); break;
+      case 'settings': this.say('Opens Settings'); break;
+      case 'dismiss': s.notice = 0; close = false; break;
+    }
+    if (close) this.pop = null;
+    this.hideTip(); this.sync();
+  }
+  /* The page's switches. */
+  set(key, v) {
+    const s = this.s, t = this.now();
+    switch (key) {
+      case 'n': s.n = Number(v); s.people = people(s.n, t); s.slots = []; s.hidden.clear(); s.speaking = null; s.stage = null; s.cap = null; if (!this.get('lee')) s.lee = false; break;
+      case 'cams': s.cams = v === '1'; break;
+      case 'follow': s.follow = v === '1'; break;
+      case 'cc': s.cc = v === '1'; if (!s.cc) s.cap = null; break;
+      case 'talk': s.talking = v === '1'; break;
+      case 'lee': s.lee = v === '1' && !!this.get('lee'); break;
+      case 'notice': s.notice = s.notice % NOTICES.length + 1; s.tucked = null; clearTimeout(this.noteT); this.noteT = setTimeout(() => { s.notice = 0; this.sync(); }, 6000); break;
+    }
+    this.slots(t); this.sync();
+  }
+  /* A made-up conversation: mostly the people already talking, sometimes someone new, sometimes you. */
+  tick() {
+    const s = this.s, t = this.now();
+    if (this.demoing) return;
+    if (s.me.held) s.speaking = 'me';
+    else if (s.talking) {
+      const open = s.people.filter(p => !p.muted);
+      const regulars = open.filter(p => s.slots.includes(p.id));
+      const pool = regulars.length && rnd() < 0.7 ? regulars : open;
+      const p = pool[Math.floor(rnd() * pool.length)];
+      if (!s.me.muted && rnd() < (p ? 0.2 : 0.35)) s.speaking = 'me';
+      else if (p) { p.last = t; s.speaking = p.id; }
+      else s.speaking = null;
+      if (s.people.length && rnd() < 0.1) { const q = s.people[Math.floor(rnd() * s.people.length)]; q.muted = !q.muted; if (!q.muted) q.last = t; }
+    } else s.speaking = null;
+    // The one bubble goes to whoever speaks with a camera on, but not more often than every 3 s.
+    const sp = s.speaking;
+    if (s.follow && sp && sp !== 'me' && sp !== s.stage && this.camOn(sp) && !s.hidden.has(sp) && t - this.stageAt > 3) { s.stage = sp; this.stageAt = t; }
+    if (s.cc && sp && (!s.cap || s.cap.who !== sp || s.cap.n >= s.cap.words.length)) s.cap = {who: sp, words: SAID[Math.floor(rnd() * SAID.length)].split(' '), n: 0};
+    this.slots(t); this.sync();
+  }
+  /* "Show me": a cursor clicks the faces. */
+  async demo() {
+    if (this.demoing) return;
+    this.demoing = true;
+    const s = this.s, talking = s.talking;
+    Object.assign(s, {n: 2, people: people(2, this.now()), slots: [], cams: true, follow: false, lee: false, speaking: null, orient: 'h', tucked: null, notice: 0});
+    s.me.video = false; s.me.sharing = false; s.hidden.clear(); this.pop = null; this.geo = {}; this.closeNative();
+    this.slots(this.now()); this.sync();
+    this.pill = {ax: Math.round(this.W / 2 + this.pw / 2), ay: this.home.ay}; this.sync();
+    const face = id => this.facesEl.querySelector(`.face[data-id="${id}"]`);
+    const spot = id => { const r = this.rel(face(id)); return {x: r.x + r.w / 2, y: r.y + r.h / 2 + 4}; };
+    const go = async id => { const p = spot(id); this.cursorAt(p.x, p.y); await sleep(750); this.hideTip(); this.showTip(face(id)); await sleep(1100); };
+    const tap = async id => {
+      const p = spot(id), r = this.ripEl;
+      r.style.left = p.x + 'px'; r.style.top = p.y + 'px'; r.classList.remove('go'); void r.offsetWidth; r.classList.add('go');
+      await sleep(200); this.faceClick(id); await sleep(500); this.showTip(face(id)); await sleep(1300);
+    };
+    this.cursorAt(this.W * 0.36, this.H * 0.62); await sleep(300);
+    this.say('Your face is your camera switch', 3200); await go('me'); await tap('me');
+    this.say('Anna’s face hides her video…', 3200); await go('anna'); await tap('anna');
+    this.say('…and shows it again', 2400); await tap('anna');
+    this.hideTip(); this.curEl.classList.remove('on');
+    s.talking = talking; this.demoing = false; this.sync();
+  }
+}
+
+/* ---- the live desktop ---- */
+const desk = document.getElementById('desk');
+let code = '';
+for (let i = 0; i < 15; i++) { let segs = ''; for (let j = 0; j < 1 + Math.floor(rnd() * 4); j++) segs += `<i style="width:${20 + Math.round(rnd() * 100)}px;background:${['#c792ea', '#82aaff', '#c3e88d', '#f78c6c', '#89ddff', '#9aa3b2'][Math.floor(rnd() * 6)]}"></i>`; code += `<div class="cl" style="padding-left:${46 + [0, 16, 32][Math.floor(rnd() * 3)]}px">${i % 6 === 2 ? '' : segs}</div>`; }
+desk.innerHTML = `<div class="menubar"><b>Code</b><span>File</span><span>Edit</span><span>View</span><span class="r">Sun 15 Nov 11:14</span></div>
+  <div class="ed"><div class="ed-top"><span class="lights"><i></i><i></i><i></i></span>capsule.rs — quipcall</div><div style="padding-top:10px">${code}</div></div>
+  <div class="sharewin" style="display:none">${mock(true)}<span class="tag">${ic('share', 11)}Lee’s screen</span></div>`;
+desk.style.width = '960px'; desk.style.height = '560px';
+const live = new Scene(desk, {W: 960, H: 560, live: true, pill: {ay: 504}});
+live.home.ay = 504;
+
+const SEGS = {n: s => String(s.n), cams: s => s.cams ? '1' : '0', follow: s => s.follow ? '1' : '0', cc: s => s.cc ? '1' : '0', talk: s => s.talking ? '1' : '0', lee: s => s.lee ? '1' : '0'};
+function refresh() { for (const key in SEGS) { const v = SEGS[key](live.s); document.querySelectorAll(`#ctl-${key} button`).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v))); } }
+for (const key in SEGS) document.getElementById('ctl-' + key).addEventListener('click', e => { const b = e.target.closest('button'); if (b) live.set(key, b.dataset.v); });
+document.getElementById('ctl-wall').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#ctl-wall button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  desk.classList.toggle('light', b.dataset.v === 'light');
+});
+document.getElementById('ctl-notice').addEventListener('click', () => live.set('notice'));
+document.getElementById('ctl-nudge').addEventListener('click', () => live.nudge());
+document.getElementById('ctl-demo').addEventListener('click', () => { document.querySelector('.stage').scrollIntoView({block: 'nearest', behavior: 'smooth'}); live.demo(); });
+live.onSync = refresh; refresh();
+
+/* ---- every state ---- */
+const el = (sc, sel) => sc.root.querySelector(sel);
+const STATES = [
+  ['Alone', 'As wide as what’s in it. The dashed seat copies the invite link; the first guest takes it, so the pill doesn’t resize when they join.', {H: 152, state: {n: 1}}],
+  ['Three of you', 'Anna is muted and stays where she is. In a call of two or three nobody goes to the stack, so nothing shuffles.', {H: 152, state: {n: 3, cams: false, muted: ['anna'], speaking: 'me'}}],
+  ['Four or more', 'From here the muted and the quiet go to the stack, as today. Leave has no line through it now: red is enough.', {H: 152, state: {n: 4, cams: false, speaking: 'lee'}}],
+  ['The ⋯ menu', 'On click. Share, Mic and Leave are where they were.', {H: 330, state: {n: 4, cams: false}, setup: sc => { sc.pop = {kind: 'menu', page: 'root'}; }}],
+  ['Right-click', 'The same things as a macOS menu, anywhere on the pill.', {H: 330, state: {n: 2, cams: false}, after: sc => { const f = sc.frame(); sc.openNative({x: f.l + 150, y: f.t + 22}); sc.cursorAt(f.l + 150, f.t + 22); }}],
+  ['Cameras on', 'Bubbles ride on the pill, ending at its right edge, the end that never moves.', {H: 220, state: {n: 2, me: {video: true}, speaking: 'anna'}}],
+  ['Pulled off and zoomed', 'Past 180 px a bubble becomes a tile. Yours stays small in a corner.', {H: 360, state: {n: 2, me: {video: true}, speaking: 'anna'}, setup: sc => { sc.geo.anna = {size: 230, docked: false, x: 16, y: 16}; sc.geo.me = {size: 72, docked: false, x: 438, y: 16}; }}],
+  ['You’re sharing', 'Your preview floats too, with Stop on it.', {H: 232, state: {n: 4, me: {sharing: true}, speaking: 'lee'}}],
+  ['The caption line', 'While the call is transcribed: who speaks and the sentence as it’s said, the newest words always in view. Bubbles ride above it.', {H: 264, state: {n: 2, me: {video: true}, speaking: 'anna', cc: true, cap: {who: 'anna', words: SAID[0].split(' '), n: 12}}}],
+  ['You talk while muted', 'The mic button shakes and says so, with one soft beep, at most every 5 minutes.', {H: 176, state: {n: 2, cams: false, me: {muted: true}}, after: sc => sc.nudge(true)}],
+  ['Holding the mic button', 'Muted, but heard for as long as you hold it. The same with the key from Settings.', {H: 152, state: {n: 2, cams: false, me: {muted: true, held: true}, speaking: 'me'}}],
+  ['One bubble follows the speaker', 'Eight people, four cameras, one bubble: now Lee, because Lee is talking.', {H: 220, state: {n: 8, follow: true, stage: 'lee', speaking: 'lee'}}],
+  ['Paused at the left edge', 'Still dragging: the outline shows the column a drop will make.', {H: 380, state: {n: 3, cams: false}, setup: sc => { sc.pill.ax = sc.pw + 6; sc.pill.ay = 236; }, after: sc => { sc.showGhost(sc.zone({x: 40, y: 208})); sc.cursorAt(40, 208); }}],
+  ['Dropped: a column', 'The same order top to bottom, Leave last. Bubbles and the caption stand beside it, on the side with the screen.', {H: 420, pill: {ay: 404}, state: {n: 3, orient: 'v', me: {video: true}, hidden: ['lee'], speaking: 'anna', cc: true, cap: {who: 'anna', words: SAID[4].split(' '), n: 9}}}],
+  ['The column’s menu', 'Beside it, level with the buttons.', {H: 420, pill: {ay: 404}, state: {n: 4, orient: 'v', cams: false}, setup: sc => { sc.pop = {kind: 'menu', page: 'root'}; }}],
+  ['Tucked into the edge', 'A dot per person: green while they speak, red for you muted. Click it and the call is back.', {H: 220, pill: {ay: 200}, state: {n: 4, orient: 'v', tucked: 'left', cams: false, speaking: 'anna', me: {muted: true}}, after: sc => sc.showTip(el(sc, '.tab'))}]
+];
+const gallery = document.getElementById('gallery');
+gallery.innerHTML = STATES.map(([title, text, o], i) => `<div class="gitem"><div class="stage" data-w="520" data-h="${o.H}"><div class="canvas wall static" id="g${i}"></div></div><p><b>${title}.</b> ${text}</p></div>`).join('');
+STATES.forEach(([, , o], i) => {
+  const c = document.getElementById('g' + i);
+  c.style.width = '520px'; c.style.height = o.H + 'px';
+  new Scene(c, Object.assign({W: 520}, o));
+});
+
+/* ---- page ---- */
+if (!getComputedStyle(document.documentElement).getPropertyValue('--background').trim()) document.body.classList.add('standalone');
+function fit() {
+  document.querySelectorAll('.stage').forEach(st => {
+    const W = Number(st.dataset.w), H = Number(st.dataset.h), cw = st.clientWidth, k = Math.min(1, cw / W), c = st.firstElementChild;
+    c.style.width = W + 'px'; c.style.height = H + 'px'; c.style.transform = `scale(${k})`;
+    c.style.left = cw > W ? `${(cw - W) / 2}px` : '0'; st.style.height = Math.round(H * k) + 'px';
+  });
+}
+fit(); addEventListener('resize', fit);
+})();
+</script>
+</body>
+</html>

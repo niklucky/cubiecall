@@ -1,82 +1,127 @@
-//! Minimal mode: the call in one small floating glass widget.
+//! Minimal mode: the call in one small floating widget.
 //!
-//! The main row holds up to three people who were active last (spoke,
-//! unmuted or joined; a newcomer takes the place of whoever has been quiet
-//! longest), then you (muted or not, so muting moves nothing), then a stack
-//! with everyone muted or quiet for two minutes, then a red record button
-//! while anyone records, a captions button while anyone transcribes, then
-//! Share, Mic and Leave. People with their camera on show as
-//! video tiles above the row; while you share, your screen's preview sits on
-//! top. Hovering the buttons, the stack or a face opens a row underneath
-//! (above the main row instead when the screen ends first) and closes once
-//! the cursor leaves. The main row never moves: the window grows around it,
-//! and Share, Mic and Leave stay put as it gets wider or narrower.
+//! A solid pill, exactly as long as what's in it: up to three people who
+//! were active last (spoke, unmuted or joined; a newcomer takes the place of
+//! whoever has been quiet longest), then you (muted or not, so muting moves
+//! nothing), then a stack with everyone muted or quiet for two minutes, then
+//! a red record button while anyone records, a captions button while anyone
+//! transcribes, then ⋯, Share, Mic and Leave. In a call of two or three
+//! nobody goes to the stack. Alone, a dashed seat copies the link.
+//!
+//! The pill lies down, or stands as a column once it's dropped at the left
+//! or right side of the screen (and lies down again at the top or bottom).
+//! Pushed right into an edge it tucks away as a tab with a dot per person.
+//! Pausing over an edge while dragging shows the outline a drop would make.
+//!
+//! Everything else floats by the pill and never changes it: cameras and
+//! your share's preview as bubbles (windows of their own, see
+//! [`crate::bubble`]), the sentence being said while the call is
+//! transcribed, and a card: the ⋯ menu, the stack's people, a name under the
+//! cursor, a notice, a question. Cards open on a click, names on hover. The
+//! pill never moves: the window grows around it, and it gets longer or
+//! shorter at the end away from its buttons, so they stay under the cursor.
+//!
+//! A face is that person's video switch: yours turns your camera on and
+//! off, anyone else's hides and shows their bubble. In a call of four or
+//! more, one bubble follows the speaker instead (Settings can give everyone
+//! a bubble).
 
 use std::cmp::Reverse;
-use std::collections::HashMap;
-use std::time::Duration;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, Bounds, Context, Div, Entity, EntityId, FontWeight, MouseButton, ObjectFit,
-    Size, Stateful, Subscription, Task, Window, WindowBackgroundAppearance, WindowBounds,
-    WindowHandle, div, point, px, rgb, size,
+    AnyElement, App, Bounds, Context, Div, Entity, EntityId, FontWeight, MouseButton,
+    MouseDownEvent, MouseMoveEvent, Pixels, Point, Size, Stateful, Subscription, Task, Window,
+    WindowBounds, WindowHandle, div, point, px, rgb, size,
 };
 
+use crate::Shell;
 use crate::assets::Icon;
+use crate::bubble::{self, Bubble, Who};
 use crate::call::{Call, Camera, Member, Mode, NoticeAction, Preparing, PromptKind};
-use crate::mac;
+use crate::mac::{self, Rect};
 use crate::theme::{
-    ACCENT, DANGER, RECORDING, SPEAKING, TEXT, TEXT_DIM, avatar_background, black, first_name,
-    glass_tint, white,
+    ACCENT, CARD, DANGER, PILL, RECORDING, SPEAKING, TEXT, TEXT_DIM, first_name, white,
 };
-use crate::ui::{Kind, Tone, avatar, button, icon, icon_button, ring, round_button, rounded_video};
+use crate::ui::{Kind, Tone, avatar, button, icon, icon_button, ring, round_button};
 
 /// People in the row besides you.
 const ROW_MAX: usize = 3;
+/// With this many others or fewer nobody goes to the stack, and everyone
+/// with a camera gets a bubble: a call of two or three never reshuffles.
+const SMALL: usize = 2;
 /// Quiet this long and you go into the stack.
 const QUIET: Duration = Duration::from_secs(120);
 const FACE: f32 = 40.0;
 const PAD: f32 = 6.0;
 const GAP: f32 = 6.0;
 const BUTTON: f32 = 38.0;
-/// The main row's height.
-const MAIN: f32 = 56.0;
-const TILE_W: f32 = 120.0;
-const TILE_H: f32 = 90.0;
-const TILE_RADIUS: f32 = 18.0;
-/// The narrowest the widget gets while your preview or a notice shows; it
-/// fits its row otherwise.
-const WIDE: f32 = 240.0;
-const RADIUS: f64 = 26.0;
-/// Covers the steps of [`rounded_video`]; green while someone speaks.
+/// The pill's height, lying down; its width as a column.
+const MAIN: f32 = 52.0;
+const RADIUS: f32 = MAIN / 2.0;
+/// Between the pill and what floats by it: bubbles, the caption, a card.
+const FLOAT_GAP: f32 = 8.0;
+/// Green while someone speaks.
 const RING: f32 = 2.5;
 const EDGE: u32 = 0x1d1f26;
-const PREVIEW_RADIUS: f32 = 16.0;
 /// The stack: avatars behind the front one, and the "+N" after it.
 const GHOST: f32 = 9.0;
 const COUNT: f32 = 26.0;
-/// A person in the stack's row: avatar and first name.
+/// A person in the stack's card: avatar and first name. Four a line.
 const PERSON: f32 = 54.0;
-const CONTROLS_H: f32 = 73.0;
-/// The hover row's Camera, Copy link, Call window, Record and Transcribe.
-const CONTROL_W: f32 = 60.0;
-const CONTROL_GAP: f32 = 4.0;
-const LINE_H: f32 = 37.0;
+const PEOPLE_W: f32 = 4.0 * PERSON + 3.0 * 4.0 + 24.0;
+const CARD_RADIUS: f32 = 16.0;
+/// The ⋯ menu: its width, its line with the room's name, a line of it.
+const MENU_W: f32 = 216.0;
+const MENU_HEAD: f32 = 30.0;
+const MENU_ITEM: f32 = 34.0;
+/// A card of one line: a name, a notice.
+const LINE_H: f32 = 28.0;
 /// A line with a button in it (Stop, Show in Finder).
-const BUTTON_LINE_H: f32 = LINE_H + 6.0;
+const BUTTON_LINE_H: f32 = 36.0;
 /// A line of text over a line of buttons (what to record).
-const CHOICE_H: f32 = 1.0 + 8.0 + 18.0 + 6.0 + 24.0 + 10.0;
-/// Rows open and close after the cursor settles this long.
+const CHOICE_H: f32 = 10.0 + 18.0 + 6.0 + 24.0 + 10.0;
+/// The sentence being said: its height, and how wide it gets by a pill
+/// lying down. By a column, it and the cards without a width of their own
+/// get [`SIDE_W`].
+const CAPTION_H: f32 = 30.0;
+const CAPTION_MAX: f32 = 420.0;
+const SIDE_W: f32 = 300.0;
+/// The tab the widget tucks into: how thick, and how long per person.
+const TAB: f32 = 18.0;
+const TAB_DOT: f32 = 9.0;
+const TAB_STEP: f32 = 15.0;
+/// Dropped with the cursor this near an edge, the pill tucks into it; this
+/// near a side, it becomes a column (or lies down, near the top or bottom).
+const TUCK: f64 = 12.0;
+const TURN: f64 = 64.0;
+/// What the pill keeps from the screen's edges when a drop places it.
+const MARGIN: f64 = 8.0;
+/// The outline of what a drop would make shows after the cursor has been
+/// still this long.
+const PAUSE: Duration = Duration::from_millis(240);
+/// While something is dragged, where it is gets checked this often: macOS
+/// moves the window by itself and says nothing when the button goes up.
+const DRAG_POLL: Duration = Duration::from_millis(40);
+/// A bubble dropped this near the pill rides on it again; dropped this near
+/// the screen's edge, it lines up with it.
+const MAGNET: f64 = 30.0;
+const SNAP: f64 = 16.0;
+/// The bubble that follows the speaker stays on someone at least this long.
+const STAGE_HOLD: Duration = Duration::from_secs(3);
+/// Holding the mic button this long is holding to talk, not a click.
+const HOLD_AFTER: Duration = Duration::from_millis(280);
+/// A name opens and closes after the cursor settles this long.
 const HOVER_DELAY: Duration = Duration::from_millis(250);
-/// While a row is open, where the cursor is gets checked this often: GPUI
+/// A card opened by a click closes once the cursor has been away this long
+/// (or on a click anywhere else): the widget never has focus to lose.
+const AWAY: Duration = Duration::from_secs(5);
+/// While a card is open, where the cursor is gets checked this often: GPUI
 /// reports hovering only while the mouse moves inside the window, so
-/// nothing says the cursor has left.
-const CURSOR_POLL: Duration = Duration::from_millis(150);
-/// Repaints at most this often. Everyone's frames arrive out of step, so
-/// without a cap the widget redraws at the display's rate (up to 120 Hz);
-/// cameras send 30 fps at most.
-const FRAME: Duration = Duration::from_millis(33);
+/// nothing says the cursor has left, or that a click landed elsewhere.
+const CURSOR_POLL: Duration = Duration::from_millis(60);
 
 pub fn open(call: Entity<Call>, cx: &mut App) -> Option<WindowHandle<Capsule>> {
     let area = cx
@@ -84,7 +129,7 @@ pub fn open(call: Entity<Call>, cx: &mut App) -> Option<WindowHandle<Capsule>> {
         .map(|d| d.visible_bounds())
         .unwrap_or_else(|| Bounds::new(point(px(0.0), px(0.0)), size(px(1440.0), px(900.0))));
     // A first size; the widget fits itself as soon as it opens.
-    let s = size(WIDE, MAIN);
+    let s = size(240.0, MAIN);
     let bounds = Bounds::new(
         point(
             area.origin.x + (area.size.width - px(s.width)) / 2.0,
@@ -92,8 +137,8 @@ pub fn open(call: Entity<Call>, cx: &mut App) -> Option<WindowHandle<Capsule>> {
         ),
         size(px(s.width), px(s.height)),
     );
-    let mut options = mac::floating_options(WindowBounds::Windowed(bounds));
-    options.window_background = WindowBackgroundAppearance::Blurred;
+    // Transparent: the pill and the cards each draw themselves.
+    let options = mac::floating_options(WindowBounds::Windowed(bounds));
     cx.open_window(options, |window, cx| {
         cx.new(|cx| Capsule::new(call, s, window, cx))
     })
@@ -101,11 +146,11 @@ pub fn open(call: Entity<Call>, cx: &mut App) -> Option<WindowHandle<Capsule>> {
     .ok()
 }
 
-/// The row under (or over) the main one.
+/// The card floating by the pill.
 #[derive(Clone, PartialEq)]
 enum Drawer {
-    /// Camera, copy link, call window.
-    Controls,
+    /// The ⋯ menu: camera, invite, call window, record, transcribe.
+    Menu,
     /// Everyone in the stack.
     People,
     /// The name of the face under the cursor (an identity).
@@ -124,53 +169,161 @@ enum Drawer {
     Notice,
 }
 
+/// An edge of the screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Edge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+/// What dropping the pill here makes of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Zone {
+    edge: Edge,
+    /// Tucked into the edge as a tab; otherwise only turned to fit it.
+    tuck: bool,
+    /// A column (left and right), not lying down (top and bottom).
+    column: bool,
+    /// Where the pill's bottom-right corner goes, on screen.
+    corner: (f64, f64),
+    /// The pill's outline there.
+    pill: Rect,
+}
+
 /// Who goes where, for one frame.
 struct Plan {
-    /// In the row with the camera on: tiles above it. You last.
-    tiles: Vec<Entity<Member>>,
-    /// In the row with the camera off. You last.
+    /// Everyone in the row. You last.
     faces: Vec<Entity<Member>>,
+    /// Nobody else is here: a seat that copies the link.
+    seat: bool,
     /// Others muted or quiet, the most recently active first.
     stack: Vec<Entity<Member>>,
     /// Identities of people sharing their screen.
     sharers: Vec<String>,
     /// The shape of what you share, while you share.
     preview: Option<f32>,
+    /// The bubbles to show, in the order they ride on the pill.
+    bubbles: Vec<Who>,
+    /// The call is transcribed: who is speaking and what they say, or
+    /// nothing yet.
+    caption: Option<Option<(String, String)>>,
     /// Someone records the call: the record button shows.
     recording: bool,
     /// Someone transcribes the call, or your Mac gets ready to: the
     /// captions button shows.
     captions: bool,
-    /// Tiles in the hover row of controls.
-    controls: usize,
+    /// Record and Transcribe in the menu, while the call has neither.
+    menu_extras: usize,
     /// The notice has a button (Show in Finder, Settings).
     notice_button: bool,
 }
 
+/// A bubble's window.
+struct Slot {
+    handle: WindowHandle<Bubble>,
+    native: mac::Native,
+}
+
+/// A bubble's height, and whether it rides on the pill.
+#[derive(Clone, Copy)]
+struct Geo {
+    size: f32,
+    docked: bool,
+}
+
+/// What of a person shows in the pill: it's drawn again only when this
+/// changes, not with every frame of their video.
+#[derive(Clone, PartialEq)]
+struct Sig {
+    name: String,
+    speaking: bool,
+    muted: bool,
+    video: bool,
+    /// The shape of what they share, in hundredths.
+    screen: Option<i32>,
+}
+
+impl Sig {
+    fn of(m: &Member) -> Self {
+        Self {
+            name: m.name.clone(),
+            speaking: m.speaking,
+            muted: m.mic_muted,
+            video: m.video.is_some(),
+            screen: m
+                .screen
+                .as_ref()
+                .map(|s| s.sink.aspect().map_or(0, |a| (a * 100.0) as i32)),
+        }
+    }
+}
+
 pub struct Capsule {
     call: Entity<Call>,
+    native: Option<mac::Native>,
     /// The people in the row besides you; positions stay put.
     slots: Vec<Entity<Member>>,
-    /// The row opened by hovering.
+    /// The card opened by a click, or the name under the cursor.
     open: Option<Drawer>,
+    /// Standing at the screen's side, not lying down.
+    column: bool,
+    /// Tucked into this edge as a tab.
+    tucked: Option<Edge>,
+    /// While tucked: where the pill's corner goes when it comes back.
+    home: (f64, f64),
     size: Size<f32>,
-    /// Height above the main row.
-    above: f32,
-    /// [`Self::above`] for the window's frame as it is now: a resize lands a
-    /// turn later (set right before it), and until then the main row is drawn
+    /// Where the pill's bottom-right corner is in the window, from the
+    /// window's top-left.
+    anchor: (f32, f32),
+    /// [`Self::anchor`] for the window's frame as it is now: a resize lands
+    /// a turn later (set right before it), and until then the pill is drawn
     /// here, so it stays put.
-    shown_above: f32,
-    /// The drawer opens above the main row: no room under it.
-    drawer_above: bool,
-    /// Tiles and your preview go under the main row: no room above it.
-    tops_below: bool,
+    shown: (f32, f32),
+    /// The pill's corner must go here on screen: it was dropped at an edge,
+    /// or comes back from one.
+    jump: Option<(f64, f64)>,
+    /// A jump on its way: where the pill will be.
+    moving: Option<(f64, f64)>,
+    /// The card is on the pill's first side (over it, lying down).
+    card_first: bool,
+    /// Bubbles and the caption ride over the pill, not under it.
+    dock_up: bool,
+    /// By a column, things open to its right.
+    side_right: bool,
+    bubbles: HashMap<Who, Slot>,
+    opening: HashSet<Who>,
+    geo: HashMap<Who, Geo>,
+    /// A bubble under the mouse button: left where it is meanwhile.
+    dragging: Option<Who>,
+    /// People whose video you've hidden (identities).
+    hidden: HashSet<String>,
+    /// Who the bubble that follows the speaker shows, and since when.
+    stage: Option<String>,
+    stage_at: Instant,
+    /// A dragged bubble is near enough to ride again.
+    magnet: bool,
+    /// A face is pressed, here: a click if the mouse goes up, a drag if it
+    /// moves.
+    press: Option<Point<Pixels>>,
+    /// The mic button was held to talk: letting go isn't a click.
+    held_click: bool,
+    ghost: Option<(WindowHandle<Ghost>, mac::Native)>,
+    ghost_opening: bool,
+    /// Where the outline should be, and where it is.
+    ghost_want: Option<Rect>,
+    ghost_at: Option<Rect>,
     hover_task: Option<Task<()>>,
-    /// Closes the open row once the cursor has left the window.
+    /// Closes the open card once the cursor has left, or a click lands
+    /// elsewhere.
     cursor_task: Option<Task<()>>,
-    /// Repaint subscriptions for every person in the call.
-    watched: HashMap<EntityId, Subscription>,
-    /// A repaint is already scheduled (see [`FRAME`]).
-    repaint_pending: bool,
+    /// Follows the pill or a bubble while it's dragged.
+    drag_task: Option<Task<()>>,
+    hold_task: Option<Task<()>>,
+    menu_task: Option<Task<()>>,
+    /// Everyone in the call, as last drawn.
+    watched: HashMap<EntityId, (Sig, Subscription)>,
     _subscriptions: Vec<Subscription>,
     _tick: Task<()>,
 }
@@ -182,17 +335,33 @@ impl Capsule {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        mac::make_shape(window, mac::Mask::Rounded(RADIUS), cx);
-        let subscriptions = vec![cx.observe(&call, |this, _, cx| {
-            this.watch(cx);
-            cx.notify();
-        })];
+        // Square and shadowless: the pieces round their own corners.
+        mac::make_shape(window, mac::Mask::Rounded(0.0), cx);
+        let transcript = call.read(cx).transcript.clone();
+        let subscriptions = vec![
+            cx.observe(&call, |this, _, cx| {
+                this.watch(cx);
+                cx.notify();
+            }),
+            // The caption follows what's said.
+            cx.observe(&transcript, |this, _, cx| {
+                if this.call.read(cx).transcription.is_some() {
+                    cx.notify();
+                }
+            }),
+            cx.observe(&Shell::global(cx), |_, _, cx| cx.notify()),
+            // Dragged somewhere else: what rides on the pill may change sides.
+            cx.observe_window_bounds(window, |_, _, cx| cx.notify()),
+        ];
         // People go quiet without any event: look again every second.
         let tick = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let alive = this.update(cx, |this, cx| {
-                    let ticking = matches!(this.open, Some(Drawer::Name(_) | Drawer::Recording));
+                    let ticking = matches!(
+                        this.open,
+                        Some(Drawer::Name(_) | Drawer::Recording | Drawer::Menu)
+                    );
                     if this.update_slots(cx) || ticking {
                         cx.notify();
                     }
@@ -204,59 +373,108 @@ impl Capsule {
         });
         let mut this = Self {
             call,
+            native: mac::Native::of(window),
             slots: Vec::new(),
             open: None,
+            column: false,
+            tucked: None,
+            home: (0.0, 0.0),
             size,
-            above: 0.0,
-            shown_above: 0.0,
-            drawer_above: false,
-            tops_below: false,
+            anchor: (size.width, size.height),
+            shown: (size.width, size.height),
+            jump: None,
+            moving: None,
+            card_first: false,
+            dock_up: true,
+            side_right: true,
+            bubbles: HashMap::new(),
+            opening: HashSet::new(),
+            geo: HashMap::new(),
+            dragging: None,
+            hidden: HashSet::new(),
+            stage: None,
+            stage_at: Instant::now(),
+            magnet: false,
+            press: None,
+            held_click: false,
+            ghost: None,
+            ghost_opening: false,
+            ghost_want: None,
+            ghost_at: None,
             hover_task: None,
             cursor_task: None,
+            drag_task: None,
+            hold_task: None,
+            menu_task: None,
             watched: HashMap::new(),
-            repaint_pending: false,
             _subscriptions: subscriptions,
             _tick: tick,
         };
         this.watch(cx);
+        // The bubbles and the outline go with the widget.
+        cx.on_release(|this, cx| {
+            let ghost = this.ghost.take().map(|(handle, _)| handle);
+            let bubbles: Vec<Slot> = this.bubbles.drain().map(|(_, slot)| slot).collect();
+            cx.spawn(async move |cx| {
+                for slot in bubbles {
+                    mac::retire(&slot.native);
+                    let _ = slot
+                        .handle
+                        .update(cx, |_, window, _| window.remove_window());
+                }
+                if let Some(ghost) = ghost {
+                    let _ = ghost.update(cx, |_, window, _| window.remove_window());
+                }
+            })
+            .detach();
+        })
+        .detach();
         this
     }
 
-    /// Repaint when anyone's video, mic or share changes.
+    /// Repaint when what the pill shows of anyone changes: who speaks, who's
+    /// muted, whose camera is on. Not with every frame of video: a bubble
+    /// draws those itself.
     fn watch(&mut self, cx: &mut Context<Self>) {
         let members: Vec<Entity<Member>> = self.call.read(cx).members().cloned().collect();
         let live: Vec<EntityId> = members.iter().map(|m| m.entity_id()).collect();
         for member in members {
-            self.watched
-                .entry(member.entity_id())
-                .or_insert_with(|| cx.observe(&member, |this, _, cx| this.schedule_repaint(cx)));
+            let id = member.entity_id();
+            if self.watched.contains_key(&id) {
+                continue;
+            }
+            let sig = Sig::of(member.read(cx));
+            let subscription = cx.observe(&member, |this, member, cx| {
+                let sig = Sig::of(member.read(cx));
+                if let Some((old, _)) = this.watched.get_mut(&member.entity_id())
+                    && *old != sig
+                {
+                    *old = sig;
+                    cx.notify();
+                }
+            });
+            self.watched.insert(id, (sig, subscription));
         }
         self.watched.retain(|id, _| live.contains(id));
     }
 
-    /// Repaint within [`FRAME`], once however many frames arrive meanwhile.
-    fn schedule_repaint(&mut self, cx: &mut Context<Self>) {
-        if std::mem::replace(&mut self.repaint_pending, true) {
-            return;
-        }
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(FRAME).await;
-            let _ = this.update(cx, |this, cx| {
-                this.repaint_pending = false;
-                cx.notify();
-            });
-        })
-        .detach();
+    /// One bubble follows the speaker, instead of a bubble each: in a call
+    /// of four or more, unless Settings says otherwise.
+    fn follows(&self, cx: &App) -> bool {
+        self.call.read(cx).others.len() > SMALL
+            && !Shell::global(cx).read(cx).store.call.bubble_each
     }
 
-    /// Keep the row to the people active last. Returns whether it changed.
+    /// Keep the row to the people active last, and the bubble that follows
+    /// the speaker on the speaker. Returns whether anything changed.
     fn update_slots(&mut self, cx: &App) -> bool {
         let call = self.call.read(cx);
         let sharers = call.sharers(cx);
         let others = call.others.clone();
         let before = self.slots.clone();
         let sharing = |m: &Member| sharers.contains(&m.identity);
-        let active = |m: &Member| sharing(m) || m.is_active(QUIET);
+        let small = others.len() <= SMALL;
+        let active = |m: &Member| small || sharing(m) || m.is_active(QUIET);
         self.slots
             .retain(|e| others.contains(e) && active(e.read(cx)));
         let mut candidates: Vec<Entity<Member>> = others
@@ -272,7 +490,8 @@ impl Capsule {
         for candidate in candidates {
             self.take(candidate, &sharers, cx);
         }
-        self.slots != before
+        let stage = self.update_stage(&others, cx);
+        self.slots != before || stage
     }
 
     /// Put `member` in the row: in a free place, or in place of whoever has
@@ -304,12 +523,50 @@ impl Capsule {
         }
     }
 
+    /// Who the one bubble shows: whoever speaks with their camera on, once
+    /// the last one has had [`STAGE_HOLD`]; they stay until someone else
+    /// does. Returns whether it changed.
+    fn update_stage(&mut self, others: &[Entity<Member>], cx: &App) -> bool {
+        let before = self.stage.clone();
+        if !self.follows(cx) {
+            self.stage = None;
+            return before.is_some();
+        }
+        let shown = |m: &Member| m.video.is_some() && !self.hidden.contains(&m.identity);
+        let people: Vec<&Member> = others
+            .iter()
+            .map(|e| e.read(cx))
+            .filter(|m| shown(m))
+            .collect();
+        let current = before
+            .as_ref()
+            .is_some_and(|id| people.iter().any(|m| m.identity == *id));
+        let speaker = people
+            .iter()
+            .filter(|m| m.speaking && !m.mic_muted)
+            .max_by_key(|m| m.last_active)
+            .map(|m| m.identity.clone());
+        let next = match speaker {
+            Some(speaker) if !current || self.stage_at.elapsed() >= STAGE_HOLD => Some(speaker),
+            _ if current => before.clone(),
+            _ => people
+                .iter()
+                .max_by_key(|m| m.last_active)
+                .map(|m| m.identity.clone()),
+        };
+        if next != before {
+            self.stage = next;
+            self.stage_at = Instant::now();
+            return true;
+        }
+        false
+    }
+
     fn plan(&self, cx: &App) -> Plan {
         let call = self.call.read(cx);
         let me = call.me.clone();
-        let mut row = self.slots.clone();
-        row.push(me.clone());
-        let (tiles, faces) = row.into_iter().partition(|e| e.read(cx).video.is_some());
+        let mut faces = self.slots.clone();
+        faces.push(me.clone());
         let mut stack: Vec<Entity<Member>> = call
             .others
             .iter()
@@ -317,24 +574,58 @@ impl Capsule {
             .cloned()
             .collect();
         stack.sort_by_key(|e| Reverse(e.read(cx).last_active));
+        let preview = preview_aspect(me.read(cx));
+        let mut bubbles = Vec::new();
+        if preview.is_some() {
+            bubbles.push(Who::Share);
+        }
+        if self.follows(cx) {
+            if self.stage.is_some() {
+                bubbles.push(Who::Stage);
+            }
+        } else {
+            for slot in &self.slots {
+                let m = slot.read(cx);
+                if m.video.is_some() && !self.hidden.contains(&m.identity) {
+                    bubbles.push(Who::Member(m.identity.clone()));
+                }
+            }
+        }
+        if me.read(cx).video.is_some() {
+            bubbles.push(Who::Me);
+        }
+        let settings = &Shell::global(cx).read(cx).store.call;
+        let caption = (call.transcription.is_some() && settings.caption_line).then(|| {
+            call.transcript.read(cx).lines().last().map(|said| {
+                let who = if said.mine {
+                    "You".to_owned()
+                } else {
+                    first_name(&said.name).to_owned()
+                };
+                (who, said.text.clone())
+            })
+        });
         Plan {
-            tiles,
             faces,
+            seat: call.others.is_empty(),
             stack,
             sharers: call.sharers(cx),
-            preview: preview_aspect(me.read(cx)),
+            preview,
+            bubbles,
+            caption,
             recording: call.recording.is_some(),
             captions: call.transcription.is_some() || call.preparing.is_some(),
-            controls: 3
-                + usize::from(call.recording.is_none())
-                + usize::from(call.can_transcribe()),
+            menu_extras: usize::from(call.recording.is_none()) + usize::from(call.can_transcribe()),
             notice_button: call.notice().is_some_and(|n| n.action.is_some()),
         }
     }
 
-    /// The drawer showing: the one opened by hovering, else a question,
-    /// else a notice.
+    /// The card showing: the one opened by a click or by hovering a face,
+    /// else a question, else a notice. None while tucked away.
     fn drawer(&self, cx: &App) -> Option<Drawer> {
+        if self.tucked.is_some() {
+            return None;
+        }
         let c = self.call.read(cx);
         self.open
             .clone()
@@ -342,52 +633,739 @@ impl Capsule {
             .or_else(|| c.notice().is_some().then_some(Drawer::Notice))
     }
 
-    /// Size the window for what's on show, keeping the main row in place.
+    /// Whose camera a bubble shows.
+    pub fn bubble_member(&self, who: &Who, cx: &App) -> Option<Entity<Member>> {
+        let call = self.call.read(cx);
+        let identity = match who {
+            Who::Me => return Some(call.me.clone()),
+            Who::Share => return None,
+            Who::Member(identity) => identity,
+            Who::Stage => self.stage.as_ref()?,
+        };
+        call.others
+            .iter()
+            .find(|e| e.read(cx).identity == *identity)
+            .cloned()
+    }
+
+    /// The pill's bottom-right corner on screen, and the usable part of its
+    /// screen.
+    fn corner(&self) -> Option<((f64, f64), Rect)> {
+        let native = self.native.as_ref()?;
+        let frame = native.frame();
+        let here = (
+            frame.x + self.shown.0 as f64,
+            frame.top() - self.shown.1 as f64,
+        );
+        Some((
+            self.moving.unwrap_or(here),
+            native.visible().unwrap_or(frame),
+        ))
+    }
+
+    /// The pill's outline on screen.
+    fn pill_rect(&self, plan: &Plan, corner: (f64, f64)) -> Rect {
+        let len = pill_len(plan, self.column) as f64;
+        let (w, h) = if self.column {
+            (MAIN as f64, len)
+        } else {
+            (len, MAIN as f64)
+        };
+        Rect {
+            x: corner.0 - w,
+            y: corner.1,
+            w,
+            h,
+        }
+    }
+
+    /// Size the window for what's on show, keeping the pill in place, and
+    /// put the bubbles where they go.
     fn fit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Plan {
         let plan = self.plan(cx);
-        // As wide as the row and the tiles. The rows that open on hover fit
-        // in that, so hovering never changes the width.
-        let wide = plan.preview.is_some()
-            || self.call.read(cx).notice().is_some()
-            || self.call.read(cx).prompt.is_some();
-        let width = row_width(&plan)
-            .max(strip_width(&plan))
-            .max(controls_width(plan.controls))
-            .max(if wide { WIDE } else { 0.0 });
-        let tops = preview_height(&plan, width) + strip_height(&plan);
-        let drawer_h = self
-            .drawer(cx)
-            .map_or(0.0, |d| drawer_height(&d, &plan, width));
-        // The row never moves, so what it adds goes where the screen has room:
-        // tiles and your preview above it, the hover rows below it.
-        let (up, down) =
-            mac::room_around(window, self.shown_above, MAIN).unwrap_or((f32::MAX, f32::MAX));
-        let tops_below = tops > 0.0 && up < tops;
-        let drawer_above = drawer_h > 0.0 && !tops_below && down < drawer_h + 12.0;
-        let above = if tops_below { 0.0 } else { tops } + if drawer_above { drawer_h } else { 0.0 };
-        let wanted = size(width, tops + MAIN + drawer_h);
-        if wanted != self.size || above != self.above {
+        self.sync_bubbles(&plan, window, cx);
+        if let Some(jump) = self.jump.take() {
+            self.moving = Some(jump);
+        }
+        let jumping = self.moving.is_some();
+        let Some((corner, visible)) = self.corner() else {
+            return plan;
+        };
+        let len = pill_len(&plan, self.column);
+        let (wanted, anchor, target) = if let Some(edge) = self.tucked {
+            // A tab at the edge, by where the pill was.
+            let tab = tab_rect(edge, self.home, len as f64, plan.faces.len(), visible);
+            let s = (tab.w as f32, tab.h as f32);
+            (size(s.0, s.1), s, Some((tab.right(), tab.y)))
+        } else if self.column {
+            let (wanted, anchor) = self.fit_column(&plan, len, corner, visible, cx);
+            (wanted, anchor, jumping.then_some(corner))
+        } else {
+            let (wanted, anchor) = self.fit_lying(&plan, len, corner, visible, cx);
+            (wanted, anchor, jumping.then_some(corner))
+        };
+        let after = |this: &mut Self, cx: &mut Context<Self>| {
+            let plan = this.plan(cx);
+            this.placements(&plan)
+        };
+        if let Some(target) = target {
+            let here = self.native.as_ref().map(|n| n.frame());
+            let there = Rect {
+                x: target.0 - anchor.0 as f64,
+                y: target.1 + anchor.1 as f64 - wanted.height as f64,
+                w: wanted.width as f64,
+                h: wanted.height as f64,
+            };
+            if here != Some(there) || jumping {
+                mac::move_with(
+                    window,
+                    wanted,
+                    anchor,
+                    target,
+                    cx,
+                    move |this, cx| {
+                        this.shown = anchor;
+                        this.moving = None;
+                        cx.notify();
+                    },
+                    after,
+                );
+                self.size = wanted;
+                self.anchor = anchor;
+            }
+        } else if wanted != self.size || anchor != self.anchor {
             mac::resize_with(
                 window,
                 wanted,
-                mac::Mask::Rounded(RADIUS),
-                mac::Anchor::Row {
-                    before: self.above,
-                    after: above,
+                mac::Mask::Rounded(0.0),
+                mac::Anchor::Point {
+                    before: self.anchor,
+                    after: anchor,
                 },
                 cx,
                 move |this, cx| {
-                    this.shown_above = above;
+                    this.shown = anchor;
                     cx.notify();
                 },
+                after,
             );
             self.size = wanted;
-            self.above = above;
+            self.anchor = anchor;
         }
-        self.drawer_above = drawer_above;
-        self.tops_below = tops_below;
+        mac::place(self.placements(&plan), cx);
         plan
     }
+
+    /// The window around a pill lying down: the caption on the side the
+    /// bubbles ride on (over it, if the screen has room), and a card on the
+    /// other side, so nothing has to move for it. A card by a pill alone
+    /// opens over it. With no room on the free side, the card opens over
+    /// the bubbles.
+    fn fit_lying(
+        &mut self,
+        plan: &Plan,
+        len: f32,
+        corner: (f64, f64),
+        visible: Rect,
+        cx: &App,
+    ) -> (Size<f32>, (f32, f32)) {
+        let riding = self.riding(plan).map(|(.., h, _)| h).fold(0.0f32, f32::max);
+        let caption = if plan.caption.is_some() {
+            CAPTION_H + FLOAT_GAP
+        } else {
+            0.0
+        };
+        let card = self
+            .drawer(cx)
+            .map_or(0.0, |d| card_height(&d, plan) + FLOAT_GAP);
+        let room_up = (visible.top() - corner.1) as f32 - MAIN;
+        let room_down = (corner.1 - visible.y) as f32;
+        let floats = caption
+            + if riding > 0.0 {
+                riding + FLOAT_GAP
+            } else {
+                0.0
+            };
+        self.dock_up = room_up >= floats || room_down < floats;
+        self.card_first = card > 0.0
+            && if floats == 0.0 {
+                room_up >= card + 4.0
+            } else if self.dock_up {
+                room_down < card + 12.0
+            } else {
+                room_up >= card + 4.0
+            };
+        let (mut above, mut below) = (0.0, 0.0);
+        *if self.dock_up { &mut above } else { &mut below } += caption;
+        *if self.card_first {
+            &mut above
+        } else {
+            &mut below
+        } += card;
+        (size(len, above + MAIN + below), (len, above + MAIN))
+    }
+
+    /// The window around a column: the caption and a card beside it, at its
+    /// foot, on the side with the screen.
+    fn fit_column(
+        &mut self,
+        plan: &Plan,
+        len: f32,
+        corner: (f64, f64),
+        visible: Rect,
+        cx: &App,
+    ) -> (Size<f32>, (f32, f32)) {
+        self.side_right = corner.0 - (MAIN as f64) / 2.0 < visible.x + visible.w / 2.0;
+        self.dock_up = true;
+        self.card_first = true;
+        let drawer = self.drawer(cx);
+        let caption = plan.caption.is_some();
+        let mut side_h = drawer.as_ref().map_or(0.0, |d| card_height(d, plan));
+        if caption {
+            side_h += CAPTION_H + if side_h > 0.0 { FLOAT_GAP } else { 0.0 };
+        }
+        let mut side_w = drawer
+            .as_ref()
+            .map_or(0.0, |d| card_width(d).unwrap_or(SIDE_W));
+        if caption {
+            side_w = side_w.max(SIDE_W);
+        }
+        let w = MAIN
+            + if side_w > 0.0 {
+                FLOAT_GAP + side_w
+            } else {
+                0.0
+            };
+        let h = len.max(side_h);
+        let anchor = if self.side_right { (MAIN, h) } else { (w, h) };
+        (size(w, h), anchor)
+    }
+
+    /// The bubbles riding on the pill, in order: whose, its window, its
+    /// width, height and corner radius.
+    fn riding<'a>(
+        &'a self,
+        plan: &'a Plan,
+    ) -> impl Iterator<Item = (&'a Who, &'a Slot, f32, f32, f32)> + 'a {
+        let aspect = plan.preview.unwrap_or(1.6);
+        plan.bubbles.iter().filter_map(move |who| {
+            let slot = self.bubbles.get(who)?;
+            let geo = self.geo.get(who)?;
+            let (w, r) = bubble::shape(who, geo.size, aspect);
+            geo.docked.then_some((who, slot, w, geo.size.round(), r))
+        })
+    }
+
+    /// Where every bubble goes, for those not there already. The ones riding
+    /// on the pill: in a row over it (or under it) ending at its right end,
+    /// past the caption; by a column, in a column beside it, from its foot
+    /// up. The ones floating by themselves stay where they were put, at
+    /// their size.
+    fn placements(&self, plan: &Plan) -> Vec<mac::Placement> {
+        let Some((corner, visible)) = self.corner() else {
+            return Vec::new();
+        };
+        let parent = self.native.clone();
+        let mut out = Vec::new();
+        let mut put = |slot: &Slot, frame: Rect, radius: f32, rides: bool, hidden: bool| {
+            let native = &slot.native;
+            let there = if hidden {
+                !native.shown()
+            } else {
+                native.shown()
+                    && native.frame() == frame
+                    && parent.as_ref().is_some_and(|p| native.rides_on(p)) == rides
+            };
+            if !there {
+                out.push(mac::Placement {
+                    window: native.clone(),
+                    frame,
+                    radius: Some(radius as f64),
+                    parent: parent.clone().filter(|_| rides),
+                    hidden,
+                });
+            }
+        };
+        let caption = if plan.caption.is_some() {
+            (CAPTION_H + FLOAT_GAP) as f64
+        } else {
+            0.0
+        };
+        let (gap, float_gap, main) = (GAP as f64, FLOAT_GAP as f64, MAIN as f64);
+        let riding: Vec<_> = self
+            .riding(plan)
+            .filter(|(who, ..)| self.dragging.as_ref() != Some(who))
+            .collect();
+        if self.tucked.is_some() {
+            // What rode on the pill goes with it.
+            for (_, slot, ..) in &riding {
+                put(slot, Rect::default(), 0.0, false, true);
+            }
+        } else if self.column {
+            let total: f64 =
+                riding.iter().map(|b| b.3 as f64).sum::<f64>() + gap * riding.len() as f64;
+            let mut y = (corner.1 + caption)
+                .min(visible.top() - total)
+                .max(visible.y);
+            for (_, slot, w, h, r) in riding.iter().rev() {
+                let (w, h) = (*w as f64, *h as f64);
+                let x = if self.side_right {
+                    corner.0 + float_gap
+                } else {
+                    corner.0 - main - float_gap - w
+                };
+                put(slot, Rect { x, y, w, h }, *r, true, false);
+                y += h + gap;
+            }
+        } else {
+            let total: f64 = riding.iter().map(|b| b.2 as f64).sum::<f64>()
+                + gap * riding.len().saturating_sub(1) as f64;
+            let most = (visible.right() - MARGIN - total).max(visible.x + MARGIN);
+            let mut x = (corner.0 - total).clamp(visible.x + MARGIN, most);
+            for (_, slot, w, h, r) in &riding {
+                let (w, h) = (*w as f64, *h as f64);
+                let y = if self.dock_up {
+                    corner.1 + main + float_gap + caption
+                } else {
+                    corner.1 - float_gap - caption - h
+                };
+                put(slot, Rect { x, y, w, h }, *r, true, false);
+                x += w + gap;
+            }
+        }
+        // By themselves: where they are, at their size, around their middle.
+        let aspect = plan.preview.unwrap_or(1.6);
+        for who in &plan.bubbles {
+            let (Some(slot), Some(geo)) = (self.bubbles.get(who), self.geo.get(who)) else {
+                continue;
+            };
+            if geo.docked || self.dragging.as_ref() == Some(who) {
+                continue;
+            }
+            let (w, r) = bubble::shape(who, geo.size, aspect);
+            let (w, h) = (w as f64, geo.size.round() as f64);
+            let old = slot.native.frame();
+            let frame = Rect {
+                x: (old.x + (old.w - w) / 2.0).clamp(
+                    visible.x + 4.0,
+                    (visible.right() - 4.0 - w).max(visible.x + 4.0),
+                ),
+                y: (old.y + (old.h - h) / 2.0).clamp(
+                    visible.y + 4.0,
+                    (visible.top() - 4.0 - h).max(visible.y + 4.0),
+                ),
+                w,
+                h,
+            };
+            let frame = if old.w == w && old.h == h { old } else { frame };
+            put(slot, frame, r, false, false);
+        }
+        out
+    }
+
+    /// Open a window for every bubble wanted, close the rest, and ask for
+    /// the video layer that fits each.
+    fn sync_bubbles(&mut self, plan: &Plan, window: &mut Window, cx: &mut Context<Self>) {
+        let gone: Vec<Who> = self
+            .bubbles
+            .keys()
+            .filter(|who| !plan.bubbles.contains(who))
+            .cloned()
+            .collect();
+        for who in gone {
+            if let Some(slot) = self.bubbles.remove(&who) {
+                // Not from inside this update: AppKit reorders windows.
+                cx.spawn(async move |_, cx| {
+                    mac::retire(&slot.native);
+                    let _ = slot
+                        .handle
+                        .update(cx, |_, window, _| window.remove_window());
+                })
+                .detach();
+            }
+        }
+        for who in &plan.bubbles {
+            self.geo.entry(who.clone()).or_insert(Geo {
+                size: who.first_size(),
+                docked: true,
+            });
+            if self.bubbles.contains_key(who) || !self.opening.insert(who.clone()) {
+                continue;
+            }
+            let (call, this, who) = (self.call.clone(), cx.weak_entity(), who.clone());
+            cx.defer(move |cx| {
+                let opened = bubble::open(call, this.clone(), who.clone(), cx);
+                let _ = this.update(cx, |this, cx| {
+                    this.opening.remove(&who);
+                    if let Some((handle, native)) = opened {
+                        this.bubbles.insert(who, Slot { handle, native });
+                    }
+                    cx.notify();
+                });
+            });
+        }
+        // The layer that fits: small bubbles don't decode 720p, and video
+        // nobody sees comes in at its lowest.
+        let scale = window.scale_factor();
+        let call = self.call.clone();
+        let members: Vec<Entity<Member>> = call.read(cx).members().cloned().collect();
+        let mut heights: HashMap<EntityId, f32> = HashMap::new();
+        for who in &plan.bubbles {
+            if let (Some(member), Some(geo)) = (self.bubble_member(who, cx), self.geo.get(who)) {
+                heights.insert(member.entity_id(), geo.size * scale);
+            }
+        }
+        call.update(cx, |call, cx| {
+            for member in &members {
+                let height = heights.get(&member.entity_id()).copied().unwrap_or(0.0);
+                call.fit_video(member, height, cx);
+            }
+        });
+    }
+
+    // ---- bubbles: what's done to them --------------------------------
+
+    /// A bubble went under the mouse button: follow it until it's let go.
+    /// Moved away, it floats by itself; dropped by the pill, it rides
+    /// again; dropped by the screen's edge, it lines up with it.
+    pub fn bubble_pressed(&mut self, who: &Who, cx: &mut Context<Self>) {
+        let Some(native) = self.bubbles.get(who).map(|s| s.native.clone()) else {
+            return;
+        };
+        let start = native.frame();
+        let who = who.clone();
+        self.dragging = Some(who.clone());
+        self.drag_task = Some(cx.spawn(async move |this, cx| {
+            let mut moved = false;
+            loop {
+                cx.background_executor().timer(DRAG_POLL).await;
+                let done = this.update(cx, |this, cx| {
+                    let frame = native.frame();
+                    moved |= (frame.x - start.x).abs() > 3.0 || (frame.y - start.y).abs() > 3.0;
+                    let near = moved && this.tucked.is_none() && this.near_pill(&frame, cx);
+                    if mac::mouse_down() {
+                        if this.magnet != near {
+                            this.magnet = near;
+                            cx.notify();
+                        }
+                        return false;
+                    }
+                    this.dragging = None;
+                    this.magnet = false;
+                    if moved {
+                        if let Some(geo) = this.geo.get_mut(&who) {
+                            geo.docked = near;
+                        }
+                        if !near {
+                            this.snap(&native, frame, cx);
+                        }
+                    }
+                    cx.notify();
+                    true
+                });
+                if done.unwrap_or(true) {
+                    break;
+                }
+            }
+        }));
+    }
+
+    /// Whether a bubble at `frame` is near enough to the pill to ride on it.
+    fn near_pill(&self, frame: &Rect, cx: &App) -> bool {
+        let Some((corner, _)) = self.corner() else {
+            return false;
+        };
+        let plan = self.plan(cx);
+        let caption = if plan.caption.is_some() {
+            (CAPTION_H + FLOAT_GAP) as f64
+        } else {
+            0.0
+        };
+        frame.distance(&self.pill_rect(&plan, corner)) < MAGNET + caption
+    }
+
+    /// A bubble dropped by the screen's edge lines up with it.
+    fn snap(&self, native: &mac::Native, frame: Rect, cx: &App) {
+        let Some(visible) = native.visible() else {
+            return;
+        };
+        let m = MARGIN + 2.0;
+        let mut to = frame;
+        if frame.x < visible.x + m + SNAP {
+            to.x = visible.x + m;
+        } else if frame.right() > visible.right() - m - SNAP {
+            to.x = visible.right() - m - frame.w;
+        }
+        if frame.y < visible.y + m + SNAP {
+            to.y = visible.y + m;
+        } else if frame.top() > visible.top() - m - SNAP {
+            to.y = visible.top() - m - frame.h;
+        }
+        if to != frame {
+            mac::place(
+                vec![mac::Placement {
+                    window: native.clone(),
+                    frame: to,
+                    radius: None,
+                    parent: None,
+                    hidden: false,
+                }],
+                cx,
+            );
+        }
+    }
+
+    /// Scrolled or pinched over: `by` times as big.
+    pub fn bubble_zoomed(&mut self, who: &Who, by: f32, cx: &mut Context<Self>) {
+        if let Some(geo) = self.geo.get_mut(who) {
+            let size = who.clamp(geo.size * by);
+            if size != geo.size {
+                geo.size = size;
+                cx.notify();
+            }
+        }
+    }
+
+    /// Double-clicked: big, or small again.
+    pub fn bubble_flipped(&mut self, who: &Who, cx: &mut Context<Self>) {
+        if let Some(geo) = self.geo.get_mut(who) {
+            geo.size = who.other_size(geo.size);
+            cx.notify();
+        }
+    }
+
+    /// Its button was pressed: your camera off, or their video out of sight
+    /// until you click their face.
+    pub fn bubble_dismissed(&mut self, who: &Who, cx: &mut Context<Self>) {
+        match who {
+            Who::Me => self.call.update(cx, |c, cx| c.toggle_camera(cx)),
+            Who::Share => self.call.update(cx, |c, cx| c.toggle_share(cx)),
+            Who::Member(identity) => {
+                self.hidden.insert(identity.clone());
+            }
+            Who::Stage => {
+                if let Some(identity) = self.stage.take() {
+                    self.hidden.insert(identity);
+                }
+            }
+        }
+        self.update_slots(cx);
+        cx.notify();
+    }
+
+    /// A face was clicked: that person's video switch.
+    fn face_clicked(&mut self, member: &Entity<Member>, cx: &mut Context<Self>) {
+        let m = member.read(cx);
+        if m.is_local {
+            self.call.update(cx, |c, cx| c.toggle_camera(cx));
+            return;
+        }
+        if m.video.is_none() {
+            return;
+        }
+        let identity = m.identity.clone();
+        let on_stage = self.stage.as_ref() == Some(&identity);
+        if self.hidden.remove(&identity) || (self.follows(cx) && !on_stage) {
+            // Back in sight; with one bubble, it shows them now.
+            if self.follows(cx) {
+                self.stage = Some(identity);
+                self.stage_at = Instant::now();
+            }
+        } else {
+            self.hidden.insert(identity);
+        }
+        self.update_slots(cx);
+        cx.notify();
+    }
+
+    // ---- the pill: dragging, turning, tucking -------------------------
+
+    /// The pill went under the mouse button: macOS moves the window; follow
+    /// the cursor until the button goes up. Still over an edge for
+    /// [`PAUSE`], the outline of what a drop makes shows; dropped there,
+    /// the pill turns or tucks away.
+    fn begin_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.start_window_move();
+        let start = mac::cursor();
+        self.drag_task = Some(cx.spawn(async move |this, cx| {
+            let (mut moved, mut last, mut still) = (false, start, Duration::ZERO);
+            loop {
+                cx.background_executor().timer(DRAG_POLL).await;
+                let done = this.update(cx, |this, cx| {
+                    let p = mac::cursor();
+                    moved |= (p.0 - start.0).hypot(p.1 - start.1) > 4.0;
+                    let zone = if moved { this.zone_at(p, cx) } else { None };
+                    if !mac::mouse_down() {
+                        this.show_ghost(None, cx);
+                        if let Some(zone) = zone {
+                            this.drop_in(zone, cx);
+                        }
+                        cx.notify();
+                        return true;
+                    }
+                    if p != last {
+                        last = p;
+                        still = Duration::ZERO;
+                        this.show_ghost(None, cx);
+                    } else {
+                        still += DRAG_POLL;
+                        if still >= PAUSE {
+                            this.show_ghost(zone, cx);
+                        }
+                    }
+                    false
+                });
+                if done.unwrap_or(true) {
+                    break;
+                }
+            }
+        }));
+    }
+
+    /// What a drop with the cursor at `p` makes of the pill, if anything.
+    fn zone_at(&self, p: (f64, f64), cx: &App) -> Option<Zone> {
+        let visible = self.native.as_ref()?.visible()?;
+        let plan = self.plan(cx);
+        let (main, v) = (MAIN as f64, visible);
+        let column = |edge: Edge| {
+            let len = pill_len(&plan, true) as f64;
+            let x = if edge == Edge::Left {
+                v.x + MARGIN + main
+            } else {
+                v.right() - MARGIN
+            };
+            let highest = (v.top() - len - 2.0).max(v.y + MARGIN);
+            let y = (p.1 - len / 2.0).clamp(v.y + MARGIN, highest).round();
+            let pill = Rect {
+                x: x - main,
+                y,
+                w: main,
+                h: len,
+            };
+            (true, (x, y), pill, len)
+        };
+        let lying = |edge: Edge| {
+            let len = pill_len(&plan, false) as f64;
+            let rightmost = (v.right() - MARGIN).max(v.x + len + MARGIN);
+            let x = (p.0 + len / 2.0)
+                .clamp(v.x + len + MARGIN, rightmost)
+                .round();
+            let y = if edge == Edge::Top {
+                v.top() - 4.0 - main
+            } else {
+                v.y + 12.0
+            };
+            let pill = Rect {
+                x: x - len,
+                y,
+                w: len,
+                h: main,
+            };
+            (false, (x, y), pill, len)
+        };
+        let at = |edge: Edge| match edge {
+            Edge::Left | Edge::Right => column(edge),
+            Edge::Top | Edge::Bottom => lying(edge),
+        };
+        let near = |d: f64| {
+            if p.0 < v.x + d {
+                Some(Edge::Left)
+            } else if p.0 > v.right() - d {
+                Some(Edge::Right)
+            } else if p.1 < v.y + d {
+                Some(Edge::Bottom)
+            } else if p.1 > v.top() - d {
+                Some(Edge::Top)
+            } else {
+                None
+            }
+        };
+        if let Some(edge) = near(TUCK) {
+            let (column, corner, _, len) = at(edge);
+            let tab = tab_rect(edge, corner, len, plan.faces.len(), v);
+            return Some(Zone {
+                edge,
+                tuck: true,
+                column,
+                corner,
+                pill: tab,
+            });
+        }
+        // Turning: a pill lying down at a side, a column at the top or bottom.
+        let edge = near(TURN)?;
+        if self.column == matches!(edge, Edge::Left | Edge::Right) {
+            return None;
+        }
+        let (column, corner, pill, _) = at(edge);
+        Some(Zone {
+            edge,
+            tuck: false,
+            column,
+            corner,
+            pill,
+        })
+    }
+
+    /// The pill was dropped in `zone`: turn it, or tuck it away.
+    fn drop_in(&mut self, zone: Zone, cx: &mut Context<Self>) {
+        tracing::debug!(?zone, "widget dropped at an edge");
+        self.open = None;
+        self.column = zone.column;
+        self.tucked = zone.tuck.then_some(zone.edge);
+        self.home = zone.corner;
+        self.jump = Some(zone.corner);
+        cx.notify();
+    }
+
+    /// The tab was clicked: the call comes back, by the edge it was in.
+    fn untuck(&mut self, cx: &mut Context<Self>) {
+        if self.tucked.take().is_some() {
+            self.jump = Some(self.home);
+            cx.notify();
+        }
+    }
+
+    /// Show the outline of what a drop would make, or take it away.
+    fn show_ghost(&mut self, zone: Option<Zone>, cx: &mut Context<Self>) {
+        self.ghost_want = zone.map(|z| z.pill);
+        self.sync_ghost(cx);
+    }
+
+    fn sync_ghost(&mut self, cx: &mut Context<Self>) {
+        let at = self.ghost_want;
+        if at == self.ghost_at {
+            return;
+        }
+        let Some((_, native)) = &self.ghost else {
+            // Opened the first time it's needed.
+            if at.is_some() && !std::mem::replace(&mut self.ghost_opening, true) {
+                let this = cx.weak_entity();
+                cx.defer(move |cx| {
+                    let ghost = open_ghost(cx);
+                    let _ = this.update(cx, |this, cx| {
+                        this.ghost_opening = false;
+                        this.ghost = ghost;
+                        this.sync_ghost(cx);
+                    });
+                });
+            }
+            return;
+        };
+        self.ghost_at = at;
+        let frame = at.unwrap_or_default();
+        mac::place(
+            vec![mac::Placement {
+                window: native.clone(),
+                frame,
+                radius: Some(ghost_radius(&frame)),
+                parent: None,
+                hidden: at.is_none(),
+            }],
+            cx,
+        );
+    }
+
+    // ---- cards ---------------------------------------------------------
 
     fn set_open(&mut self, open: Option<Drawer>, window: &mut Window, cx: &mut Context<Self>) {
         self.hover_task = None;
@@ -400,7 +1378,13 @@ impl Capsule {
         }
     }
 
-    /// Open a row once the cursor has settled.
+    /// Open `drawer`, or close it if it's the one open.
+    fn toggle(&mut self, drawer: Drawer, window: &mut Window, cx: &mut Context<Self>) {
+        let open = (self.open.as_ref() != Some(&drawer)).then_some(drawer);
+        self.set_open(open, window, cx);
+    }
+
+    /// Open a name once the cursor has settled.
     fn open_after(&mut self, open: Drawer, window: &mut Window, cx: &mut Context<Self>) {
         self.hover_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(HOVER_DELAY).await;
@@ -408,29 +1392,34 @@ impl Capsule {
         }));
     }
 
-    /// Close the open row once the cursor has been outside the window for
-    /// [`HOVER_DELAY`].
+    /// Close what's open by itself: a name once the cursor has been outside
+    /// the window for [`HOVER_DELAY`]; a card opened by a click on a click
+    /// anywhere else, or after [`AWAY`] with the cursor elsewhere.
     fn watch_cursor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cursor_task = Some(cx.spawn_in(window, async move |this, cx| {
             let mut outside = Duration::ZERO;
             loop {
                 cx.background_executor().timer(CURSOR_POLL).await;
                 let done = this.update_in(cx, |this, window, cx| {
-                    if this.open.is_none() {
+                    let Some(open) = &this.open else {
                         return true;
-                    }
+                    };
                     if mac::cursor_inside(window) == Some(false) {
                         outside += CURSOR_POLL;
                     } else {
                         outside = Duration::ZERO;
                     }
-                    if outside >= HOVER_DELAY {
+                    let close = if matches!(open, Drawer::Name(_)) {
+                        outside >= HOVER_DELAY
+                    } else {
+                        outside >= AWAY || (outside > Duration::ZERO && mac::mouse_down())
+                    };
+                    if close {
                         this.hover_task = None;
                         this.open = None;
                         cx.notify();
-                        return true;
                     }
-                    false
+                    close
                 });
                 if done.unwrap_or(true) {
                     let _ = this.update(cx, |this, _| this.cursor_task = None);
@@ -440,11 +1429,161 @@ impl Capsule {
         }));
     }
 
-    /// Open a row as if hovered (snapshot tests): `controls`, `people`, or
-    /// `none` to close it.
+    // ---- the mic button: a click, or held to talk ----------------------
+
+    /// The mic button went down while you're muted: held past
+    /// [`HOLD_AFTER`], you talk until it's let go.
+    fn mic_pressed(&mut self, cx: &mut Context<Self>) {
+        let hold = Shell::global(cx).read(cx).store.call.hold_to_talk;
+        if !hold || self.call.read(cx).mic_on {
+            return;
+        }
+        self.hold_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(HOLD_AFTER).await;
+            if !mac::mouse_down() {
+                return;
+            }
+            let held = this.update(cx, |this, cx| {
+                this.held_click = true;
+                this.call.update(cx, |c, cx| c.hold_to_talk(true, cx));
+            });
+            if held.is_err() {
+                return;
+            }
+            while mac::mouse_down() {
+                cx.background_executor().timer(DRAG_POLL).await;
+            }
+            let _ = this.update(cx, |this, cx| {
+                this.call.update(cx, |c, cx| c.hold_to_talk(false, cx));
+            });
+            // The click that ends the hold has come by now, if it will.
+            cx.background_executor()
+                .timer(Duration::from_millis(150))
+                .await;
+            let _ = this.update(cx, |this, _| this.held_click = false);
+        }));
+    }
+
+    fn mic_clicked(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.held_click) {
+            return;
+        }
+        self.hold_task = None;
+        self.call.update(cx, |c, cx| c.toggle_mic(cx));
+    }
+
+    // ---- right-click: the menu as macOS draws it -----------------------
+
+    fn context_menu(&mut self, cx: &mut Context<Self>) {
+        let c = self.call.read(cx);
+        let items = vec![
+            Some((if c.mic_on { "Mute" } else { "Unmute" }.to_owned(), false)),
+            Some(("Camera".to_owned(), c.camera != Camera::Off)),
+            Some(("Share Screen".to_owned(), c.sharing.is_some())),
+            None,
+            Some(("Copy Invite Link".to_owned(), false)),
+            Some(("Open Call Window".to_owned(), false)),
+            None,
+            Some(("Leave Call".to_owned(), false)),
+        ];
+        let (tx, rx) = async_channel::bounded(1);
+        mac::popup_menu(items, tx);
+        self.menu_task = Some(cx.spawn(async move |this, cx| {
+            let Ok(picked) = rx.recv().await else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.call.update(cx, |c, cx| match picked {
+                    0 => c.toggle_mic(cx),
+                    1 => c.toggle_camera(cx),
+                    2 => c.toggle_share(cx),
+                    4 => c.copy_link(cx),
+                    5 => c.set_mode(Mode::Regular, cx),
+                    7 => c.leave(cx),
+                    _ => {}
+                })
+            });
+        }));
+    }
+
+    /// Reach a state as if by hand (snapshot tests): a card (`controls`,
+    /// `people`…, `none` to close it), the pill at an edge (`column-left`,
+    /// `column-right`, `lying`, `tuck-left`, `tuck-bottom`, `untuck`), or a
+    /// bubble (`hide` and `show` the first camera, `big` for yours, `float`
+    /// to take yours off the pill).
     #[cfg(feature = "snapshot")]
     pub fn show(&mut self, which: &str, cx: &mut Context<Self>) {
+        let edge_point = |this: &Self, edge: Edge, d: f64| {
+            let v = this.native.as_ref()?.visible()?;
+            Some(match edge {
+                Edge::Left => (v.x + d, v.y + v.h / 2.0),
+                Edge::Right => (v.right() - d, v.y + v.h / 2.0),
+                Edge::Top => (v.x + v.w / 2.0, v.top() - d),
+                Edge::Bottom => (v.x + v.w / 2.0, v.y + d),
+            })
+        };
+        let drop_at = |this: &mut Self, edge: Edge, d: f64, cx: &mut Context<Self>| {
+            if let Some(zone) = edge_point(this, edge, d).and_then(|p| this.zone_at(p, cx)) {
+                this.drop_in(zone, cx);
+            } else {
+                tracing::warn!(?edge, "script: nothing to do at that edge");
+            }
+        };
+        let first_camera = |this: &Self, cx: &App| {
+            let call = this.call.read(cx);
+            call.others
+                .iter()
+                .find(|e| e.read(cx).video.is_some())
+                .cloned()
+        };
         // Not through set_open: the cursor is elsewhere in tests.
+        match which {
+            "column-left" => return drop_at(self, Edge::Left, 30.0, cx),
+            "column-right" => return drop_at(self, Edge::Right, 30.0, cx),
+            "lying" => return drop_at(self, Edge::Bottom, 30.0, cx),
+            "lying-top" => return drop_at(self, Edge::Top, 30.0, cx),
+            "tuck-left" => return drop_at(self, Edge::Left, 2.0, cx),
+            "tuck-bottom" => return drop_at(self, Edge::Bottom, 2.0, cx),
+            "untuck" => return self.untuck(cx),
+            "hide" | "unhide" => {
+                if let Some(member) = first_camera(self, cx) {
+                    self.face_clicked(&member, cx);
+                }
+                return;
+            }
+            "big" => return self.bubble_flipped(&Who::Me, cx),
+            "float" => {
+                if let Some(geo) = self.geo.get_mut(&Who::Me) {
+                    geo.docked = !geo.docked;
+                }
+                if let Some(slot) = self.bubbles.get(&Who::Me) {
+                    let mut frame = slot.native.frame();
+                    frame.x -= 200.0;
+                    frame.y += 120.0;
+                    mac::place(
+                        vec![mac::Placement {
+                            window: slot.native.clone(),
+                            frame,
+                            radius: None,
+                            parent: None,
+                            hidden: false,
+                        }],
+                        cx,
+                    );
+                }
+                cx.notify();
+                return;
+            }
+            "ghost" => {
+                let zone = edge_point(self, Edge::Left, 30.0).and_then(|p| self.zone_at(p, cx));
+                self.show_ghost(zone, cx);
+                return;
+            }
+            "unghost" => return self.show_ghost(None, cx),
+            "context" => return self.context_menu(cx),
+            "uncontext" => return mac::cancel_menu(),
+            _ => {}
+        }
         self.open = match which {
             "people" => Some(Drawer::People),
             "recording" => Some(Drawer::Recording),
@@ -453,102 +1592,177 @@ impl Capsule {
             "transcript" => Some(Drawer::Transcript),
             "prompt" => Some(Drawer::Prompt),
             "none" => None,
-            _ => Some(Drawer::Controls),
+            _ => Some(Drawer::Menu),
         };
         cx.notify();
     }
 }
 
+/// The outline of what a drop would make of the pill: a window of its own,
+/// so it can show anywhere on screen.
+pub struct Ghost;
+
+impl Render for Ghost {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let s = window.bounds().size;
+        let radius = ghost_radius(&Rect {
+            w: (s.width / px(1.0)) as f64,
+            h: (s.height / px(1.0)) as f64,
+            ..Rect::default()
+        });
+        div()
+            .size_full()
+            .rounded(px(radius as f32))
+            .bg(gpui::rgba(0x4f8cff2e))
+            .border_2()
+            .border_dashed()
+            .border_color(rgb(ACCENT))
+    }
+}
+
+fn open_ghost(cx: &mut App) -> Option<(WindowHandle<Ghost>, mac::Native)> {
+    let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(MAIN), px(MAIN)));
+    let mut native = None;
+    let handle = cx
+        .open_window(
+            mac::hidden_floating_options(WindowBounds::Windowed(bounds)),
+            |window, cx| {
+                native = mac::Native::of(window);
+                cx.new(|_| Ghost)
+            },
+        )
+        .inspect_err(|e| tracing::warn!("open outline: {e:#}"))
+        .ok()?;
+    Some((handle, native?))
+}
+
+/// The outline's corners: a tab's for something thin, the pill's otherwise.
+fn ghost_radius(frame: &Rect) -> f64 {
+    if frame.w.min(frame.h) <= TAB as f64 + 0.5 {
+        8.0
+    } else {
+        RADIUS as f64
+    }
+}
+
+/// The tab for a pill tucked into `edge`, by where the pill (its
+/// bottom-right `corner`, `len` long) was: a dot per person.
+fn tab_rect(edge: Edge, corner: (f64, f64), len: f64, people: usize, visible: Rect) -> Rect {
+    let long = (people as f32 * TAB_STEP + 14.0) as f64;
+    let thick = TAB as f64;
+    match edge {
+        Edge::Left | Edge::Right => {
+            let middle = corner.1 + len / 2.0;
+            let highest = (visible.top() - long).max(visible.y);
+            Rect {
+                x: if edge == Edge::Left {
+                    visible.x
+                } else {
+                    visible.right() - thick
+                },
+                y: (middle - long / 2.0).clamp(visible.y, highest),
+                w: thick,
+                h: long,
+            }
+        }
+        Edge::Top | Edge::Bottom => {
+            let middle = corner.0 - len / 2.0;
+            let rightmost = (visible.right() - long).max(visible.x);
+            Rect {
+                x: (middle - long / 2.0).clamp(visible.x, rightmost),
+                y: if edge == Edge::Top {
+                    visible.top() - thick
+                } else {
+                    visible.y
+                },
+                w: long,
+                h: thick,
+            }
+        }
+    }
+}
+
 /// While you share: the shape of what you share.
-/// Shown once the first frame arrives, so the widget grows once, to the
+/// Shown once the first frame arrives, so the bubble opens once, in the
 /// right shape.
 fn preview_aspect(me: &Member) -> Option<f32> {
     Some(me.screen.as_ref()?.sink.aspect()?.clamp(1.0, 2.5))
 }
 
-/// The stack: its front face, up to two faces peeking out behind it, "+N".
-fn stack_width(n: usize) -> f32 {
+/// The stack lying down: its front face, up to two faces peeking out behind
+/// it, "+N". Standing, the same from top to bottom.
+fn stack_len(n: usize, column: bool) -> f32 {
     let behind = n.saturating_sub(1).min(2) as f32;
-    let count = if n > 1 { GAP + 2.0 + COUNT } else { 0.0 };
-    2.0 + FACE + behind * GHOST + count + 9.0
+    if column {
+        let count = if n > 1 { 4.0 + 16.0 } else { 0.0 };
+        2.0 + FACE + behind * GHOST + count + 8.0
+    } else {
+        let count = if n > 1 { GAP + 2.0 + COUNT } else { 0.0 };
+        2.0 + FACE + behind * GHOST + count + 9.0
+    }
 }
 
-/// The hover row of controls, right-aligned under the buttons. The widget is
-/// never narrower, and its width changes on the left, so turning your camera
-/// on from that row (your face becomes a tile) moves nothing in it.
-fn controls_width(n: usize) -> f32 {
-    n as f32 * CONTROL_W + (n - 1) as f32 * CONTROL_GAP + PAD
-}
-
-fn row_width(plan: &Plan) -> f32 {
+/// How long the pill is: the seat or the faces, the stack, the buttons.
+fn pill_len(plan: &Plan, column: bool) -> f32 {
     let mut items: Vec<f32> = plan.faces.iter().map(|_| FACE).collect();
+    if plan.seat {
+        items.push(FACE);
+    }
     let mut extra = 0.0;
     if !plan.stack.is_empty() {
-        items.push(stack_width(plan.stack.len()));
-        if !plan.faces.is_empty() {
-            extra += GAP;
-        }
+        items.push(stack_len(plan.stack.len(), column));
+        extra += GAP;
     }
-    if !items.is_empty() {
-        items.push(5.0); // the separator
-    }
+    items.push(5.0); // the separator
     if plan.recording {
         items.push(BUTTON);
     }
     if plan.captions {
         items.push(BUTTON);
     }
-    items.push(3.0 * BUTTON + 2.0 * GAP);
-    2.0 * PAD + items.iter().sum::<f32>() + GAP * (items.len() - 1) as f32 + extra
+    items.push(4.0 * BUTTON + 3.0 * GAP);
+    // 2 for the pill's hairline.
+    2.0 + 2.0 * PAD + items.iter().sum::<f32>() + GAP * (items.len() - 1) as f32 + extra
 }
 
-fn strip_width(plan: &Plan) -> f32 {
-    let n = plan.tiles.len() as f32;
-    if n == 0.0 {
-        0.0
-    } else {
-        2.0 * PAD + n * TILE_W + (n - 1.0) * GAP
-    }
-}
-
-fn strip_height(plan: &Plan) -> f32 {
-    if plan.tiles.is_empty() {
-        0.0
-    } else {
-        PAD + TILE_H
-    }
-}
-
-fn preview_height(plan: &Plan, width: f32) -> f32 {
-    plan.preview
-        .map_or(0.0, |aspect| PAD + preview_size(aspect, width).height)
-}
-
-/// Your preview in the shape of what you share: the widget's width, unless
-/// that makes it taller than 300 px; then narrower, at the right end.
-fn preview_size(aspect: f32, width: f32) -> Size<f32> {
-    let h = ((width - 2.0 * PAD) / aspect).clamp(120.0, 300.0).round();
-    size((h * aspect).min(width - 2.0 * PAD).round(), h)
-}
-
-/// People per line in the stack's row, at `width`.
-fn per_line(width: f32) -> usize {
-    (((width - 24.0 + 4.0) / (PERSON + 4.0)) as usize).max(1)
-}
-
-fn drawer_height(drawer: &Drawer, plan: &Plan, width: f32) -> f32 {
-    match drawer {
-        Drawer::Controls => CONTROLS_H,
-        Drawer::Recording => BUTTON_LINE_H,
+/// How tall a card is, its hairline included.
+fn card_height(drawer: &Drawer, plan: &Plan) -> f32 {
+    2.0 + match drawer {
+        Drawer::Menu => {
+            let rule = if plan.menu_extras > 0 { 9.0 } else { 0.0 };
+            12.0 + MENU_HEAD + (3 + plan.menu_extras) as f32 * MENU_ITEM + rule
+        }
+        Drawer::Recording | Drawer::Transcript => BUTTON_LINE_H,
         Drawer::RecordChoice | Drawer::TranscribeChoice | Drawer::Prompt => CHOICE_H,
-        Drawer::Transcript => BUTTON_LINE_H,
         Drawer::Notice if plan.notice_button => BUTTON_LINE_H,
         Drawer::Name(_) | Drawer::Notice => LINE_H,
         Drawer::People => {
-            let lines = plan.stack.len().div_ceil(per_line(width)).max(1) as f32;
-            1.0 + 8.0 + 18.0 + lines * 52.0 + (lines - 1.0) * 8.0 + 10.0
+            let lines = plan.stack.len().div_ceil(4).max(1) as f32;
+            10.0 + 18.0 + lines * 52.0 + (lines - 1.0) * 8.0 + 10.0
         }
     }
+}
+
+/// The menu and the people have a width; the rest is as wide as its words.
+fn card_width(drawer: &Drawer) -> Option<f32> {
+    match drawer {
+        Drawer::Menu => Some(MENU_W),
+        Drawer::People => Some(PEOPLE_W),
+        _ => None,
+    }
+}
+
+/// The end of `text` that fits in about `width` points at 12.5 px, from a
+/// word's start, with "…" before it: the caption shows the newest words.
+fn tail(text: &str, width: f32) -> String {
+    let budget = (width / 6.6).max(8.0) as usize;
+    let count = text.chars().count();
+    if count <= budget {
+        return text.to_owned();
+    }
+    let cut: String = text.chars().skip(count - budget + 1).collect();
+    let from = cut.find(' ').map_or(0, |ix| ix + 1);
+    format!("…{}", &cut[from..])
 }
 
 /// "speaking", "active 40 s ago", "muted"…
@@ -576,241 +1790,132 @@ impl Render for Capsule {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.update_slots(cx);
         let plan = self.fit(window, cx);
-        let pixel_height = TILE_H * window.scale_factor();
-        for member in &plan.tiles {
-            self.call
-                .update(cx, |call, cx| call.fit_video(member, pixel_height, cx));
-        }
-        let width = self.size.width;
-        let drawer = self.drawer(cx).map(|d| {
-            let h = drawer_height(&d, &plan, width);
-            self.drawer_view(&d, &plan, h, cx)
-        });
-        let above = self.drawer_above;
-        let preview = self.preview_view(&plan, width, cx);
-        let strip = self.strip_view(&plan, cx);
-        let main = self.main_view(&plan, cx);
-        let (drawer_above, drawer_below) = if above {
-            (drawer, None)
+        // Until a resize lands, draw the pill where it is on screen now.
+        let (left, top) = (self.shown.0 - self.anchor.0, self.shown.1 - self.anchor.1);
+        let content = if let Some(edge) = self.tucked {
+            self.tab_view(edge, &plan, cx).into_any_element()
         } else {
-            (None, drawer)
+            let drawer = self.drawer(cx);
+            let len = pill_len(&plan, self.column);
+            let pill = self.main_view(&plan, cx);
+            if self.column {
+                let side_w = self.size.width - MAIN - FLOAT_GAP;
+                let card =
+                    drawer.map(|d| self.drawer_view(&d, &plan, card_height(&d, &plan), false, cx));
+                let caption = self.caption_view(&plan, side_w);
+                let right = self.side_right;
+                let side = (card.is_some() || caption.is_some()).then(|| {
+                    div()
+                        .w(px(side_w.max(0.0)))
+                        .flex()
+                        .flex_col()
+                        .gap(px(FLOAT_GAP))
+                        .map(|el| {
+                            if right {
+                                el.items_start()
+                            } else {
+                                el.items_end()
+                            }
+                        })
+                        .children(card)
+                        .children(caption)
+                });
+                div()
+                    .size_full()
+                    .flex()
+                    .items_end()
+                    .gap(px(FLOAT_GAP))
+                    .map(|row| {
+                        if right {
+                            row.child(pill).children(side)
+                        } else {
+                            row.justify_end().children(side).child(pill)
+                        }
+                    })
+                    .into_any_element()
+            } else {
+                let card =
+                    drawer.map(|d| self.drawer_view(&d, &plan, card_height(&d, &plan), true, cx));
+                let caption = self.caption_view(&plan, len.min(CAPTION_MAX)).map(|c| {
+                    div()
+                        .flex_none()
+                        .h(px(CAPTION_H + FLOAT_GAP))
+                        .flex()
+                        .map(|el| {
+                            if self.dock_up {
+                                el.items_start()
+                            } else {
+                                el.items_end()
+                            }
+                        })
+                        .child(c)
+                });
+                let (card_over, card_under) = if self.card_first {
+                    (card, None)
+                } else {
+                    (None, card)
+                };
+                let (caption_over, caption_under) = if self.dock_up {
+                    (caption, None)
+                } else {
+                    (None, caption)
+                };
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .children(card_over)
+                    .children(caption_over)
+                    .child(pill)
+                    .children(caption_under)
+                    .children(card_under)
+                    .into_any_element()
+            }
         };
-        // Until a resize lands, draw the main row where it is on screen now,
-        // and keep the right end (the buttons) in place.
-        let top = self.shown_above - self.above;
 
         div()
             .id("capsule")
             .size_full()
             .relative()
             .overflow_hidden()
-            .bg(glass_tint())
             .text_color(rgb(TEXT))
             .text_size(px(13.0))
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
+            // Any spot that isn't a button drags the widget; a press outside
+            // the open card closes it; twice is the call window.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    if this.open.is_some() {
+                        this.set_open(None, window, cx);
+                    }
+                    if event.click_count >= 2 && this.tucked.is_none() {
+                        this.call.update(cx, |c, cx| c.set_mode(Mode::Regular, cx));
+                    } else {
+                        this.begin_drag(window, cx);
+                    }
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, _, window, cx| {
+                    this.set_open(None, window, cx);
+                    this.context_menu(cx);
+                }),
+            )
             .child(
                 div()
                     .absolute()
-                    .right_0()
+                    .left(px(left))
                     .top(px(top))
-                    .w(px(width))
-                    .flex()
-                    .flex_col()
-                    .map(|column| {
-                        if self.tops_below {
-                            column
-                                .child(main)
-                                .children(drawer_below)
-                                .children(strip)
-                                .children(preview)
-                        } else {
-                            column
-                                .children(preview)
-                                .children(strip)
-                                .children(drawer_above)
-                                .child(main)
-                                .children(drawer_below)
-                        }
-                    }),
+                    .w(px(self.size.width))
+                    .h(px(self.size.height))
+                    .child(content),
             )
     }
 }
 
 impl Capsule {
-    fn preview_view(&self, plan: &Plan, width: f32, cx: &mut Context<Self>) -> Option<Div> {
-        let box_size = preview_size(plan.preview?, width);
-        let c = self.call.read(cx);
-        let frame = c.me.read(cx).screen.as_ref().and_then(|v| v.sink.latest());
-        let preset = c.sharing.map(|p| p.label());
-        let call = self.call.clone();
-        Some(
-            div()
-                .flex_none()
-                .map(|el| {
-                    if self.tops_below {
-                        el.pb(px(PAD))
-                    } else {
-                        el.pt(px(PAD))
-                    }
-                })
-                .px(px(PAD))
-                .flex()
-                .justify_end()
-                .child(
-                    div()
-                        .h(px(box_size.height))
-                        .w(px(box_size.width))
-                        .relative()
-                        .rounded(px(PREVIEW_RADIUS))
-                        .bg(rgb(0x000000))
-                        .children(
-                            frame.map(|f| {
-                                rounded_video(f, PREVIEW_RADIUS, RING, ObjectFit::Contain)
-                            }),
-                        )
-                        .child(ring(PREVIEW_RADIUS, RING, rgb(EDGE)))
-                        .child(
-                            div()
-                                .absolute()
-                                .left(px(8.0))
-                                .top(px(8.0))
-                                .h(px(22.0))
-                                .px(px(8.0))
-                                .flex()
-                                .items_center()
-                                .gap(px(6.0))
-                                .rounded(px(8.0))
-                                .bg(black(0.62))
-                                .text_size(px(11.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(div().size(px(7.0)).rounded_full().bg(rgb(ACCENT)))
-                                .child(match preset {
-                                    Some(preset) => format!("Sharing · {preset}"),
-                                    None => "Starting to share…".into(),
-                                }),
-                        )
-                        .child(
-                            div()
-                                .id("stop-share")
-                                .absolute()
-                                .right(px(8.0))
-                                .top(px(8.0))
-                                .h(px(22.0))
-                                .px(px(9.0))
-                                .flex()
-                                .items_center()
-                                .rounded(px(8.0))
-                                .bg(rgb(DANGER))
-                                .text_size(px(11.0))
-                                .font_weight(FontWeight::BOLD)
-                                .cursor_pointer()
-                                .hover(|s| s.opacity(0.88))
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .on_click(move |_, _, cx| {
-                                    call.update(cx, |c, cx| c.toggle_share(cx))
-                                })
-                                .child("Stop"),
-                        ),
-                ),
-        )
-    }
-
-    fn strip_view(&self, plan: &Plan, cx: &mut Context<Self>) -> Option<Div> {
-        if plan.tiles.is_empty() {
-            return None;
-        }
-        let tiles: Vec<AnyElement> = plan
-            .tiles
-            .iter()
-            .enumerate()
-            .map(|(ix, member)| self.tile(ix, member, plan, cx).into_any_element())
-            .collect();
-        Some(
-            div()
-                .flex_none()
-                .h(px(PAD + TILE_H))
-                .map(|el| {
-                    if self.tops_below {
-                        el.pb(px(PAD))
-                    } else {
-                        el.pt(px(PAD))
-                    }
-                })
-                .flex()
-                .justify_end()
-                .px(px(PAD))
-                .gap(px(GAP))
-                .children(tiles),
-        )
-    }
-
-    fn tile(
-        &self,
-        ix: usize,
-        member: &Entity<Member>,
-        plan: &Plan,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let m = member.read(cx);
-        let speaking = m.speaking && !m.mic_muted;
-        let sharing = !m.is_local && plan.sharers.contains(&m.identity);
-        let content = match m.video.as_ref().and_then(|v| v.sink.latest()) {
-            Some(frame) => {
-                rounded_video(frame, TILE_RADIUS, RING, ObjectFit::Cover).into_any_element()
-            }
-            None => div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(avatar(&m.name, 44.0))
-                .into_any_element(),
-        };
-        let name = if m.is_local {
-            "You".to_owned()
-        } else {
-            first_name(&m.name).to_owned()
-        };
-        let muted = m.mic_muted;
-        let identity = m.identity.clone();
-        div()
-            .id(("tile", ix))
-            .relative()
-            .flex_none()
-            .w(px(TILE_W))
-            .h(px(TILE_H))
-            .rounded(px(TILE_RADIUS))
-            .bg(avatar_background(&m.name))
-            .child(content)
-            .child(ring(
-                TILE_RADIUS,
-                RING,
-                if speaking { rgb(SPEAKING) } else { rgb(EDGE) },
-            ))
-            .child(
-                div()
-                    .absolute()
-                    .left(px(6.0))
-                    .bottom(px(6.0))
-                    .h(px(20.0))
-                    .px(px(7.0))
-                    .flex()
-                    .items_center()
-                    .gap(px(4.0))
-                    .rounded(px(7.0))
-                    .bg(black(0.55))
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .when(muted, |el| {
-                        el.child(icon(Icon::MicOff, 10.0, rgb(0xff8a80)))
-                    })
-                    .child(name),
-            )
-            .when(sharing, |el| {
-                el.child(self.share_badge(&identity, 6.0, 6.0))
-            })
-    }
-
     /// The screen badge on someone sharing: click for their share window.
     fn share_badge(&self, identity: &str, top: f32, right: f32) -> Stateful<Div> {
         let call = self.call.clone();
@@ -842,29 +1947,89 @@ impl Capsule {
     }
 
     fn main_view(&self, plan: &Plan, cx: &mut Context<Self>) -> Div {
+        let column = self.column;
         let faces: Vec<AnyElement> = plan
             .faces
             .iter()
             .enumerate()
             .map(|(ix, member)| self.face(ix, member, plan, cx).into_any_element())
             .collect();
-        let has_faces = !faces.is_empty();
-        let stack = (!plan.stack.is_empty()).then(|| self.stack_view(plan, has_faces, cx));
+        let stack = (!plan.stack.is_empty()).then(|| self.stack_view(plan, cx));
         let c = self.call.read(cx);
+        // Alone: a seat where the first guest will sit. It copies the link.
+        let seat = plan.seat.then(|| {
+            let call = self.call.clone();
+            let glyph = if c.copied_at.is_some() {
+                Icon::Check
+            } else {
+                Icon::Plus
+            };
+            div()
+                .id("seat")
+                .flex_none()
+                .size(px(FACE))
+                .rounded_full()
+                .border_1()
+                .border_dashed()
+                .border_color(white(0.3))
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .hover(|s| s.border_color(white(0.6)))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(move |_, _, cx| call.update(cx, |c, cx| c.copy_link(cx)))
+                .child(icon(glyph, 16.0, rgb(TEXT_DIM)))
+        });
         let on = |f: fn(&mut Call, &mut Context<Call>)| {
             let call = self.call.clone();
             move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| call.update(cx, f)
         };
         let sharing = c.sharing.is_some();
+        // Held to talk: green until it's let go. Talking while muted: a
+        // ring, for as long as the notice says so.
+        let mic = div()
+            .relative()
+            .flex_none()
+            .child(
+                round_button(
+                    "mic",
+                    if c.mic_on { Icon::Mic } else { Icon::MicOff },
+                    BUTTON,
+                    if c.held {
+                        Tone::Live
+                    } else if c.mic_on {
+                        Tone::Plain
+                    } else {
+                        Tone::Off
+                    },
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| this.mic_pressed(cx)),
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.mic_clicked(cx))),
+            )
+            .when(c.nudging(), |el| {
+                el.child(ring(BUTTON / 2.0, 2.0, rgb(ACCENT)))
+            });
         let controls = div()
-            .id("controls")
             .flex()
+            .when(column, |el| el.flex_col())
             .gap(px(GAP))
-            .on_hover(cx.listener(|this, hovered: &bool, window, cx| {
-                if *hovered {
-                    this.set_open(Some(Drawer::Controls), window, cx);
-                }
-            }))
+            .child(
+                round_button(
+                    "more",
+                    Icon::Ellipsis,
+                    BUTTON,
+                    if self.open == Some(Drawer::Menu) {
+                        Tone::Selected
+                    } else {
+                        Tone::Plain
+                    },
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.toggle(Drawer::Menu, window, cx))),
+            )
             .child(
                 round_button(
                     "share",
@@ -878,35 +2043,24 @@ impl Capsule {
                 )
                 .on_click(on(Call::toggle_share)),
             )
+            .child(mic)
             .child(
-                round_button(
-                    "mic",
-                    if c.mic_on { Icon::Mic } else { Icon::MicOff },
-                    BUTTON,
-                    if c.mic_on { Tone::Plain } else { Tone::Off },
-                )
-                .on_click(on(Call::toggle_mic)),
-            )
-            .child(
-                round_button("leave", Icon::PhoneOff, BUTTON, Tone::Danger)
+                round_button("leave", Icon::PhoneDown, BUTTON, Tone::Danger)
                     .on_click(on(Call::leave)),
             );
-        let separator = (has_faces || stack.is_some())
-            .then(|| div().w(px(1.0)).h(px(24.0)).mx(px(2.0)).bg(white(0.14)));
-        // Everyone sees that the call is recorded; hovering says by whom.
+        let separator = if column {
+            div().w(px(24.0)).h(px(1.0)).my(px(2.0)).bg(white(0.14))
+        } else {
+            div().w(px(1.0)).h(px(24.0)).mx(px(2.0)).bg(white(0.14))
+        };
+        // Everyone sees that the call is recorded; a click says by whom.
         let record = plan.recording.then(|| {
-            round_button("recording", Icon::CircleDot, BUTTON, Tone::Recording)
-                .on_hover(cx.listener(|this, hovered: &bool, window, cx| {
-                    if *hovered {
-                        this.set_open(Some(Drawer::Recording), window, cx);
-                    }
-                }))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.set_open(Some(Drawer::Recording), window, cx)
-                }))
+            round_button("recording", Icon::CircleDot, BUTTON, Tone::Recording).on_click(
+                cx.listener(|this, _, window, cx| this.toggle(Drawer::Recording, window, cx)),
+            )
         });
-        // Nobody is transcribed without seeing it either; click for the
-        // transcript, hover for who does it.
+        // Nobody is transcribed without seeing it either; a click says on
+        // whose Mac, with the transcript and Stop.
         let captions = plan.captions.then(|| {
             let live = c.transcription.is_some();
             div()
@@ -917,22 +2071,14 @@ impl Capsule {
                         "captions",
                         Icon::Captions,
                         BUTTON,
-                        if c.transcript_open {
+                        if self.open == Some(Drawer::Transcript) {
                             Tone::Selected
                         } else {
                             Tone::Plain
                         },
                     )
-                    .on_hover(cx.listener(|this, hovered: &bool, window, cx| {
-                        if *hovered {
-                            this.set_open(Some(Drawer::Transcript), window, cx);
-                        }
-                    }))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.call.update(cx, |c, cx| {
-                            let open = !c.transcript_open;
-                            c.set_transcript_open(open, cx)
-                        })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle(Drawer::Transcript, window, cx)
                     })),
                 )
                 .when(live, |el| {
@@ -949,22 +2095,41 @@ impl Capsule {
                     )
                 })
         });
+        let len = pill_len(plan, column);
         div()
             .flex_none()
-            .h(px(MAIN))
-            .px(px(PAD))
+            .map(|el| {
+                if column {
+                    el.w(px(MAIN)).h(px(len)).py(px(PAD)).flex_col()
+                } else {
+                    el.h(px(MAIN)).w(px(len)).px(px(PAD))
+                }
+            })
             .flex()
             .items_center()
             .justify_end()
             .gap(px(GAP))
+            .rounded(px(RADIUS))
+            .bg(rgb(PILL))
+            .border_1()
+            // A dragged bubble is near enough to ride again.
+            .border_color(if self.magnet {
+                rgb(ACCENT).into()
+            } else {
+                white(0.09)
+            })
+            .children(seat)
             .children(faces)
             .children(stack)
-            .children(separator)
+            .child(separator)
             .children(record)
             .children(captions)
             .child(controls)
     }
 
+    /// A face: who it is, and their video's switch. Yours turns your camera
+    /// on and off; anyone else's with a camera hides and shows their
+    /// bubble. Pressed and moved, it drags the widget like any other spot.
     fn face(
         &self,
         ix: usize,
@@ -978,45 +2143,106 @@ impl Capsule {
         let muted = m.mic_muted;
         let identity = m.identity.clone();
         let name = m.name.clone();
+        let switch = m.is_local || m.video.is_some();
+        let unseen = !m.is_local && m.video.is_some() && self.hidden.contains(&m.identity);
+        let member = member.clone();
         div()
             .id(("face", ix))
             .relative()
             .flex_none()
             .size(px(FACE))
             .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
-                if *hovered {
-                    this.open_after(Drawer::Name(identity.clone()), window, cx);
-                } else {
+                let name = Drawer::Name(identity.clone());
+                if !*hovered {
                     this.hover_task = None;
+                    if this.open == Some(name) {
+                        this.set_open(None, window, cx);
+                    }
+                } else if matches!(this.open, None | Some(Drawer::Name(_))) {
+                    // Not over a card opened by a click.
+                    this.open_after(name, window, cx);
                 }
             }))
+            .when(switch, |el| {
+                el.cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.press = Some(event.position);
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                        let Some(from) = this.press else {
+                            return;
+                        };
+                        if event.pressed_button != Some(MouseButton::Left) {
+                            this.press = None;
+                            return;
+                        }
+                        let moved = event.position - from;
+                        if (moved.x / px(1.0)).hypot(moved.y / px(1.0)) > 4.0 {
+                            this.press = None;
+                            this.begin_drag(window, cx);
+                        }
+                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.press.take().is_some() {
+                            this.face_clicked(&member, cx);
+                        }
+                    }))
+            })
             .child(avatar(&name, FACE))
             .when(speaking, |el| {
                 el.child(ring(FACE / 2.0, RING, rgb(SPEAKING)))
             })
             .when(muted, |el| el.child(mute_badge()))
+            .when(unseen, |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .left(px(-2.0))
+                        .bottom(px(-2.0))
+                        .size(px(16.0))
+                        .rounded_full()
+                        .bg(rgb(0x2c2f38))
+                        .border_2()
+                        .border_color(rgb(EDGE))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon(Icon::VideoOff, 8.0, rgb(TEXT))),
+                )
+            })
             .when(sharing, |el| {
                 el.child(self.share_badge(&m.identity, -4.0, -4.0))
             })
     }
 
-    fn stack_view(&self, plan: &Plan, after_faces: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn stack_view(&self, plan: &Plan, cx: &mut Context<Self>) -> Stateful<Div> {
+        let column = self.column;
         let n = plan.stack.len();
         let behind = n.saturating_sub(1).min(2);
         let front = plan.stack[0].read(cx);
         let open = self.open == Some(Drawer::People);
-        // The next people in the stack, peeking out to the right, dimmer
-        // the further back they are.
+        // The next people in the stack, peeking out behind the front one,
+        // dimmer the further back they are.
         let peeking: Vec<AnyElement> = plan.stack[1..=behind]
             .iter()
             .enumerate()
             .rev()
             .map(|(ix, member)| {
                 let name = member.read(cx).name.clone();
+                let by = (ix + 1) as f32 * GHOST;
                 div()
                     .absolute()
-                    .top_0()
-                    .left(px((ix + 1) as f32 * GHOST))
+                    .map(|el| {
+                        if column {
+                            el.left_0().top(px(by))
+                        } else {
+                            el.top_0().left(px(by))
+                        }
+                    })
                     .size(px(FACE))
                     .rounded_full()
                     .bg(rgb(EDGE))
@@ -1024,30 +2250,45 @@ impl Capsule {
                     .into_any_element()
             })
             .collect();
+        let pile = behind as f32 * GHOST;
         div()
             .id("stack")
             .flex_none()
-            .h(px(44.0))
-            .pl(px(2.0))
-            .pr(px(9.0))
-            .when(after_faces, |el| el.ml(px(GAP)))
+            .map(|el| {
+                if column {
+                    el.w(px(44.0))
+                        .pt(px(2.0))
+                        .pb(px(8.0))
+                        .mt(px(GAP))
+                        .flex_col()
+                        .gap(px(4.0))
+                } else {
+                    el.h(px(44.0))
+                        .pl(px(2.0))
+                        .pr(px(9.0))
+                        .ml(px(GAP))
+                        .gap(px(GAP))
+                }
+            })
             .flex()
             .items_center()
-            .gap(px(GAP))
-            .rounded_full()
+            .rounded(px(22.0))
             .bg(white(if open { 0.12 } else { 0.06 }))
+            .cursor_pointer()
             .hover(|s| s.bg(white(0.12)))
-            .on_hover(cx.listener(|this, hovered: &bool, window, cx| {
-                if *hovered {
-                    this.set_open(Some(Drawer::People), window, cx);
-                }
-            }))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, window, cx| this.toggle(Drawer::People, window, cx)))
             .child(
                 div()
                     .relative()
                     .flex_none()
-                    .h(px(FACE))
-                    .w(px(FACE + behind as f32 * GHOST))
+                    .map(|el| {
+                        if column {
+                            el.w(px(FACE)).h(px(FACE + pile))
+                        } else {
+                            el.h(px(FACE)).w(px(FACE + pile))
+                        }
+                    })
                     .children(peeking)
                     .child(
                         div()
@@ -1063,9 +2304,13 @@ impl Capsule {
             .when(n > 1, |el| {
                 el.child(
                     div()
-                        .w(px(COUNT))
-                        .ml(px(2.0))
-                        .text_size(px(13.0))
+                        .map(|el| {
+                            if column {
+                                el.h(px(16.0)).text_size(px(12.0))
+                            } else {
+                                el.w(px(COUNT)).ml(px(2.0)).text_size(px(13.0))
+                            }
+                        })
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(rgb(TEXT_DIM))
                         .child(format!("+{}", n - 1)),
@@ -1073,16 +2318,95 @@ impl Capsule {
             })
     }
 
+    /// The sentence being said, by the pill: who, and the newest words.
+    fn caption_view(&self, plan: &Plan, width: f32) -> Option<Div> {
+        let caption = plan.caption.as_ref()?;
+        let line = div()
+            .flex_none()
+            .h(px(CAPTION_H))
+            .w(px(width))
+            .px(px(12.0))
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .overflow_hidden()
+            .rounded(px(CAPTION_H / 2.0))
+            .bg(rgb(CARD))
+            .border_1()
+            .border_color(white(0.09))
+            .text_size(px(12.5))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        Some(match caption {
+            Some((who, text)) => {
+                let room = width - 26.0 - 6.0 - who.chars().count() as f32 * 7.4;
+                line.child(
+                    div()
+                        .flex_none()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(TEXT_DIM))
+                        .child(who.clone()),
+                )
+                .child(div().min_w_0().truncate().child(tail(text, room)))
+            }
+            None => line.text_color(rgb(TEXT_DIM)).child("Listening…"),
+        })
+    }
+
+    /// Tucked into an edge: a tab with a dot per person in the row, green
+    /// while they speak, red for you muted. A click brings the call back.
+    fn tab_view(&self, edge: Edge, plan: &Plan, cx: &mut Context<Self>) -> Stateful<Div> {
+        let dots: Vec<Div> = plan
+            .faces
+            .iter()
+            .map(|member| {
+                let m = member.read(cx);
+                let color = if m.speaking && !m.mic_muted {
+                    rgb(SPEAKING).into()
+                } else if m.is_local && m.mic_muted {
+                    rgb(DANGER).into()
+                } else {
+                    white(0.32)
+                };
+                div().flex_none().size(px(TAB_DOT)).rounded_full().bg(color)
+            })
+            .collect();
+        let r = px(9.0);
+        div()
+            .id("tab")
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(TAB_STEP - TAB_DOT))
+            .bg(rgb(PILL))
+            .border_1()
+            .border_color(white(0.14))
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(0x22242b)))
+            .map(|el| match edge {
+                Edge::Left => el.flex_col().rounded_tr(r).rounded_br(r),
+                Edge::Right => el.flex_col().rounded_tl(r).rounded_bl(r),
+                Edge::Top => el.rounded_bl(r).rounded_br(r),
+                Edge::Bottom => el.rounded_tl(r).rounded_tr(r),
+            })
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, _, cx| this.untuck(cx)))
+            .children(dots)
+    }
+
+    /// A card by the pill. Lying down (`lying`): with a gap between, at the
+    /// pill's right end, or centred over it for a name. By a column: at the
+    /// column's side.
     fn drawer_view(
         &self,
         drawer: &Drawer,
         plan: &Plan,
         height: f32,
+        lying: bool,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let above = self.drawer_above;
+    ) -> Div {
         let body: AnyElement = match drawer {
-            Drawer::Controls => self.controls_row(cx).into_any_element(),
+            Drawer::Menu => self.menu(cx).into_any_element(),
             Drawer::People => self.people_row(plan, cx).into_any_element(),
             Drawer::Name(identity) => self.name_line(identity, plan, cx),
             Drawer::Recording => self.recording_line(cx),
@@ -1092,38 +2416,89 @@ impl Capsule {
             Drawer::Prompt => self.prompt_view(cx).into_any_element(),
             Drawer::Notice => self.notice_line(cx),
         };
-        let line = || div().flex_none().h(px(1.0)).mx(px(12.0)).bg(white(0.08));
-        div()
-            .id("drawer")
+        // The menu and the people have a width; the rest is as wide as its
+        // words, up to the widget's width.
+        let radius = match drawer {
+            Drawer::Menu
+            | Drawer::People
+            | Drawer::RecordChoice
+            | Drawer::TranscribeChoice
+            | Drawer::Prompt => CARD_RADIUS,
+            _ => height / 2.0,
+        };
+        let centred = lying && matches!(drawer, Drawer::Name(_));
+        let card = div()
+            .id("card")
             .flex_none()
             .h(px(height))
+            .max_w_full()
             .overflow_hidden()
+            .rounded(px(radius))
+            .bg(rgb(CARD))
+            .border_1()
+            .border_color(white(0.09))
             .flex()
             .flex_col()
-            .when(above, |el| el.pt(px(10.0)))
-            .when(!above, |el| el.child(line().mb(px(8.0))))
-            .child(div().flex_1().min_h_0().child(body))
-            .when(above, |el| el.child(line().mt(px(8.0))))
-            .when(!above, |el| el.pb(px(10.0)))
+            .justify_center()
+            .when_some(card_width(drawer), |el, width| el.w(px(width)))
+            // A press in a card neither drags the widget nor closes the card.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(body);
+        if !lying {
+            return div().flex_none().max_w_full().child(card);
+        }
+        div()
+            .flex_none()
+            .w_full()
+            .h(px(height + FLOAT_GAP))
+            .flex()
+            .map(|el| {
+                if centred {
+                    el.justify_center()
+                } else {
+                    el.justify_end()
+                }
+            })
+            .map(|el| {
+                if self.card_first {
+                    el.items_start()
+                } else {
+                    el.items_end()
+                }
+            })
+            .child(card)
     }
 
     fn people_row(&self, plan: &Plan, cx: &mut Context<Self>) -> Div {
+        // With one bubble for the speaker, a person here with a camera on
+        // is a switch too: a click puts them in it, or hides them again.
+        let follows = self.follows(cx);
         let people: Vec<AnyElement> = plan
             .stack
             .iter()
-            .map(|member| {
+            .enumerate()
+            .map(|(ix, member)| {
                 let m = member.read(cx);
+                let switch = follows && m.video.is_some();
+                let unseen = switch && self.hidden.contains(&m.identity);
+                let member = member.clone();
                 div()
+                    .id(("person", ix))
                     .w(px(PERSON))
                     .flex()
                     .flex_col()
                     .items_center()
                     .gap(px(4.0))
+                    .when(switch, |el| {
+                        el.cursor_pointer().on_click(
+                            cx.listener(move |this, _, _, cx| this.face_clicked(&member, cx)),
+                        )
+                    })
                     .child(
                         div()
                             .relative()
                             .size(px(34.0))
-                            .child(avatar(&m.name, 34.0))
+                            .child(avatar(&m.name, 34.0).when(unseen, |el| el.opacity(0.5)))
                             .when(m.mic_muted, |el| el.child(mute_badge())),
                     )
                     .child(
@@ -1308,40 +2683,84 @@ impl Capsule {
         }
     }
 
-    fn controls_row(&self, cx: &mut Context<Self>) -> Div {
+    /// The ⋯ menu: the room and how long you've been in it, then Camera,
+    /// Invite, Call window, and Record and Transcribe while the call has
+    /// neither. Those two ask their question in the same card.
+    fn menu(&self, cx: &mut Context<Self>) -> Div {
+        type Action = Box<dyn Fn(&mut Capsule, &mut Window, &mut Context<Capsule>)>;
         let c = self.call.read(cx);
         let camera_off = c.camera == Camera::Off;
-        let item = |id: &'static str,
-                    glyph: Icon,
-                    tone: Tone,
-                    label: &'static str,
-                    action: Box<dyn Fn(&mut App)>| {
-            div()
-                .w(px(CONTROL_W))
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(px(4.0))
-                .child(round_button(id, glyph, 36.0, tone).on_click(move |_, _, cx| action(cx)))
-                .child(
-                    div()
-                        .h(px(14.0))
-                        .whitespace_nowrap()
-                        .text_size(px(10.0))
-                        .text_color(rgb(TEXT_DIM))
-                        .child(label),
-                )
-        };
         let can_record = c.recording.is_none();
         let can_transcribe = c.can_transcribe();
-        let (call, call2, call3) = (self.call.clone(), self.call.clone(), self.call.clone());
-        let this = cx.entity().downgrade();
-        let this2 = this.clone();
+        let room = if c.room.name.is_empty() {
+            "Call".to_owned()
+        } else {
+            c.room.name.clone()
+        };
+        let time = c.elapsed().map(clock).unwrap_or_default();
+        let item = |id: &'static str,
+                    glyph: Icon,
+                    label: &'static str,
+                    state: Option<&'static str>,
+                    more: bool,
+                    action: Action| {
+            div()
+                .id(id)
+                .h(px(MENU_ITEM))
+                .px(px(10.0))
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .rounded(px(10.0))
+                .cursor_pointer()
+                .hover(|s| s.bg(white(0.08)))
+                .on_click(cx.listener(move |this, _, window, cx| action(this, window, cx)))
+                .child(icon(glyph, 16.0, rgb(TEXT)))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(label),
+                )
+                .when_some(state, |el, state| {
+                    el.child(
+                        div()
+                            .flex_none()
+                            .text_size(px(12.0))
+                            .text_color(rgb(TEXT_DIM))
+                            .child(state),
+                    )
+                })
+                .when(more, |el| {
+                    el.child(icon(Icon::ChevronRight, 14.0, rgb(TEXT_DIM)))
+                })
+        };
         div()
+            .p(px(6.0))
             .flex()
-            .justify_end()
-            .pr(px(PAD))
-            .gap(px(CONTROL_GAP))
+            .flex_col()
+            .child(
+                div()
+                    .h(px(MENU_HEAD))
+                    .px(px(10.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(12.0))
+                    .text_size(px(12.0))
+                    .text_color(rgb(TEXT_DIM))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(TEXT))
+                            .child(room),
+                    )
+                    .child(div().flex_none().child(time)),
+            )
             .child(item(
                 "camera",
                 if camera_off {
@@ -1349,56 +2768,62 @@ impl Capsule {
                 } else {
                     Icon::Video
                 },
-                if camera_off { Tone::Off } else { Tone::Plain },
-                if camera_off {
-                    "Camera off"
-                } else {
-                    "Camera on"
-                },
-                Box::new(move |cx| call.update(cx, |c, cx| c.toggle_camera(cx))),
+                "Camera",
+                Some(if camera_off { "Off" } else { "On" }),
+                false,
+                Box::new(|this, window, cx| {
+                    this.set_open(None, window, cx);
+                    this.call.update(cx, |c, cx| c.toggle_camera(cx));
+                }),
             ))
             .child(item(
-                "link",
+                "invite",
                 Icon::UserPlus,
-                Tone::Plain,
                 "Invite",
-                Box::new(move |cx| call2.update(cx, |c, cx| c.invite(cx))),
+                None,
+                false,
+                Box::new(|this, window, cx| {
+                    this.set_open(None, window, cx);
+                    this.call.update(cx, |c, cx| c.invite(cx));
+                }),
             ))
             .child(item(
                 "window",
                 Icon::Maximize,
-                Tone::Plain,
                 "Call window",
-                Box::new(move |cx| call3.update(cx, |c, cx| c.set_mode(Mode::Regular, cx))),
+                None,
+                false,
+                Box::new(|this, window, cx| {
+                    this.set_open(None, window, cx);
+                    this.call.update(cx, |c, cx| c.set_mode(Mode::Regular, cx));
+                }),
             ))
+            .when(can_record || can_transcribe, |el| {
+                el.child(div().h(px(1.0)).my(px(4.0)).mx(px(10.0)).bg(white(0.07)))
+            })
             // One recording per call: gone while anyone records.
-            .when(can_record, |row| {
-                row.child(item(
+            .when(can_record, |el| {
+                el.child(item(
                     "record",
                     Icon::CircleDot,
-                    Tone::Plain,
                     "Record",
-                    // What to record comes next, in the same place.
-                    Box::new(move |cx| {
-                        let _ = this.update(cx, |capsule, cx| {
-                            capsule.open = Some(Drawer::RecordChoice);
-                            cx.notify();
-                        });
+                    None,
+                    true,
+                    Box::new(|this, window, cx| {
+                        this.set_open(Some(Drawer::RecordChoice), window, cx)
                     }),
                 ))
             })
             // One transcript per call too.
-            .when(can_transcribe, |row| {
-                row.child(item(
+            .when(can_transcribe, |el| {
+                el.child(item(
                     "transcribe",
                     Icon::Captions,
-                    Tone::Plain,
                     "Transcribe",
-                    Box::new(move |cx| {
-                        let _ = this2.update(cx, |capsule, cx| {
-                            capsule.open = Some(Drawer::TranscribeChoice);
-                            cx.notify();
-                        });
+                    None,
+                    true,
+                    Box::new(|this, window, cx| {
+                        this.set_open(Some(Drawer::TranscribeChoice), window, cx)
                     }),
                 ))
             })
@@ -1584,10 +3009,30 @@ impl Capsule {
                 .rounded_full()
                 .bg(rgb(RECORDING))
         };
+        // Opens or closes the transcript's window.
+        let shown = c.transcript_open;
+        let transcript = || {
+            let call = call.clone();
+            button(
+                "transcript-window",
+                if shown { "Hide" } else { "Transcript" },
+                None,
+                Kind::Secondary,
+                true,
+            )
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(move |_, _, cx| {
+                call.update(cx, |c, cx| {
+                    let open = !c.transcript_open;
+                    c.set_transcript_open(open, cx)
+                })
+            })
+        };
         match (&c.transcription, c.preparing) {
             (Some(t), _) if t.mine => line
                 .child(dot())
                 .child(div().min_w_0().truncate().child(c.transcript_status(cx)))
+                .child(transcript())
                 .child(action("stop-transcript", "Stop"))
                 .into_any_element(),
             (Some(t), _) => {
@@ -1599,6 +3044,7 @@ impl Capsule {
                             .truncate()
                             .child(format!("On {}'s Mac{model}", first_name(&t.name))),
                     )
+                    .child(transcript())
                     .child(action("stop-transcript", "Stop"))
                     .into_any_element()
             }
@@ -1702,5 +3148,60 @@ pub fn clock(elapsed: Duration) -> String {
         format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
     } else {
         format!("{}:{:02}", s / 60, s % 60)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SCREEN: Rect = Rect {
+        x: 0.0,
+        y: 60.0,
+        w: 1440.0,
+        h: 800.0,
+    };
+
+    #[test]
+    fn the_caption_keeps_its_newest_words() {
+        assert_eq!(tail("short enough", 300.0), "short enough");
+        let long = "we should ship the redesign on Friday if the tests pass by then";
+        let cut = tail(long, 200.0);
+        assert!(cut.starts_with('…'), "{cut}");
+        assert!(cut.ends_with("pass by then"), "{cut}");
+        // From a word's start, never mid-word.
+        let first = cut.trim_start_matches('…').split(' ').next().unwrap();
+        assert!(long.split(' ').any(|word| word == first), "{cut}");
+        assert!(
+            cut.chars().count() <= (200.0f32 / 6.6) as usize + 1,
+            "{cut}"
+        );
+    }
+
+    #[test]
+    fn a_tab_sits_in_its_edge_by_where_the_pill_was() {
+        // A column 300 long with its foot at y 200: the tab's middle is the
+        // column's.
+        let tab = tab_rect(Edge::Left, (60.0, 200.0), 300.0, 3, SCREEN);
+        assert_eq!((tab.x, tab.w, tab.h), (0.0, 18.0, 59.0));
+        assert_eq!(tab.y + tab.h / 2.0, 350.0);
+        let tab = tab_rect(Edge::Right, (1432.0, 200.0), 300.0, 1, SCREEN);
+        assert_eq!((tab.right(), tab.h), (1440.0, 29.0));
+        // Lying at the bottom: along the edge, under the pill's middle.
+        let tab = tab_rect(Edge::Bottom, (900.0, 72.0), 300.0, 2, SCREEN);
+        assert_eq!((tab.y, tab.h, tab.w), (60.0, 18.0, 44.0));
+        assert_eq!(tab.x + tab.w / 2.0, 750.0);
+        // Never past the screen's corner.
+        let tab = tab_rect(Edge::Top, (20.0, 800.0), 300.0, 4, SCREEN);
+        assert_eq!((tab.x, tab.top()), (0.0, 860.0));
+    }
+
+    #[test]
+    fn the_stack_is_as_long_standing_as_it_looks() {
+        // One person: only the face. More: faces behind it, and "+N".
+        assert_eq!(stack_len(1, false), 2.0 + FACE + 9.0);
+        assert_eq!(stack_len(1, true), 2.0 + FACE + 8.0);
+        assert!(stack_len(5, false) > stack_len(2, false));
+        assert_eq!(stack_len(5, true), stack_len(9, true));
     }
 }

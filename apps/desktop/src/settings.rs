@@ -58,6 +58,7 @@ pub fn open(cx: &mut App) {
 enum Tab {
     Transcription,
     Recording,
+    Call,
 }
 
 /// "Try it with your voice".
@@ -172,6 +173,21 @@ impl Settings {
             shell.store.save();
             cx.notify();
         });
+    }
+
+    fn set_call(&self, cx: &mut Context<Self>, f: impl FnOnce(&mut store::CallSettings)) {
+        self.shell.update(cx, |shell, cx| {
+            f(&mut shell.store.call);
+            shell.store.save();
+            cx.notify();
+        });
+    }
+
+    /// The Call tab (snapshot tests).
+    #[cfg(feature = "snapshot")]
+    pub fn show_call(&mut self, cx: &mut Context<Self>) {
+        self.tab = Tab::Call;
+        cx.notify();
     }
 
     fn set(&self, cx: &mut Context<Self>, f: impl FnOnce(&mut store::TranscriptionSettings)) {
@@ -384,10 +400,12 @@ impl Render for Settings {
                 "Transcription",
                 cx,
             ))
-            .child(tab("tab-recording", Tab::Recording, "Recording", cx));
+            .child(tab("tab-recording", Tab::Recording, "Recording", cx))
+            .child(tab("tab-call", Tab::Call, "Call", cx));
         let body = match self.tab {
             Tab::Transcription => self.transcription_pane(cx),
             Tab::Recording => self.recording_pane(cx),
+            Tab::Call => self.call_pane(cx),
         };
         div()
             .size_full()
@@ -575,6 +593,108 @@ impl Settings {
                     }))
                     .children(lines),
             )
+    }
+
+    /// The call widget: what it does by itself, each with its switch.
+    fn call_pane(&mut self, cx: &mut Context<Self>) -> Div {
+        let settings = self.shell.read(cx).store.call.clone();
+        let switch = |id: &'static str,
+                      on: bool,
+                      label: &'static str,
+                      note: &'static str,
+                      set: fn(&mut store::CallSettings, bool),
+                      cx: &mut Context<Self>| {
+            div()
+                .id(id)
+                .py(px(9.0))
+                .flex()
+                .items_start()
+                .gap(px(10.0))
+                .cursor_pointer()
+                .child(div().pt(px(1.0)).child(toggle(on)))
+                .child(
+                    div().flex_1().min_w_0().child(label).child(
+                        div()
+                            .mt(px(2.0))
+                            .text_size(px(12.0))
+                            .text_color(rgb(TEXT_DIM))
+                            .child(note),
+                    ),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.set_call(cx, |c| set(c, !on));
+                }))
+        };
+        let chip = |id: &'static str, label: &'static str, each: bool, cx: &mut Context<Self>| {
+            let on = settings.bubble_each == each;
+            div()
+                .id(id)
+                .h(px(26.0))
+                .px(px(10.0))
+                .flex()
+                .items_center()
+                .rounded_full()
+                .text_size(px(12.0))
+                .cursor_pointer()
+                .bg(if on { rgb(TEXT) } else { rgb(RAISED) })
+                .text_color(if on { rgb(BG) } else { rgb(TEXT) })
+                .hover(|s| s.opacity(0.88))
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.set_call(cx, |c| c.bubble_each = each);
+                }))
+        };
+        div().child(
+            div()
+                .pt(px(16.0))
+                .px(px(28.0))
+                .pb(px(28.0))
+                .flex()
+                .flex_col()
+                .child(switch(
+                    "hold-to-talk",
+                    settings.hold_to_talk,
+                    "Hold to talk",
+                    "While muted, hold the right Option key, or the mic button, to speak. \
+                     Let go and you're muted again.",
+                    |c, on| c.hold_to_talk = on,
+                    cx,
+                ))
+                .child(switch(
+                    "muted-beep",
+                    settings.muted_beep,
+                    "Beep when I talk while muted",
+                    "One soft beep with the reminder, at most every 5 minutes.",
+                    |c, on| c.muted_beep = on,
+                    cx,
+                ))
+                .child(switch(
+                    "caption-line",
+                    settings.caption_line,
+                    "Caption line by the widget",
+                    "The sentence being said, while the call is transcribed.",
+                    |c, on| c.caption_line = on,
+                    cx,
+                ))
+                .child(heading("Others' video, in calls of four or more"))
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(6.0))
+                        .child(chip("video-follow", "Follows the speaker", false, cx))
+                        .child(chip("video-each", "A bubble each", true, cx)),
+                )
+                .child(
+                    div()
+                        .mt(px(8.0))
+                        .text_size(px(12.0))
+                        .text_color(rgb(TEXT_DIM))
+                        .child(
+                            "In a call of two or three, everyone with a camera on has a \
+                             bubble. Click a face in the widget to hide or show theirs.",
+                        ),
+                ),
+        )
     }
 
     fn recording_pane(&mut self, cx: &mut Context<Self>) -> Div {

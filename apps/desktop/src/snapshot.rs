@@ -2,6 +2,8 @@
 //!
 //! - `QUIPCALL_SNAPSHOT_DIR`: every window is rendered to a PNG there every two
 //!   seconds. AppKit effects (circle clipping, blur) are not part of the image.
+//!   A window macOS has stopped drawing (hidden behind others, or the screen
+//!   is locked) is drawn for the image, so runs work on a locked Mac too.
 //! - `QUIPCALL_SCRIPT="4:regular 8:minimal 12:leave"`: runs the same actions as
 //!   the buttons at the given second: `regular`, `minimal`, `leave`, `quick`
 //!   (quick call from home), `mic`, `camera`, `share` (opens the picker),
@@ -44,7 +46,13 @@ pub fn start(cx: &mut App) {
             cx.update(|cx| {
                 for handle in cx.windows() {
                     let id = handle.window_id().as_u64();
-                    let _ = handle.update(cx, |_, window, _| {
+                    let _ = handle.update(cx, |_, window, cx| {
+                        // macOS stops drawing windows nobody can see (behind
+                        // others, or the screen is locked): draw this one
+                        // here, so its image is of now and it sizes itself.
+                        if crate::mac::on_screen(window) == Some(false) {
+                            window.draw(cx).clear(cx);
+                        }
                         let size = window.bounds().size;
                         let path = format!(
                             "{dir}/window-{id}-{}x{}.png",
@@ -130,6 +138,21 @@ fn act(action: &str, cx: &mut App) {
             | "record-choice"
             | "transcribe-choice"
             | "hover-transcript"
+            | "column-left"
+            | "column-right"
+            | "lying"
+            | "lying-top"
+            | "tuck-left"
+            | "tuck-bottom"
+            | "untuck"
+            | "hide"
+            | "unhide"
+            | "big"
+            | "float"
+            | "ghost"
+            | "unghost"
+            | "context"
+            | "uncontext"
     ) {
         for handle in cx.windows() {
             if let Some(capsule) = handle.downcast::<crate::capsule::Capsule>() {
@@ -140,7 +163,8 @@ fn act(action: &str, cx: &mut App) {
                     "transcribe-choice" => "transcribe-choice",
                     "hover-transcript" => "transcript",
                     "unhover" => "none",
-                    _ => "controls",
+                    "hover" => "controls",
+                    other => other,
                 };
                 let _ = capsule.update(cx, |c, _, cx| c.show(which, cx));
             }
@@ -213,6 +237,25 @@ fn act(action: &str, cx: &mut App) {
         crate::settings::open(cx);
         return;
     }
+    if action == "bubble-each" || action == "no-caption" {
+        Shell::global(cx).update(cx, |s, cx| {
+            if action == "bubble-each" {
+                s.store.call.bubble_each = !s.store.call.bubble_each;
+            } else {
+                s.store.call.caption_line = !s.store.call.caption_line;
+            }
+            cx.notify();
+        });
+        return;
+    }
+    if action == "settings-call" {
+        for handle in cx.windows() {
+            if let Some(settings) = handle.downcast::<crate::settings::Settings>() {
+                let _ = settings.update(cx, |s, _, cx| s.show_call(cx));
+            }
+        }
+        return;
+    }
     if action == "each-voice" {
         Shell::global(cx).update(cx, |s, _| s.store.recording.each_voice = true);
         return;
@@ -249,6 +292,9 @@ fn act(action: &str, cx: &mut App) {
         "minimal" => c.set_mode(Mode::Minimal, cx),
         "leave" => c.leave(cx),
         "mic" => c.toggle_mic(cx),
+        "hold" => c.hold_to_talk(true, cx),
+        "release" => c.hold_to_talk(false, cx),
+        "nudge" => c.talking_while_muted(cx),
         "camera" => c.toggle_camera(cx),
         "share" => c.toggle_share(cx),
         "record" => c.toggle_record(cx),

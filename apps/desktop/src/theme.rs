@@ -26,6 +26,10 @@ pub const SPEAKING: u32 = 0x3fd07a;
 pub const RECORDING: u32 = 0xff6b61;
 /// Hairlines between areas.
 pub const LINE: u32 = 0x24262d;
+/// The call widget's pill: solid, so it reads the same over any window.
+pub const PILL: u32 = 0x17181d;
+/// Cards that float by the pill: its menu, a name, a notice.
+pub const CARD: u32 = 0x1b1c22;
 
 // Older names, still used by the share picker and the fullscreen window.
 pub const SURFACE: u32 = BG;

@@ -1,5 +1,6 @@
 mod assets;
 mod auth;
+mod bubble;
 mod call;
 mod capsule;
 mod fullscreen;

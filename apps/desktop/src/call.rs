@@ -35,6 +35,16 @@ use crate::{Args, Shell};
 const PREVIEW_FPS: u32 = 15;
 /// How long "Anna started recording" and similar notices stay.
 const FLASH: Duration = Duration::from_secs(6);
+/// How long the "you're muted" reminder shows.
+const NUDGE: Duration = Duration::from_millis(2800);
+/// The reminder's beep comes at most this often.
+const BEEP_EVERY: Duration = Duration::from_secs(300);
+/// Hold to talk: the right Option key (its virtual key code). Under the
+/// thumb, and it types nothing by itself.
+const HOLD_KEY: u16 = 0x3D;
+/// How often the key is looked at while you're muted, and otherwise.
+const KEY_POLL: Duration = Duration::from_millis(50);
+const KEY_IDLE: Duration = Duration::from_millis(400);
 
 #[derive(Clone, Debug)]
 pub struct RoomRef {
@@ -258,6 +268,16 @@ pub struct Call {
     /// Where a share's floating window was before it went fullscreen.
     screen_bounds: HashMap<TrackKey, Bounds<Pixels>>,
     pub mic_on: bool,
+    /// Unmuted only while a key or the mic button is held.
+    pub held: bool,
+    /// The hold is the key's: letting the key go ends it.
+    key_held: bool,
+    /// When you were last told you're talking while muted, and when that
+    /// last came with a beep.
+    nudged: Option<Instant>,
+    beeped: Option<Instant>,
+    /// Hold to talk was on when the reminder came: it says so.
+    nudge_hold: bool,
     pub camera: Camera,
     pub sharing: Option<ScreenSharePreset>,
     /// Preset to preselect next time you share.
@@ -334,6 +354,27 @@ impl Call {
 
         let identity = String::new();
         let transcript = cx.new(|_| Transcript::new(args.name.clone()));
+        // Hold to talk: nothing tells an app without focus that a key went
+        // down, so the key's state is looked at, often only while it matters.
+        let key_task = cx.spawn(async move |this, cx| {
+            let mut wait = KEY_IDLE;
+            loop {
+                cx.background_executor().timer(wait).await;
+                let muted = this.update(cx, |call, cx| {
+                    let on = Shell::global(cx).read(cx).store.call.hold_to_talk;
+                    let watching = on && call.status == Status::Connected;
+                    if watching || call.key_held {
+                        let down = watching && crate::mac::key_down(HOLD_KEY);
+                        call.key_hold(down, cx);
+                    }
+                    watching && (!call.mic_on || call.key_held)
+                });
+                match muted {
+                    Ok(muted) => wait = if muted { KEY_POLL } else { KEY_IDLE },
+                    Err(_) => break,
+                }
+            }
+        });
         // A download finishing starts the transcription waiting for it.
         let models = Models::global(cx);
         let models_task = cx.observe(&models, |call, models, cx| {
@@ -437,6 +478,11 @@ impl Call {
             fullscreen: HashMap::new(),
             screen_bounds: HashMap::new(),
             mic_on: false,
+            held: false,
+            key_held: false,
+            nudged: None,
+            beeped: None,
+            nudge_hold: false,
             camera: Camera::Off,
             sharing: None,
             share_preset: ScreenSharePreset::PRESETS[1],
@@ -467,7 +513,7 @@ impl Call {
             people: BTreeSet::new(),
             events: Vec::new(),
             windows: Windows::default(),
-            _tasks: vec![events_task, join_task],
+            _tasks: vec![events_task, join_task, key_task],
             _models: models_task,
             // Settings may change the model, and with it what this Mac can do.
             _settings: cx.observe(&Shell::global(cx), |call, _, cx| call.advertise(cx)),
@@ -501,6 +547,14 @@ impl Call {
         }
         if self.status == Status::Joining {
             return Some(plain("Joining…".into(), false));
+        }
+        if self.nudging() {
+            let how = if self.nudge_hold {
+                "You're muted: click the mic, or hold it to talk."
+            } else {
+                "You're muted: click the mic to unmute."
+            };
+            return Some(plain(how.into(), false));
         }
         self.flash
             .as_ref()
@@ -562,8 +616,66 @@ impl Call {
     // ---- actions (called from any window) ---------------------------------
 
     pub fn toggle_mic(&mut self, cx: &mut Context<Self>) {
+        self.held = false;
+        self.key_held = false;
+        self.nudged = None;
         self.engine.set_mic_enabled(!self.mic_on);
         cx.notify();
+    }
+
+    /// Unmute while a key or the mic button is held, and mute again when
+    /// it's let go. Nothing happens if you're unmuted anyway.
+    pub fn hold_to_talk(&mut self, on: bool, cx: &mut Context<Self>) {
+        if on && !self.mic_on && !self.held {
+            self.held = true;
+            self.nudged = None;
+            self.engine.set_mic_enabled(true);
+        } else if !on && self.held {
+            self.held = false;
+            self.key_held = false;
+            self.engine.set_mic_enabled(false);
+        } else {
+            return;
+        }
+        cx.notify();
+    }
+
+    /// The hold-to-talk key went down or up (see [`HOLD_KEY`]).
+    fn key_hold(&mut self, down: bool, cx: &mut Context<Self>) {
+        if down && !self.mic_on && !self.held {
+            self.key_held = true;
+            self.hold_to_talk(true, cx);
+        } else if !down && self.key_held {
+            self.hold_to_talk(false, cx);
+        }
+    }
+
+    /// You're talking while muted: say so for a moment, with one soft beep
+    /// if Settings allows and the last one was long enough ago.
+    pub fn talking_while_muted(&mut self, cx: &mut Context<Self>) {
+        if self.mic_on || self.status != Status::Connected {
+            return;
+        }
+        let now = Instant::now();
+        self.nudged = Some(now);
+        let settings = Shell::global(cx).read(cx).store.call.clone();
+        self.nudge_hold = settings.hold_to_talk;
+        if settings.muted_beep && self.beeped.is_none_or(|t| t.elapsed() >= BEEP_EVERY) {
+            self.beeped = Some(now);
+            crate::mac::soft_beep();
+            tracing::info!("talking while muted: beep");
+        }
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(NUDGE).await;
+            let _ = this.update(cx, |_, cx| cx.notify());
+        })
+        .detach();
+    }
+
+    /// The "you're muted" reminder is showing.
+    pub fn nudging(&self) -> bool {
+        !self.mic_on && self.nudged.is_some_and(|t| t.elapsed() < NUDGE)
     }
 
     pub fn toggle_camera(&mut self, cx: &mut Context<Self>) {
