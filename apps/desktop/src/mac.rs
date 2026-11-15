@@ -428,6 +428,27 @@ pub fn make_shape(window: &Window, mask: Mask, cx: &App) {
         .detach();
 }
 
+/// Center a HUD on the screen with the key window. Use AppKit coordinates:
+/// GPUI currently reports every display's origin as (0, 0).
+pub fn center_on_active_screen(window: &Window, cx: &App) {
+    let Some(ns) = ns_window(window) else {
+        return;
+    };
+    let Some(screen) = NSScreen::mainScreen(objc2::MainThreadMarker::new().unwrap()) else {
+        return;
+    };
+    cx.foreground_executor()
+        .spawn(async move {
+            let screen = screen.frame();
+            let frame = ns.frame();
+            ns.setFrameOrigin(NSPoint::new(
+                screen.origin.x + (screen.size.width - frame.size.width) / 2.0,
+                screen.origin.y + (screen.size.height - frame.size.height) / 2.0,
+            ));
+        })
+        .detach();
+}
+
 /// Whether the mouse cursor is over `window` right now (`None` if the
 /// window can't be found).
 pub fn cursor_inside(window: &Window) -> Option<bool> {

@@ -9,6 +9,7 @@ mod home;
 mod mac;
 mod models;
 mod onboarding;
+mod quit;
 mod regular;
 mod rooms;
 mod screen_window;
@@ -418,6 +419,26 @@ fn log_file() -> Option<std::fs::File> {
     std::fs::File::create(path).ok()
 }
 
+fn finish_call_before_quit(
+    closed: Option<impl Future<Output = ()>>,
+    cx: &App,
+) -> std::future::Ready<()> {
+    // GPUI only gives the returned future 200 ms, but final transcripts
+    // alone may take two seconds before LiveKit gets our goodbye. Wait
+    // here, before returning that future, while the engine's own runtime
+    // keeps working. Bound the wait so an offline server can't hold up quit.
+    if let Some(closed) = closed {
+        match cx
+            .foreground_executor()
+            .block_with_timeout(std::time::Duration::from_secs(3), closed)
+        {
+            Ok(()) => tracing::info!("left the call before quitting"),
+            Err(_) => tracing::warn!("leaving the call before quitting timed out"),
+        }
+    }
+    std::future::ready(())
+}
+
 fn main() {
     init_logging();
     let args = parse_args();
@@ -463,6 +484,7 @@ fn main() {
         settings::bind_keys(cx);
         fullscreen::bind_keys(cx);
         text_input::bind_keys(cx);
+        quit::start(cx);
         mac::log_window_events();
 
         shell.update(cx, |shell, cx| match shell.args.room.clone() {
@@ -489,15 +511,9 @@ fn main() {
         })
         .detach();
 
-        // GPUI gives this 200 ms; saying goodbye takes a round trip at most.
         cx.on_app_quit(|cx| {
             let closed = Shell::global(cx).update(cx, |shell, cx| shell.leave_for_quit(cx));
-            async move {
-                if let Some(closed) = closed {
-                    closed.await;
-                    tracing::info!("left the call before quitting");
-                }
-            }
+            finish_call_before_quit(closed, cx)
         })
         .detach();
 
@@ -527,6 +543,60 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::room_from_link;
+
+    // The snapshot feature enables GPUI's test executor.
+    #[cfg(feature = "snapshot")]
+    #[gpui::test]
+    fn quit_waits_for_a_leave_slower_than_gpuis_shutdown_budget(cx: &mut gpui::TestAppContext) {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        use std::time::Duration;
+
+        // Shutdown uses a wall-clock deadline; don't fast-forward the timer.
+        cx.executor().allow_parking();
+        let left = Arc::new(AtomicBool::new(false));
+        cx.update(|cx| {
+            let left = left.clone();
+            cx.on_app_quit(move |cx| {
+                let timer = cx.background_executor().timer(Duration::from_millis(350));
+                let left = left.clone();
+                super::finish_call_before_quit(
+                    Some(async move {
+                        timer.await;
+                        left.store(true, Ordering::SeqCst);
+                    }),
+                    cx,
+                )
+            })
+            .detach();
+            cx.shutdown();
+        });
+        assert!(
+            left.load(Ordering::SeqCst),
+            "quit cut off the leave message"
+        );
+    }
+
+    #[cfg(feature = "snapshot")]
+    #[gpui::test]
+    fn quit_is_bounded_when_leaving_never_finishes(cx: &mut gpui::TestAppContext) {
+        use std::time::{Duration, Instant};
+
+        cx.executor().allow_parking();
+        let started = Instant::now();
+        cx.update(|cx| {
+            cx.on_app_quit(|cx| {
+                super::finish_call_before_quit(Some(std::future::pending::<()>()), cx)
+            })
+            .detach();
+            cx.shutdown();
+        });
+        let elapsed = started.elapsed();
+        assert!(elapsed >= Duration::from_secs(3));
+        assert!(elapsed < Duration::from_secs(6), "quit took {elapsed:?}");
+    }
 
     #[test]
     fn call_links() {

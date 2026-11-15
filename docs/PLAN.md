@@ -89,7 +89,7 @@ Design: [UI.md](UI.md).
 - [x] ~~Text field for naming rooms (adapt GPUI's `input.rs` example)~~ *`text_input.rs`: IME, selection, copy and paste; Enter and Esc as events.*
 - [ ] Mirror your own circle
 - [ ] Mic button on your own circle (also on your screen preview). *Built; checked with snapshots, needs a click.*
-- [x] ~~Fix: after leaving, you stayed in the room as a ghost for 15–40 s, so rejoining showed you twice~~ *The engine's runtime was dropped with the call, cancelling the goodbye to LiveKit mid-way. It now gets a bounded grace period on the engine runtime after the call model is dropped, and quitting mid-call leaves first. Both checked in LiveKit's log (`CLIENT_REQUEST_LEAVE`).*
+- [x] ~~Fix: after leaving, you stayed in the room as a ghost for 15–40 s, so rejoining showed you twice~~ *The engine's runtime was dropped with the call, cancelling the goodbye to LiveKit mid-way. It now gets a bounded grace period on the engine runtime after the call model is dropped, and quitting mid-call leaves first. Quit waits synchronously for up to three seconds before returning to GPUI, whose 200 ms async cleanup budget could cut off final transcript delivery and the goodbye. Four immediate quit/rejoin cycles, with the synthetic camera on and off, left zero participants after exit and logged `CLIENT_REQUEST_LEAVE` each time.*
 - [x] ~~Footprint with 10 circles open~~ *~207 MB, ~23% CPU with 10 circles + toolbar while sending the camera. Memory is the same as one grid window; CPU is higher because every circle draws itself.*
 - [x] ~~Footprint of the capsule with 10 people~~ *~19% CPU, ~135 MB (no mic) once repaints were capped at 30 fps; ~24% before ([FOOTPRINT.md](FOOTPRINT.md)).*
 
