@@ -309,6 +309,9 @@ pub struct Capsule {
     press: Option<Point<Pixels>>,
     /// The mic button was held to talk: letting go isn't a click.
     held_click: bool,
+    /// The mic button is held to talk right now: the widget owes the call a
+    /// mute when it's let go, or when the widget goes first.
+    mic_held: bool,
     ghost: Option<(WindowHandle<Ghost>, mac::Native)>,
     ghost_opening: bool,
     /// Where the outline should be, and where it is.
@@ -397,6 +400,7 @@ impl Capsule {
             magnet: false,
             press: None,
             held_click: false,
+            mic_held: false,
             ghost: None,
             ghost_opening: false,
             ghost_want: None,
@@ -411,8 +415,13 @@ impl Capsule {
             _tick: tick,
         };
         this.watch(cx);
-        // The bubbles and the outline go with the widget.
+        // The bubbles and the outline go with the widget. So does a mic held
+        // to talk: the task that would mute it on release dies with the
+        // widget, and nothing else would.
         cx.on_release(|this, cx| {
+            if this.mic_held {
+                this.call.update(cx, |c, cx| c.hold_to_talk(false, cx));
+            }
             let ghost = this.ghost.take().map(|(handle, _)| handle);
             let bubbles: Vec<Slot> = this.bubbles.drain().map(|(_, slot)| slot).collect();
             cx.spawn(async move |cx| {
@@ -716,7 +725,13 @@ impl Capsule {
                 w: wanted.width as f64,
                 h: wanted.height as f64,
             };
-            if here != Some(there) || jumping {
+            let arrived = here.is_some_and(|h| {
+                (h.x - there.x).abs() < 1.0
+                    && (h.y - there.y).abs() < 1.0
+                    && (h.w - there.w).abs() < 1.0
+                    && (h.h - there.h).abs() < 1.0
+            });
+            if !arrived || jumping {
                 mac::move_with(
                     window,
                     wanted,
@@ -869,6 +884,13 @@ impl Capsule {
         let mut out = Vec::new();
         let mut put = |slot: &Slot, frame: Rect, radius: f32, rides: bool, hidden: bool| {
             let native = &slot.native;
+            // Whole points: a display may round a frame, and a window that's
+            // never quite where it was put would be put there every time.
+            let frame = Rect {
+                x: frame.x.round(),
+                y: frame.y.round(),
+                ..frame
+            };
             let there = if hidden {
                 !native.shown()
             } else {
@@ -949,15 +971,12 @@ impl Capsule {
             let (w, r) = bubble::shape(who, geo.size, aspect);
             let (w, h) = (w as f64, geo.size.round() as f64);
             let old = slot.native.frame();
+            // On the screen it's on, which needn't be the widget's.
+            let v = slot.native.visible().unwrap_or(visible);
             let frame = Rect {
-                x: (old.x + (old.w - w) / 2.0).clamp(
-                    visible.x + 4.0,
-                    (visible.right() - 4.0 - w).max(visible.x + 4.0),
-                ),
-                y: (old.y + (old.h - h) / 2.0).clamp(
-                    visible.y + 4.0,
-                    (visible.top() - 4.0 - h).max(visible.y + 4.0),
-                ),
+                x: (old.x + (old.w - w) / 2.0)
+                    .clamp(v.x + 4.0, (v.right() - 4.0 - w).max(v.x + 4.0)),
+                y: (old.y + (old.h - h) / 2.0).clamp(v.y + 4.0, (v.top() - 4.0 - h).max(v.y + 4.0)),
                 w,
                 h,
             };
@@ -977,6 +996,11 @@ impl Capsule {
             .cloned()
             .collect();
         for who in gone {
+            // Back on the pill when it returns: its new window has no place
+            // of its own to float at.
+            if let Some(geo) = self.geo.get_mut(&who) {
+                geo.docked = true;
+            }
             if let Some(slot) = self.bubbles.remove(&who) {
                 // Not from inside this update: AppKit reorders windows.
                 cx.spawn(async move |_, cx| {
@@ -1228,9 +1252,14 @@ impl Capsule {
 
     /// What a drop with the cursor at `p` makes of the pill, if anything.
     fn zone_at(&self, p: (f64, f64), cx: &App) -> Option<Zone> {
-        let visible = self.native.as_ref()?.visible()?;
+        // The screen under the cursor, not the one most of the window is
+        // still on: a pill on its way to another display belongs there.
+        let (v, whole) = mac::screen_at(p).or_else(|| {
+            let v = self.native.as_ref()?.visible()?;
+            Some((v, v))
+        })?;
         let plan = self.plan(cx);
-        let (main, v) = (MAIN as f64, visible);
+        let main = MAIN as f64;
         let column = |edge: Edge| {
             let len = pill_len(&plan, true) as f64;
             let x = if edge == Edge::Left {
@@ -1271,18 +1300,26 @@ impl Capsule {
             Edge::Left | Edge::Right => column(edge),
             Edge::Top | Edge::Bottom => lying(edge),
         };
+        // Where two displays meet is no edge: the cursor is only crossing.
+        let open = |edge: Edge| {
+            let past = match edge {
+                Edge::Left => (whole.x - 20.0, p.1),
+                Edge::Right => (whole.right() + 20.0, p.1),
+                Edge::Bottom => (p.0, whole.y - 20.0),
+                Edge::Top => (p.0, whole.top() + 20.0),
+            };
+            mac::screen_at(past).is_none()
+        };
         let near = |d: f64| {
-            if p.0 < v.x + d {
-                Some(Edge::Left)
-            } else if p.0 > v.right() - d {
-                Some(Edge::Right)
-            } else if p.1 < v.y + d {
-                Some(Edge::Bottom)
-            } else if p.1 > v.top() - d {
-                Some(Edge::Top)
-            } else {
-                None
-            }
+            [
+                (Edge::Left, p.0 < v.x + d),
+                (Edge::Right, p.0 > v.right() - d),
+                (Edge::Bottom, p.1 < v.y + d),
+                (Edge::Top, p.1 > v.top() - d),
+            ]
+            .into_iter()
+            .find(|(edge, close)| *close && open(*edge))
+            .map(|(edge, _)| edge)
         };
         if let Some(edge) = near(TUCK) {
             let (column, corner, _, len) = at(edge);
@@ -1324,7 +1361,15 @@ impl Capsule {
     /// The tab was clicked: the call comes back, by the edge it was in.
     fn untuck(&mut self, cx: &mut Context<Self>) {
         if self.tucked.take().is_some() {
-            self.jump = Some(self.home);
+            // The display it was tucked on may be gone: come back on the
+            // one the tab is on now.
+            let mut home = self.home;
+            if let Some(v) = self.native.as_ref().and_then(|n| n.visible()) {
+                let main = MAIN as f64;
+                home.0 = home.0.clamp(v.x + main, v.right().max(v.x + main));
+                home.1 = home.1.clamp(v.y, (v.top() - main).max(v.y));
+            }
+            self.jump = Some(home);
             cx.notify();
         }
     }
@@ -1438,17 +1483,26 @@ impl Capsule {
     /// The mic button went down while you're muted: held past
     /// [`HOLD_AFTER`], you talk until it's let go.
     fn mic_pressed(&mut self, cx: &mut Context<Self>) {
+        // A new press starts clean, whatever the last one left behind.
+        self.held_click = false;
         let hold = Shell::global(cx).read(cx).store.call.hold_to_talk;
         if !hold || self.call.read(cx).mic_on {
             return;
         }
         self.hold_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(HOLD_AFTER).await;
-            if !mac::mouse_down() {
-                return;
+            // The same press all the way: a button that came up meanwhile,
+            // even to go down again somewhere else, was a click.
+            let mut waited = Duration::ZERO;
+            while waited < HOLD_AFTER {
+                cx.background_executor().timer(DRAG_POLL).await;
+                waited += DRAG_POLL;
+                if !mac::mouse_down() {
+                    return;
+                }
             }
             let held = this.update(cx, |this, cx| {
                 this.held_click = true;
+                this.mic_held = true;
                 this.call.update(cx, |c, cx| c.hold_to_talk(true, cx));
             });
             if held.is_err() {
@@ -1458,6 +1512,7 @@ impl Capsule {
                 cx.background_executor().timer(DRAG_POLL).await;
             }
             let _ = this.update(cx, |this, cx| {
+                this.mic_held = false;
                 this.call.update(cx, |c, cx| c.hold_to_talk(false, cx));
             });
             // The click that ends the hold has come by now, if it will.
@@ -1664,7 +1719,7 @@ fn tab_rect(edge: Edge, corner: (f64, f64), len: f64, people: usize, visible: Re
                 } else {
                     visible.right() - thick
                 },
-                y: (middle - long / 2.0).clamp(visible.y, highest),
+                y: (middle - long / 2.0).clamp(visible.y, highest).round(),
                 w: thick,
                 h: long,
             }
@@ -1673,7 +1728,7 @@ fn tab_rect(edge: Edge, corner: (f64, f64), len: f64, people: usize, visible: Re
             let middle = corner.0 - len / 2.0;
             let rightmost = (visible.right() - long).max(visible.x);
             Rect {
-                x: (middle - long / 2.0).clamp(visible.x, rightmost),
+                x: (middle - long / 2.0).clamp(visible.x, rightmost).round(),
                 y: if edge == Edge::Top {
                     visible.top() - thick
                 } else {
@@ -3188,7 +3243,8 @@ mod tests {
         // column's.
         let tab = tab_rect(Edge::Left, (60.0, 200.0), 300.0, 3, SCREEN);
         assert_eq!((tab.x, tab.w, tab.h), (0.0, 18.0, 59.0));
-        assert_eq!(tab.y + tab.h / 2.0, 350.0);
+        assert!((tab.y + tab.h / 2.0 - 350.0).abs() <= 0.5);
+        assert_eq!(tab.y, tab.y.round());
         let tab = tab_rect(Edge::Right, (1432.0, 200.0), 300.0, 1, SCREEN);
         assert_eq!((tab.right(), tab.h), (1440.0, 29.0));
         // Lying at the bottom: along the edge, under the pill's middle.

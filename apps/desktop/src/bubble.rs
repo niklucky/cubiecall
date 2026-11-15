@@ -161,9 +161,16 @@ impl Bubble {
         who: Who,
         cx: &mut Context<Self>,
     ) -> Self {
-        // The widget says who's on the stage; the call, what you share.
-        let mut subscriptions = vec![cx.observe(&call, |_, _, cx| cx.notify())];
-        if let Some(capsule) = capsule.upgrade() {
+        // Drawn again only for what it shows: the widget says who's on the
+        // stage, the call how you share. A camera's own frames ask for the
+        // rest (see `follow`).
+        let mut subscriptions = Vec::new();
+        if who == Who::Share {
+            subscriptions.push(cx.observe(&call, |_, _, cx| cx.notify()));
+        }
+        if who == Who::Stage
+            && let Some(capsule) = capsule.upgrade()
+        {
             subscriptions.push(cx.observe(&capsule, |_, _, cx| cx.notify()));
         }
         Self {

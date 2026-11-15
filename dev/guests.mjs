@@ -40,6 +40,15 @@ const load = () => (existsSync(STATE) ? JSON.parse(readFileSync(STATE, 'utf8')) 
 const save = (state) => writeFileSync(STATE, JSON.stringify(state, null, 2));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** Whether something already answers DevTools on `port`. */
+const taken = async (port) => {
+  try {
+    await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(500) });
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 /** A WAV's samples (16-bit mono), whatever chunks come before them. */
 function samples(file) {
@@ -124,8 +133,12 @@ async function page(port) {
 
 // ---- what runs in the guest's page -------------------------------------
 
-/** One step towards being in the call; asked again until it says `done`. */
-const STEP = (name) => {
+/**
+ * One step towards being in the call; asked again until it says `done`.
+ * Without `go` it stops at the door (`ready`), so everyone can walk in at
+ * once: a guest's voice starts its loop when it joins.
+ */
+const STEP = (name, go) => {
   const texts = [...document.querySelectorAll('button')].map((b) => b.textContent.trim());
   if (texts.includes('Leave')) return { done: 'joined' };
   const title = document.querySelector('h1')?.textContent ?? document.title;
@@ -149,7 +162,9 @@ const STEP = (name) => {
     return { at: 'typing the name' };
   }
   const join = document.querySelector('.join-button');
-  if (!join.disabled) join.click();
+  if (join.disabled) return { at: 'joining', error };
+  if (!go) return { ready: true, at: 'ready to join' };
+  join.click();
   return { at: 'joining', error };
 };
 
@@ -176,14 +191,20 @@ async function joinAll(link, names) {
   new URL(link);
   mkdirSync(DIR, { recursive: true });
   const state = load();
-  const turns = Math.max(names.length, 2);
+  for (const [name, guest] of Object.entries(state)) if (!alive(guest.pid)) delete state[name];
+  // Later guests take the turns after the ones already here.
+  const here = Object.keys(state).length;
+  const turns = Math.max(here + names.length, 2);
   let port = Math.max(FIRST_PORT - 1, ...Object.values(state).map((g) => g.port)) + 1;
   const started = [];
-  for (const [ix, name] of names.entries()) {
-    if (state[name] && alive(state[name].pid)) {
+  for (const [i, name] of names.entries()) {
+    if (state[name]) {
       console.log(`${name}: already here`);
       continue;
     }
+    // A Chrome left behind may still hold a port: its page isn't this guest's.
+    while (await taken(port)) port += 1;
+    const ix = here + i;
     const [who, colour, text] = CAST[ix % CAST.length];
     const profile = join(DIR, `profile-${name}`);
     rmSync(profile, { recursive: true, force: true });
@@ -206,25 +227,37 @@ async function joinAll(link, names) {
     port += 1;
     save(state);
   }
-  // Together, so their turns line up.
-  await Promise.all(started.map(async ([name, port]) => {
+  // Everyone to the door first, then in together, so their turns line up.
+  const guests = await Promise.all(started.map(async ([name, port]) => {
     try {
-      const p = await page(port);
-      const deadline = Date.now() + 60000;
-      let last = {};
-      while (!last.done && Date.now() < deadline) {
-        last = await p.run(STEP, name);
-        if (!last.done) await sleep(400);
-      }
-      console.log(`${name}: ${last.done ?? `stuck ${last.at}${last.error ? ` (${last.error})` : ''}`}`);
-      p.close();
+      return { name, page: await page(port), last: {} };
     } catch (e) {
-      console.log(`${name}: ${e.message}`);
+      return { name, last: { done: e.message } };
     }
   }));
+  const walk = async (go, ms, arrived) => {
+    const deadline = Date.now() + ms;
+    await Promise.all(guests.map(async (guest) => {
+      while (guest.page && !arrived(guest.last) && Date.now() < deadline) {
+        try {
+          guest.last = await guest.page.run(STEP, guest.name, go);
+        } catch (e) {
+          guest.last = { done: e.message };
+        }
+        if (!arrived(guest.last)) await sleep(300);
+      }
+    }));
+  };
+  await walk(false, 45000, (last) => last.done || last.ready);
+  await walk(true, 45000, (last) => last.done);
+  for (const { name, page: p, last } of guests) {
+    console.log(`${name}: ${last.done ?? `stuck ${last.at}${last.error ? ` (${last.error})` : ''}`}`);
+    p?.close();
+  }
 }
 
-async function each(names, fn) {
+/** Run `fn` on each named guest's page (everyone's, with no names), then `after`, whatever happened. */
+async function each(names, fn, after = () => {}) {
   const state = load();
   for (const name of names.length ? names : Object.keys(state)) {
     const guest = state[name];
@@ -239,6 +272,8 @@ async function each(names, fn) {
       p.close();
     } catch (e) {
       console.log(`${name}: ${e.message}`);
+    } finally {
+      after(guest, name, state);
     }
   }
   return state;
@@ -255,13 +290,16 @@ try {
   } else if (command === 'status') {
     await each([], (p) => p.run(STATUS));
   } else if (command === 'leave') {
-    const state = await each(rest, async (p, guest) => {
+    // Chrome goes even if its page didn't answer: a guest dropped from the
+    // list but still running would stay in the call, holding its port.
+    const state = await each(rest, async (p) => {
       const said = await p.run(PRESS, ['Leave']);
       await sleep(400);
-      process.kill(guest.pid);
       return said === 'not in a call' ? 'closed' : 'left';
+    }, (guest, name, state) => {
+      try { process.kill(guest.pid); } catch { /* Already gone. */ }
+      delete state[name];
     });
-    for (const name of rest.length ? rest : Object.keys(state)) delete state[name];
     save(state);
   } else {
     console.log(readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 17).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));

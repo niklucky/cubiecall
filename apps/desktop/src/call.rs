@@ -42,9 +42,39 @@ const BEEP_EVERY: Duration = Duration::from_secs(300);
 /// Hold to talk: the right Option key (its virtual key code). Under the
 /// thumb, and it types nothing by itself.
 const HOLD_KEY: u16 = 0x3D;
-/// How often the key is looked at while you're muted, and otherwise.
+/// How often the key is looked at while you're muted, while you aren't,
+/// and while hold to talk is off in Settings.
 const KEY_POLL: Duration = Duration::from_millis(50);
 const KEY_IDLE: Duration = Duration::from_millis(400);
+const KEY_OFF: Duration = Duration::from_secs(2);
+/// The key talks once it has been held this long by itself: Option is also
+/// how "@" and "é" are typed.
+const KEY_HOLD_AFTER: Duration = Duration::from_millis(200);
+
+/// The hold-to-talk key, as last looked at.
+#[derive(Default)]
+struct HoldKey {
+    /// When it was first seen down.
+    since: Option<Instant>,
+    /// Another key went down meanwhile: it's typing, until the key comes up.
+    typed: bool,
+}
+
+impl HoldKey {
+    /// Whether to talk now. `down`: the key is held. `since_key`: how long
+    /// ago any ordinary key last went down.
+    fn talk(&mut self, down: bool, since_key: Duration, now: Instant) -> bool {
+        if !down {
+            *self = Self::default();
+            return false;
+        }
+        let held = now.duration_since(*self.since.get_or_insert(now));
+        if since_key <= held {
+            self.typed = true;
+        }
+        !self.typed && held >= KEY_HOLD_AFTER
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct RoomRef {
@@ -272,6 +302,7 @@ pub struct Call {
     pub held: bool,
     /// The hold is the key's: letting the key go ends it.
     key_held: bool,
+    hold_key: HoldKey,
     /// When you were last told you're talking while muted, and when that
     /// last came with a beep.
     nudged: Option<Instant>,
@@ -360,17 +391,25 @@ impl Call {
             let mut wait = KEY_IDLE;
             loop {
                 cx.background_executor().timer(wait).await;
-                let muted = this.update(cx, |call, cx| {
+                let next = this.update(cx, |call, cx| {
                     let on = Shell::global(cx).read(cx).store.call.hold_to_talk;
                     let watching = on && call.status == Status::Connected;
                     if watching || call.key_held {
                         let down = watching && crate::mac::key_down(HOLD_KEY);
-                        call.key_hold(down, cx);
+                        let since_key = crate::mac::since_key_down();
+                        let talk = call.hold_key.talk(down, since_key, Instant::now());
+                        call.key_hold(talk, cx);
                     }
-                    watching && (!call.mic_on || call.key_held)
+                    if !on {
+                        KEY_OFF
+                    } else if watching && (!call.mic_on || call.key_held) {
+                        KEY_POLL
+                    } else {
+                        KEY_IDLE
+                    }
                 });
-                match muted {
-                    Ok(muted) => wait = if muted { KEY_POLL } else { KEY_IDLE },
+                match next {
+                    Ok(next) => wait = next,
                     Err(_) => break,
                 }
             }
@@ -480,6 +519,7 @@ impl Call {
             mic_on: false,
             held: false,
             key_held: false,
+            hold_key: HoldKey::default(),
             nudged: None,
             beeped: None,
             nudge_hold: false,
@@ -640,7 +680,7 @@ impl Call {
         cx.notify();
     }
 
-    /// The hold-to-talk key went down or up (see [`HOLD_KEY`]).
+    /// The hold-to-talk key talks, or has stopped (see [`HoldKey`]).
     fn key_hold(&mut self, down: bool, cx: &mut Context<Self>) {
         if down && !self.mic_on && !self.held {
             self.key_held = true;
@@ -1993,4 +2033,40 @@ fn visible_area(cx: &App) -> Bounds<Pixels> {
     cx.primary_display()
         .map(|d| d.visible_bounds())
         .unwrap_or_else(|| Bounds::new(point(px(0.0), px(0.0)), size(px(1440.0), px(900.0))))
+}
+
+#[cfg(test)]
+mod hold_key_tests {
+    use super::*;
+
+    #[test]
+    fn the_key_talks_only_held_by_itself() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let long_ago = Duration::from_secs(30);
+        let mut key = HoldKey::default();
+        // Down, but not yet long enough.
+        assert!(!key.talk(true, long_ago, at(0)));
+        assert!(!key.talk(true, long_ago, at(150)));
+        // Held by itself: talk, until it comes up.
+        assert!(key.talk(true, long_ago, at(250)));
+        assert!(key.talk(true, long_ago, at(3000)));
+        assert!(!key.talk(false, long_ago, at(3050)));
+
+        // Option, then "2" within the hold: an "@", never talk.
+        assert!(!key.talk(true, long_ago, at(4000)));
+        assert!(!key.talk(true, Duration::from_millis(20), at(4100)));
+        assert!(!key.talk(true, Duration::from_millis(900), at(5000)));
+        assert!(!key.talk(false, long_ago, at(5050)));
+
+        // A key typed while talking ends it, until the key comes up.
+        assert!(!key.talk(true, long_ago, at(6000)));
+        assert!(key.talk(true, long_ago, at(6300)));
+        assert!(!key.talk(true, Duration::from_millis(10), at(6400)));
+        assert!(!key.talk(true, Duration::from_millis(600), at(7000)));
+        // The next press is a new one.
+        assert!(!key.talk(false, long_ago, at(7050)));
+        assert!(!key.talk(true, long_ago, at(8000)));
+        assert!(key.talk(true, long_ago, at(8250)));
+    }
 }

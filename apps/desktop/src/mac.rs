@@ -6,6 +6,7 @@
 
 use std::cell::RefCell;
 use std::ptr::NonNull;
+use std::time::Duration;
 
 use block2::RcBlock;
 use gpui::{
@@ -17,12 +18,12 @@ use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_se
 use objc2_app_kit::{
     NSApplicationDidBecomeActiveNotification, NSApplicationDidChangeScreenParametersNotification,
     NSApplicationDidHideNotification, NSApplicationDidResignActiveNotification,
-    NSApplicationDidUnhideNotification, NSEvent, NSMenu, NSMenuItem, NSSound, NSView, NSWindow,
-    NSWindowDidChangeOcclusionStateNotification, NSWindowDidChangeScreenNotification,
+    NSApplicationDidUnhideNotification, NSEvent, NSMenu, NSMenuItem, NSScreen, NSSound, NSView,
+    NSWindow, NSWindowDidChangeOcclusionStateNotification, NSWindowDidChangeScreenNotification,
     NSWindowOcclusionState, NSWindowOrderingMode, NSWindowStyleMask, NSWindowWillCloseNotification,
     NSWorkspace, NSWorkspaceActiveSpaceDidChangeNotification,
 };
-use objc2_core_graphics::{CGEventSource, CGEventSourceStateID};
+use objc2_core_graphics::{CGEventSource, CGEventSourceStateID, CGEventType};
 use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSNotificationName, NSObject, NSPoint, NSRect, NSRunLoop,
     NSSize, NSString,
@@ -228,6 +229,27 @@ pub fn cursor() -> (f64, f64) {
 /// needs no permission.
 pub fn key_down(code: u16) -> bool {
     CGEventSource::key_state(CGEventSourceStateID::HIDSystemState, code)
+}
+
+/// How long ago an ordinary key last went down, in any app (modifiers don't
+/// count). A question about the keyboard's state too: no permission.
+pub fn since_key_down() -> Duration {
+    let secs = CGEventSource::seconds_since_last_event_type(
+        CGEventSourceStateID::HIDSystemState,
+        CGEventType::KeyDown,
+    );
+    Duration::try_from_secs_f64(secs).unwrap_or(Duration::MAX)
+}
+
+/// The screen `p` is on: its usable part, and all of it. `None` between
+/// screens.
+pub fn screen_at(p: (f64, f64)) -> Option<(Rect, Rect)> {
+    let mtm = MainThreadMarker::new()?;
+    NSScreen::screens(mtm).iter().find_map(|screen| {
+        let whole: Rect = screen.frame().into();
+        let inside = p.0 >= whole.x && p.0 < whole.right() && p.1 >= whole.y && p.1 < whole.top();
+        inside.then(|| (screen.visibleFrame().into(), whole))
+    })
 }
 
 /// One soft system sound: you're talking while muted.
