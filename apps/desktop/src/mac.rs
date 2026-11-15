@@ -14,7 +14,7 @@ use objc2::rc::Retained;
 use objc2_app_kit::{
     NSApplicationDidBecomeActiveNotification, NSApplicationDidChangeScreenParametersNotification,
     NSApplicationDidHideNotification, NSApplicationDidResignActiveNotification,
-    NSApplicationDidUnhideNotification, NSEvent, NSView, NSWindow,
+    NSApplicationDidUnhideNotification, NSEvent, NSScreen, NSView, NSWindow,
     NSWindowDidChangeOcclusionStateNotification, NSWindowDidChangeScreenNotification,
     NSWindowOcclusionState, NSWindowStyleMask, NSWindowWillCloseNotification, NSWorkspace,
     NSWorkspaceActiveSpaceDidChangeNotification,
@@ -116,6 +116,27 @@ pub fn make_shape(window: &Window, mask: Mask, cx: &App) {
         .spawn(async move {
             ns.setHasShadow(false);
             apply_mask(&ns, &mask);
+        })
+        .detach();
+}
+
+/// Center a HUD on the screen with the key window. Use AppKit coordinates:
+/// GPUI currently reports every display's origin as (0, 0).
+pub fn center_on_active_screen(window: &Window, cx: &App) {
+    let Some(ns) = ns_window(window) else {
+        return;
+    };
+    let Some(screen) = NSScreen::mainScreen(objc2::MainThreadMarker::new().unwrap()) else {
+        return;
+    };
+    cx.foreground_executor()
+        .spawn(async move {
+            let screen = screen.frame();
+            let frame = ns.frame();
+            ns.setFrameOrigin(NSPoint::new(
+                screen.origin.x + (screen.size.width - frame.size.width) / 2.0,
+                screen.origin.y + (screen.size.height - frame.size.height) / 2.0,
+            ));
         })
         .detach();
 }

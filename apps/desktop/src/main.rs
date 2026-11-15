@@ -8,6 +8,7 @@ mod home;
 mod mac;
 mod models;
 mod onboarding;
+mod quit;
 mod regular;
 mod rooms;
 mod screen_window;
@@ -482,6 +483,7 @@ fn main() {
         settings::bind_keys(cx);
         fullscreen::bind_keys(cx);
         text_input::bind_keys(cx);
+        quit::start(cx);
         mac::log_window_events();
 
         shell.update(cx, |shell, cx| match shell.args.room.clone() {

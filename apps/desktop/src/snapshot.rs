@@ -26,7 +26,9 @@
 //!   (Home plays the selected call from its first line, muted),
 //!   `settings-recording` (its Recording tab), `try` (Try it with your
 //!   voice: test instances speak `QUIPCALL_FAKE_MIC`, a 48 kHz float WAV),
-//!   `each-voice` (records each voice in its own file too).
+//!   `each-voice` (records each voice in its own file too), `quit-overlay`
+//!   (keeps the quit hint visible for screenshots), `appearance-light` /
+//!   `appearance-dark` (override this app's appearance for screenshots).
 
 use std::time::Duration;
 
@@ -96,6 +98,21 @@ fn run_script(cx: &mut App) {
 fn act(action: &str, cx: &mut App) {
     use crate::Shell;
     use crate::call::{Call, Mode};
+
+    let appearance = match action {
+        "appearance-light" => Some(gpui::WindowAppearance::Light),
+        "appearance-dark" => Some(gpui::WindowAppearance::Dark),
+        _ => None,
+    };
+    if let Some(appearance) = appearance {
+        cx.set_window_appearance(Some(appearance));
+        return;
+    }
+
+    if action == "quit-overlay" {
+        crate::quit::preview(cx);
+        return;
+    }
 
     if action == "room-new" {
         crate::rooms::open(None, cx);
