@@ -25,11 +25,33 @@ const CONFIRM: Duration = Duration::from_secs(2);
 const MESSAGE: &str = "Hold ⌘Q or press twice to quit";
 const RADIUS: f32 = 36.0;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Input {
     Press,
     Release,
     Cancel,
+}
+
+fn extra_shortcut_modifiers(flags: NSEventModifierFlags) -> bool {
+    flags.intersects(
+        NSEventModifierFlags::Control
+            | NSEventModifierFlags::Option
+            | NSEventModifierFlags::Shift
+            | NSEventModifierFlags::Function,
+    )
+}
+
+fn modifier_input(key_code: u16, flags: NSEventModifierFlags) -> Option<Input> {
+    // AppKit's device-independent key codes for right and left Command.
+    // Caps Lock may already be enabled when the shortcut starts; cancel on
+    // its key transition, rather than on its persistent modifier flag.
+    if !matches!(key_code, 54 | 55) || extra_shortcut_modifiers(flags) {
+        Some(Input::Cancel)
+    } else if !flags.contains(NSEventModifierFlags::Command) {
+        Some(Input::Release)
+    } else {
+        None
+    }
 }
 
 #[derive(Default)]
@@ -215,11 +237,7 @@ impl NativeMonitor {
             let native = unsafe { event.as_ref() };
             let flags = native.modifierFlags();
             let command = flags.contains(NSEventModifierFlags::Command);
-            let extra = flags.intersects(
-                NSEventModifierFlags::Control
-                    | NSEventModifierFlags::Option
-                    | NSEventModifierFlags::Shift,
-            );
+            let extra = extra_shortcut_modifiers(flags);
             match native.r#type() {
                 NSEventType::KeyDown
                     if command
@@ -238,9 +256,11 @@ impl NativeMonitor {
                     key.set(None);
                     let _ = sender.try_send(Input::Release);
                 }
-                NSEventType::FlagsChanged if !command || extra => {
-                    key.set(None);
-                    let _ = sender.try_send(if extra { Input::Cancel } else { Input::Release });
+                NSEventType::FlagsChanged => {
+                    if let Some(input) = modifier_input(native.keyCode(), flags) {
+                        key.set(None);
+                        let _ = sender.try_send(input);
+                    }
                 }
                 NSEventType::KeyDown
                 | NSEventType::LeftMouseDown
@@ -302,6 +322,45 @@ impl Drop for NativeMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_transitions_preserve_double_press_with_caps_lock_already_on() {
+        for command_key in [54, 55] {
+            for caps_lock in [
+                NSEventModifierFlags::empty(),
+                NSEventModifierFlags::CapsLock,
+            ] {
+                assert_eq!(
+                    modifier_input(command_key, caps_lock | NSEventModifierFlags::Command),
+                    None,
+                );
+                assert_eq!(modifier_input(command_key, caps_lock), Some(Input::Release));
+            }
+        }
+    }
+
+    #[test]
+    fn caps_lock_and_function_changes_cancel_confirmation_in_both_directions() {
+        for (key_code, modifier) in [
+            (57, NSEventModifierFlags::CapsLock),
+            (63, NSEventModifierFlags::Function),
+        ] {
+            assert_eq!(
+                modifier_input(key_code, NSEventModifierFlags::Command | modifier),
+                Some(Input::Cancel),
+            );
+            assert_eq!(
+                modifier_input(key_code, NSEventModifierFlags::Command),
+                Some(Input::Cancel),
+            );
+        }
+        assert!(extra_shortcut_modifiers(
+            NSEventModifierFlags::Command | NSEventModifierFlags::Function
+        ));
+        assert!(!extra_shortcut_modifiers(
+            NSEventModifierFlags::Command | NSEventModifierFlags::CapsLock
+        ));
+    }
 
     #[test]
     fn two_presses_confirm_only_within_the_deadline() {
