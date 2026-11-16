@@ -93,10 +93,15 @@ const SIDE_W: f32 = 300.0;
 const TAB: f32 = 18.0;
 const TAB_DOT: f32 = 9.0;
 const TAB_STEP: f32 = 15.0;
-/// Dropped with the cursor this near an edge, the pill tucks into it; this
-/// near a side, it becomes a column (or lies down, near the top or bottom).
-const TUCK: f64 = 12.0;
-const TURN: f64 = 64.0;
+/// How deep the bands along a screen's edges are, as parts of its width (at
+/// the sides) or height (top and bottom). Dropped with the cursor in the
+/// outer one, the pill goes to stand by that edge: a column at a side, lying
+/// down at the top or bottom. In the inner one it tucks into the edge.
+const TURN: f64 = 0.10;
+const TUCK: f64 = 0.05;
+/// A drop is for an edge only after the drag went this far towards it: a
+/// pill parked by an edge slides along it, or away from it, as it is.
+const PUSH: f64 = 20.0;
 /// What the pill keeps from the screen's edges when a drop places it.
 const MARGIN: f64 = 8.0;
 /// The outline of what a drop would make shows after the cursor has been
@@ -1240,7 +1245,7 @@ impl Capsule {
                 let done = this.update(cx, |this, cx| {
                     let p = mac::cursor();
                     moved |= (p.0 - start.0).hypot(p.1 - start.1) > 4.0;
-                    let zone = if moved { this.zone_at(p, cx) } else { None };
+                    let zone = moved.then(|| this.zone_at(p, Some(start), cx)).flatten();
                     if !mac::mouse_down() {
                         this.show_ghost(None, cx);
                         if let Some(zone) = zone {
@@ -1279,36 +1284,56 @@ impl Capsule {
     }
 
     /// What a drop with the cursor at `p` makes of the pill, if anything.
-    fn zone_at(&self, p: (f64, f64), cx: &App) -> Option<Zone> {
+    /// `from` is where the drag began.
+    fn zone_at(&self, p: (f64, f64), from: Option<(f64, f64)>, cx: &App) -> Option<Zone> {
         // The screen under the cursor, not the one most of the window is
         // still on: a pill on its way to another display belongs there.
         let (v, whole) = mac::screen_at(p).or_else(|| {
             let native = self.native.as_ref()?;
             Some((native.visible()?, native.screen()?))
         })?;
+        // Where two displays meet is no edge: the cursor is only crossing.
+        let open = |edge: Edge| {
+            let past = match edge {
+                Edge::Left => (whole.x - 20.0, p.1),
+                Edge::Right => (whole.right() + 20.0, p.1),
+                Edge::Bottom => (p.0, whole.y - 20.0),
+                Edge::Top => (p.0, whole.top() + 20.0),
+            };
+            mac::screen_at(past).is_none()
+        };
+        let (edge, tuck) = edge_for(p, from, &v, open)?;
+        let column = matches!(edge, Edge::Left | Edge::Right);
         let plan = self.plan(cx);
-        let main = MAIN as f64;
-        let column = |edge: Edge| {
-            let len = pill_len(&plan, true) as f64;
+        let (main, len) = (MAIN as f64, pill_len(&plan, column) as f64);
+        // A pill that already lies this way keeps its place along the edge;
+        // one that turns comes out under the cursor.
+        let here = (self.column == column)
+            .then(|| self.corner())
+            .flatten()
+            .map(|(corner, _)| corner);
+        let (corner, pill) = if column {
             let x = if edge == Edge::Left {
                 v.x + MARGIN + main
             } else {
                 v.right() - MARGIN
             };
             let highest = (v.top() - len - 2.0).max(v.y + MARGIN);
-            let y = (p.1 - len / 2.0).clamp(v.y + MARGIN, highest).round();
+            let y = here
+                .map_or(p.1 - len / 2.0, |c| c.1)
+                .clamp(v.y + MARGIN, highest)
+                .round();
             let pill = Rect {
                 x: x - main,
                 y,
                 w: main,
                 h: len,
             };
-            (true, (x, y), pill, len)
-        };
-        let lying = |edge: Edge| {
-            let len = pill_len(&plan, false) as f64;
+            ((x, y), pill)
+        } else {
             let rightmost = (v.right() - MARGIN).max(v.x + len + MARGIN);
-            let x = (p.0 + len / 2.0)
+            let x = here
+                .map_or(p.0 + len / 2.0, |c| c.0)
                 .clamp(v.x + len + MARGIN, rightmost)
                 .round();
             let y = if edge == Edge::Top {
@@ -1322,50 +1347,21 @@ impl Capsule {
                 w: len,
                 h: main,
             };
-            (false, (x, y), pill, len)
+            ((x, y), pill)
         };
-        let at = |edge: Edge| match edge {
-            Edge::Left | Edge::Right => column(edge),
-            Edge::Top | Edge::Bottom => lying(edge),
-        };
-        // Where two displays meet is no edge: the cursor is only crossing.
-        let open = |edge: Edge| {
-            let past = match edge {
-                Edge::Left => (whole.x - 20.0, p.1),
-                Edge::Right => (whole.right() + 20.0, p.1),
-                Edge::Bottom => (p.0, whole.y - 20.0),
-                Edge::Top => (p.0, whole.top() + 20.0),
-            };
-            mac::screen_at(past).is_none()
-        };
-        let near = |d: f64| {
-            [
-                (Edge::Left, p.0 < v.x + d),
-                (Edge::Right, p.0 > v.right() - d),
-                (Edge::Bottom, p.1 < v.y + d),
-                (Edge::Top, p.1 > v.top() - d),
-            ]
-            .into_iter()
-            .find(|(edge, close)| *close && open(*edge))
-            .map(|(edge, _)| edge)
-        };
-        if let Some(edge) = near(TUCK) {
-            let (column, corner, _, len) = at(edge);
-            let tab = tab_rect(edge, corner, len, plan.faces.len(), v);
+        if tuck {
             return Some(Zone {
                 edge,
                 tuck: true,
                 column,
                 corner,
-                pill: tab,
+                pill: tab_rect(edge, corner, len, plan.faces.len(), v),
             });
         }
-        // Turning: a pill lying down at a side, a column at the top or bottom.
-        let edge = near(TURN)?;
-        if self.column == matches!(edge, Edge::Left | Edge::Right) {
+        // Standing there already.
+        if here.is_some_and(|c| (c.0 - corner.0).abs() < 1.0 && (c.1 - corner.1).abs() < 1.0) {
             return None;
         }
-        let (column, corner, pill, _) = at(edge);
         Some(Zone {
             edge,
             tuck: false,
@@ -1624,22 +1620,25 @@ impl Capsule {
     /// to take yours off the pill).
     #[cfg(feature = "snapshot")]
     pub fn show(&mut self, which: &str, cx: &mut Context<Self>) {
-        let edge_point = |this: &Self, edge: Edge, d: f64| {
+        // A point this far in from an edge, as a part of the screen's size.
+        let edge_point = |this: &Self, edge: Edge, part: f64| {
             let v = this.native.as_ref()?.visible()?;
             Some(match edge {
-                Edge::Left => (v.x + d, v.y + v.h / 2.0),
-                Edge::Right => (v.right() - d, v.y + v.h / 2.0),
-                Edge::Top => (v.x + v.w / 2.0, v.top() - d),
-                Edge::Bottom => (v.x + v.w / 2.0, v.y + d),
+                Edge::Left => (v.x + v.w * part, v.y + v.h / 2.0),
+                Edge::Right => (v.right() - v.w * part, v.y + v.h / 2.0),
+                Edge::Top => (v.x + v.w / 2.0, v.top() - v.h * part),
+                Edge::Bottom => (v.x + v.w / 2.0, v.y + v.h * part),
             })
         };
-        let drop_at = |this: &mut Self, edge: Edge, d: f64, cx: &mut Context<Self>| {
-            if let Some(zone) = edge_point(this, edge, d).and_then(|p| this.zone_at(p, cx)) {
+        let drop_at = |this: &mut Self, edge: Edge, part: f64, cx: &mut Context<Self>| {
+            let zone = edge_point(this, edge, part).and_then(|p| this.zone_at(p, None, cx));
+            if let Some(zone) = zone {
                 this.drop_in(zone, cx);
             } else {
                 tracing::warn!(?edge, "script: nothing to do at that edge");
             }
         };
+        let (turn, tuck) = (TURN * 0.75, TUCK * 0.2);
         let first_camera = |this: &Self, cx: &App| {
             let call = this.call.read(cx);
             call.others
@@ -1649,12 +1648,12 @@ impl Capsule {
         };
         // Not through set_open: the cursor is elsewhere in tests.
         match which {
-            "column-left" => return drop_at(self, Edge::Left, 30.0, cx),
-            "column-right" => return drop_at(self, Edge::Right, 30.0, cx),
-            "lying" => return drop_at(self, Edge::Bottom, 30.0, cx),
-            "lying-top" => return drop_at(self, Edge::Top, 30.0, cx),
-            "tuck-left" => return drop_at(self, Edge::Left, 2.0, cx),
-            "tuck-bottom" => return drop_at(self, Edge::Bottom, 2.0, cx),
+            "column-left" => return drop_at(self, Edge::Left, turn, cx),
+            "column-right" => return drop_at(self, Edge::Right, turn, cx),
+            "lying" => return drop_at(self, Edge::Bottom, turn, cx),
+            "lying-top" => return drop_at(self, Edge::Top, turn, cx),
+            "tuck-left" => return drop_at(self, Edge::Left, tuck, cx),
+            "tuck-bottom" => return drop_at(self, Edge::Bottom, tuck, cx),
             "untuck" => return self.untuck(cx),
             "hide" | "unhide" => {
                 if let Some(member) = first_camera(self, cx) {
@@ -1686,7 +1685,8 @@ impl Capsule {
                 return;
             }
             "ghost" => {
-                let zone = edge_point(self, Edge::Left, 30.0).and_then(|p| self.zone_at(p, cx));
+                let zone =
+                    edge_point(self, Edge::Left, turn).and_then(|p| self.zone_at(p, None, cx));
                 self.show_ghost(zone, cx);
                 return;
             }
@@ -1754,6 +1754,39 @@ fn ghost_radius(frame: &Rect) -> f64 {
     } else {
         RADIUS as f64
     }
+}
+
+/// The edge a drop with the cursor at `p` is for, and whether it's deep
+/// enough to tuck there. `from` is where the drag began: unless it went
+/// [`PUSH`] towards the edge, the drop is for none. By a corner, the edge the
+/// cursor is deeper into counts, and the other doesn't.
+fn edge_for(
+    p: (f64, f64),
+    from: Option<(f64, f64)>,
+    visible: &Rect,
+    open: impl Fn(Edge) -> bool,
+) -> Option<(Edge, bool)> {
+    let v = visible;
+    let (turn_x, turn_y) = (v.w * TURN, v.h * TURN);
+    // How far into its band the cursor is (0 at the edge, 1 where the band
+    // ends), and how far the drag went towards the edge.
+    let (edge, depth, pushed) = [
+        (Edge::Left, (p.0 - v.x) / turn_x, from.map(|f| f.0 - p.0)),
+        (
+            Edge::Right,
+            (v.right() - p.0) / turn_x,
+            from.map(|f| p.0 - f.0),
+        ),
+        (Edge::Bottom, (p.1 - v.y) / turn_y, from.map(|f| f.1 - p.1)),
+        (Edge::Top, (v.top() - p.1) / turn_y, from.map(|f| p.1 - f.1)),
+    ]
+    .into_iter()
+    .filter(|(edge, depth, _)| *depth < 1.0 && open(*edge))
+    .min_by(|a, b| a.1.total_cmp(&b.1))?;
+    if pushed.is_some_and(|d| d < PUSH) {
+        return None;
+    }
+    Some((edge, depth < TUCK / TURN))
 }
 
 /// The tab for a pill tucked into `edge`, by where the pill (its
@@ -3306,6 +3339,43 @@ mod tests {
         // Never past the screen's corner.
         let tab = tab_rect(Edge::Top, (20.0, 800.0), 300.0, 4, SCREEN);
         assert_eq!((tab.x, tab.top()), (0.0, 860.0));
+    }
+
+    #[test]
+    fn a_drop_is_for_the_edge_the_drag_went_to() {
+        // 1440 x 800 from y 60: bands 144 deep at the sides and 80 at the
+        // top and bottom, tucking in the inner half.
+        let all = |_| true;
+        let middle = Some((700.0, 400.0));
+        let at = |p, from| edge_for(p, from, &SCREEN, all);
+        assert_eq!(at((700.0, 400.0), middle), None);
+        assert_eq!(at((1300.0, 400.0), middle), Some((Edge::Right, false)));
+        assert_eq!(at((1400.0, 400.0), middle), Some((Edge::Right, true)));
+        assert_eq!(at((100.0, 400.0), middle), Some((Edge::Left, false)));
+        assert_eq!(at((700.0, 130.0), middle), Some((Edge::Bottom, false)));
+        assert_eq!(at((700.0, 90.0), middle), Some((Edge::Bottom, true)));
+        assert_eq!(at((700.0, 800.0), middle), Some((Edge::Top, false)));
+        // Over the Dock, past what's visible of the screen.
+        assert_eq!(at((700.0, 20.0), middle), Some((Edge::Bottom, true)));
+        // A pill parked at the bottom slides along it, and comes away,
+        // without tucking: only pushed into the edge it does.
+        let parked = Some((700.0, 98.0));
+        assert_eq!(at((300.0, 92.0), parked), None);
+        assert_eq!(at((700.0, 125.0), parked), None);
+        assert_eq!(at((700.0, 76.0), parked), Some((Edge::Bottom, true)));
+        // By a corner the edge the cursor is deeper into counts: slid along
+        // the bottom to the right, the pill is still the bottom's.
+        assert_eq!(at((1340.0, 98.0), parked), None);
+        assert_eq!(at((1420.0, 98.0), parked), Some((Edge::Right, true)));
+        // Where another display begins is no edge.
+        let no_right = |edge| edge != Edge::Right;
+        assert_eq!(edge_for((1400.0, 400.0), middle, &SCREEN, no_right), None);
+        assert_eq!(
+            edge_for((1400.0, 130.0), middle, &SCREEN, no_right),
+            Some((Edge::Bottom, false))
+        );
+        // A script drops with no drag behind it.
+        assert_eq!(at((1300.0, 400.0), None), Some((Edge::Right, false)));
     }
 
     #[test]
