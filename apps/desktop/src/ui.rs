@@ -11,8 +11,8 @@ use objc2_core_video::{CVPixelBufferGetHeight, CVPixelBufferGetWidth};
 
 use crate::assets::Icon;
 use crate::theme::{
-    ACCENT, BG, DANGER, RAISED, RAISED_2, RECORDING, TEXT, TEXT_DIM, TEXT_FAINT, avatar_background,
-    initials, white,
+    ACCENT, BG, DANGER, RAISED, RAISED_2, RECORDING, SPEAKING, TEXT, TEXT_DIM, TEXT_FAINT,
+    avatar_background, initials, white,
 };
 use crate::video_mac::Frame;
 
@@ -196,6 +196,8 @@ pub enum Tone {
     Off,
     /// Something is running (you're sharing).
     Active,
+    /// On only while it's held (hold to talk).
+    Live,
     /// A panel this button opens is open.
     Selected,
     Danger,
@@ -214,6 +216,7 @@ pub fn round_button(
         Tone::Plain => (white(0.10), rgb(TEXT).into()),
         Tone::Off => (rgb(TEXT).into(), rgb(DANGER).into()),
         Tone::Active => (rgb(ACCENT).into(), rgb(0xffffff).into()),
+        Tone::Live => (rgb(SPEAKING).into(), rgb(0x06240f).into()),
         Tone::Selected => (rgb(TEXT).into(), rgb(BG).into()),
         Tone::Danger => (rgb(DANGER).into(), rgb(0xffffff).into()),
         Tone::Recording => (gpui::rgba(0xff453a3d).into(), rgb(RECORDING).into()),

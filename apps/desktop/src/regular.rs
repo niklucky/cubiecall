@@ -1037,7 +1037,7 @@ impl Regular {
                             .font_weight(FontWeight::SEMIBOLD)
                             .cursor_pointer()
                             .hover(|s| s.opacity(0.88))
-                            .child(icon(Icon::PhoneOff, 16.0, rgb(0xffffff)))
+                            .child(icon(Icon::PhoneDown, 16.0, rgb(0xffffff)))
                             .child("Leave")
                             .on_click(on(Call::leave)),
                     ),

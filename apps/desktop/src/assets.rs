@@ -38,6 +38,7 @@ icons! {
     Play => "play",
     Pencil => "pencil",
     Phone => "phone",
+    PhoneDown => "phone-down",
     Trash => "trash-2",
     Upload => "upload",
     User => "user",

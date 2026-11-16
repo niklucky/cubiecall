@@ -113,6 +113,39 @@ pub struct TranscriptionSettings {
     pub accept_asks: bool,
 }
 
+/// The call widget, as set in Settings.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallSettings {
+    /// Hold a key, or the mic button, to talk while muted.
+    #[serde(default = "yes")]
+    pub hold_to_talk: bool,
+    /// One soft beep when you talk while muted.
+    #[serde(default = "yes")]
+    pub muted_beep: bool,
+    /// The sentence being said, by the widget, while the call is transcribed.
+    #[serde(default = "yes")]
+    pub caption_line: bool,
+    /// In calls of four or more: a bubble for every camera, instead of one
+    /// that follows the speaker.
+    #[serde(default)]
+    pub bubble_each: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for CallSettings {
+    fn default() -> Self {
+        Self {
+            hold_to_talk: true,
+            muted_beep: true,
+            caption_line: true,
+            bubble_each: false,
+        }
+    }
+}
+
 impl TranscriptionSettings {
     /// The speech model to use.
     pub fn model(&self) -> &'static quipcall_core::ModelInfo {
@@ -197,6 +230,8 @@ pub struct Store {
     pub transcription: TranscriptionSettings,
     #[serde(default)]
     pub recording: RecordingSettings,
+    #[serde(default)]
+    pub call: CallSettings,
 }
 
 impl Store {

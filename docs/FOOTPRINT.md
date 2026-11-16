@@ -47,6 +47,17 @@ Where the ~170 MB baseline goes (`footprint`): ~90 MB GPU memory owned by the wi
 
 **Bug found while measuring:** every video frame leaked an IOSurface (3.3 GB after a minute of sending). libwebrtc's Objective-C frame wrappers are autoreleased, and our threads (tokio workers, the synthetic camera) never drained an autorelease pool. Frame callbacks now run inside one. RSS barely showed it, which is how we found out RSS is the wrong metric.
 
+## 2026-11-15 — Minimal mode, cameras as bubbles
+
+Release build, sending the synthetic 720p camera, 5 `lk room join --publish-demo` H.264 publishers: six people, everyone's camera on. The pill is one window that no longer draws video (it's drawn again only when someone starts or stops speaking, mutes, or turns a camera on or off); each bubble is a window with one video in it, cut to its shape by the compositor. No microphone. Samples every 5 s, on a Mac in use at the time, so the CPU numbers are rough.
+
+| Scenario | Windows with video | CPU (one core) | Footprint |
+|---|---|---|---|
+| One bubble follows the speaker (the default from four people), and yours | 2 | 13–17%, ~15% avg | ~147 MB |
+| A bubble each: three in the row, and yours | 4 | 5–19%, ~12% avg | ~165 MB |
+
+A bubble costs about 9 MB (its Metal drawable and frames); CPU didn't measurably grow from two bubbles to four. Not a side-by-side with the one-window widget below (ten people there, six here, and no build of it against today's server): by these numbers CPU is no higher, and memory is about 12 MB higher with the default two bubbles. Still to do: the same call in both builds, and ten people.
+
 ## 2026-11-07 — Stage 2, minimal mode as one capsule
 
 Release build, sending the synthetic 720p camera, 9 `lk load-test` H.264 publishers: 10 faces at 44 px in one capsule window, each on the lowest layer and drawn as ~15 bands cut to a circle. No microphone (`QUIPCALL_NO_MIC`): a fresh unsigned build would have raised the permission prompt. Samples every 5 s.
