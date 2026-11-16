@@ -418,6 +418,7 @@ impl Engine {
         stop_taking_in(transcribing.as_ref(), recorder.as_ref());
         let events = self.events.clone();
         let closing = self.tasks.spawn(async move {
+            let started = Instant::now();
             // Your screen goes first, without waiting for the goodbye: if
             // the app quits before that's out, the server only notices you
             // went 20 s later, and everyone sees your screen until then.
@@ -427,7 +428,6 @@ impl Engine {
                     None => drop(screen),
                 }
             }
-            let started = Instant::now();
             finish_call(
                 async {
                     finish_words(transcribing, &events).await;
