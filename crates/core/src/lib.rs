@@ -415,10 +415,19 @@ impl Engine {
                 std::mem::take(&mut s.transcript_sends),
             )
         };
-        drop(screen);
         stop_taking_in(transcribing.as_ref(), recorder.as_ref());
         let events = self.events.clone();
         let closing = self.tasks.spawn(async move {
+            // Your screen goes first, without waiting for the goodbye: if
+            // the app quits before that's out, the server only notices you
+            // went 20 s later, and everyone sees your screen until then.
+            if let Some(screen) = screen {
+                match &room {
+                    Some(room) => screen.unpublish(room).await,
+                    None => drop(screen),
+                }
+            }
+            let started = Instant::now();
             finish_call(
                 async {
                     finish_words(transcribing, &events).await;
@@ -433,6 +442,7 @@ impl Engine {
                 Duration::from_secs(2),
             )
             .await;
+            tracing::info!(took = ?started.elapsed(), "left the room");
             // Stopping the camera blocks briefly; keep it off the UI thread.
             if let Some(camera) = camera {
                 let _ = tokio::task::spawn_blocking(move || drop(camera)).await;
