@@ -10,6 +10,8 @@
 	<string>com.quipcall.desktop</string>
 	<key>CFBundleExecutable</key>
 	<string>Quipcall</string>
+	<key>CFBundleIconFile</key>
+	<string>Quby.icns</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

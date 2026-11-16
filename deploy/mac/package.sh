@@ -38,8 +38,9 @@ for pair in aarch64-apple-darwin:apple-silicon x86_64-apple-darwin:intel; do
 	cargo build --release -p quipcall-desktop --target "$target"
 
 	app=$OUT/$name/Quipcall.app
-	mkdir -p "$app/Contents/MacOS"
+	mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 	cp "target/$target/release/quipcall-desktop" "$app/Contents/MacOS/Quipcall"
+	cp apps/desktop/assets/Quby.icns "$app/Contents/Resources/Quby.icns"
 	sed -e "s/@VERSION@/$VERSION/" -e "s/@BUILD@/$BUILD/" -e "s/@MIN_MACOS@/$MACOSX_DEPLOYMENT_TARGET/" \
 		deploy/mac/Info.plist >"$app/Contents/Info.plist"
 
