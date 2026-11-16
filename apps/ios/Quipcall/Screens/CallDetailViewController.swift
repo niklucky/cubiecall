@@ -1,23 +1,12 @@
 import UIKit
 
-/// A room's page, or one call's: what happened, and a Call button.
-///
-/// - A **room** shows every call you were in there, newest first, each under
-///   its own header (when, how long), with what happened in it: who came and
-///   went, screen shares, recordings, and what was said if someone's Mac
-///   transcribed it.
-/// - A **call** (from the Calls tab) shows its details, what happened in it,
-///   and the earlier calls in the same room.
+/// One call's page (from the Calls tab): its details, what happened in it,
+/// the earlier calls in the same room, and a Call button. The room's whole
+/// history, as a chat, is one tap further (`ChatViewController`).
 ///
 /// All of it is the phone's own record (the engine writes it as a call ends).
-/// Messages and files will appear here too once Quipcall has them.
-final class HistoryViewController: UITableViewController {
-    enum Subject {
-        case room(id: String, name: String, detail: String?)
-        case call(CallRecord)
-    }
-
-    private let subject: Subject
+final class CallDetailViewController: UITableViewController {
+    private let call: CallRecord
     private var sections: [Section] = []
 
     private struct Section {
@@ -37,27 +26,16 @@ final class HistoryViewController: UITableViewController {
         case note(String)
     }
 
-    init(_ subject: Subject) {
-        self.subject = subject
+    init(_ call: CallRecord) {
+        self.call = call
         super.init(style: .insetGrouped)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    private var room: String {
-        switch subject {
-        case let .room(id, _, _): return id
-        case let .call(call): return call.room
-        }
-    }
-
-    private var name: String {
-        switch subject {
-        case let .room(_, name, _): return name
-        case let .call(call): return call.name
-        }
-    }
+    private var room: String { call.room }
+    private var name: String { call.name }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -96,10 +74,7 @@ final class HistoryViewController: UITableViewController {
         detail.font = .preferredFont(forTextStyle: .subheadline)
         detail.textColor = .secondaryLabel
         detail.adjustsFontForContentSizeCategory = true
-        switch subject {
-        case let .room(_, _, text): detail.text = text
-        case let .call(call): detail.text = call.fullDate
-        }
+        detail.text = call.fullDate
 
         var callLook = UIButton.Configuration.borderedProminent()
         callLook.title = "Call"
@@ -144,40 +119,23 @@ final class HistoryViewController: UITableViewController {
 
     @objc private func reload() {
         let client = AppEnv.shared.client
-        var sections: [Section] = []
-        switch subject {
-        case .room:
-            let calls = client.roomCalls(room: room)
-            if calls.isEmpty {
-                sections.append(Section(title: nil, rows: [
-                    .note("No calls here yet. Each call you make shows up with who joined, screen shares, recordings and transcripts."),
-                ]))
-            }
-            // Each call under its own header: the line between calls.
-            for call in calls {
-                var rows: [Row] = [.fact("People", call.peopleText), .fact("Length", call.lengthText)]
-                rows += client.callMoments(id: call.id).map(Row.moment)
-                sections.append(Section(title: call.fullDate, rows: rows))
-            }
-        case let .call(call):
-            sections.append(Section(title: nil, rows: [
-                .fact("Date", call.fullDate),
-                .fact("Length", call.lengthText),
-                .fact("People", call.peopleText),
-            ]))
-            let moments = client.callMoments(id: call.id)
-            sections.append(Section(
-                title: "In This Call",
-                rows: moments.isEmpty
-                    ? [.note("Nothing else happened: nobody came or went, shared a screen, recorded or transcribed.")]
-                    : moments.map(Row.moment)
-            ))
-            let earlier = client.roomCalls(room: call.room).filter { $0.started < call.started }
-            if !earlier.isEmpty {
-                sections.append(Section(title: "Previous Calls", rows: earlier.map(Row.call)))
-            }
-            sections.append(Section(title: nil, rows: [.room]))
+        var sections = [Section(title: nil, rows: [
+            .fact("Date", call.fullDate),
+            .fact("Length", call.lengthText),
+            .fact("People", call.peopleText),
+        ])]
+        let moments = client.callMoments(id: call.id)
+        sections.append(Section(
+            title: "In This Call",
+            rows: moments.isEmpty
+                ? [.note("Nothing else happened: nobody came or went, shared a screen, recorded or transcribed.")]
+                : moments.map(Row.moment)
+        ))
+        let earlier = client.roomCalls(room: call.room).filter { $0.started < call.started }
+        if !earlier.isEmpty {
+            sections.append(Section(title: "Previous Calls", rows: earlier.map(Row.call)))
         }
+        sections.append(Section(title: nil, rows: [.room]))
         self.sections = sections
         tableView.reloadData()
     }
@@ -216,8 +174,8 @@ final class HistoryViewController: UITableViewController {
             cell.selectionStyle = .default
         case .room:
             var content = cell.defaultContentConfiguration()
-            content.text = "Room History"
-            content.image = UIImage(systemName: "clock.arrow.circlepath")
+            content.text = "Open Room"
+            content.image = UIImage(systemName: "bubble.left.and.bubble.right")
             cell.contentConfiguration = content
             cell.accessoryType = .disclosureIndicator
             cell.selectionStyle = .default
@@ -235,10 +193,9 @@ final class HistoryViewController: UITableViewController {
         tableView.deselectRow(at: indexPath, animated: true)
         switch sections[indexPath.section].rows[indexPath.row] {
         case let .call(call):
-            navigationController?.pushViewController(HistoryViewController(.call(call)), animated: true)
+            navigationController?.pushViewController(CallDetailViewController(call), animated: true)
         case .room:
-            let page = HistoryViewController(.room(id: room, name: name, detail: nil))
-            navigationController?.pushViewController(page, animated: true)
+            navigationController?.pushViewController(ChatViewController(room: room, name: name), animated: true)
         default:
             break
         }
@@ -301,17 +258,17 @@ extension CallRecord {
     }
 }
 
-private extension Moment {
+extension Moment {
     var time: String {
         Date(timeIntervalSince1970: TimeInterval(at)).formatted(date: .omitted, time: .shortened)
     }
 
-    private var actor: String {
+    var actor: String {
         mine ? "You" : who
     }
 
     /// What happened, in words, and the symbol that goes with it.
-    private var event: (text: String, symbol: String) {
+    var event: (text: String, symbol: String) {
         switch kind {
         case .joined: return ("\(actor) joined", "person.crop.circle.badge.plus")
         case .left: return ("\(actor) left", "person.crop.circle.badge.minus")

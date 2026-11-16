@@ -134,7 +134,15 @@ The iPhone app looks like iOS, not like the Mac app: the system's lists, search 
 - **Contacts**: your address book, searchable by name, email or number. People with a Quipcall account come first, under "On Quipcall", with a call button; everyone else has **Invite**, which opens the system's share sheet (Messages, Telegram, WhatsApp, Mail…) with a link to a room for the two of you (it opens in a browser, no app needed). Until calls can ring, calling someone on Quipcall sends them that link first, then takes you into the call.
 - **Settings**: you, and Sign Out.
 
-**A room's page** is its history: the face, the name, **Call** and **Share**, then every call you were in there, newest first, each under its own header (the date and time). A call lists its people and length, then what happened in order: who joined and left, who started and stopped sharing a screen, who recorded, a transcript starting, and each thing that was said (who, when, the words) if someone's Mac transcribed the call. **A call's page** (from the Calls tab) shows that one call the same way, with its date, length and people on top, the earlier calls in the room under "Previous Calls", and a way to the room's whole history. Messages and files will be rows in the same history once Quipcall has them; recordings show as events, since the file stays on the recorder's Mac.
+**A room opens as a group chat**, the way Telegram and WhatsApp show one. The room's face and name are in the bar, with Share and Call. The history runs oldest to newest and opens at the newest end:
+
+- A day's name where a new day begins, and around each call two centred lines: "Call started · 21:44" and "Call finished · 21:45 · 33 sec" (or that nobody joined).
+- What was said, when someone's Mac transcribed the call, as chat bubbles: yours on the right in the tint colour, everyone else's on the left in grey, under their name in their own colour, with a face beside the last bubble of a run. Each has its time and a small captions mark: it was transcribed, not typed.
+- Who joined or left, who started or stopped sharing a screen or recording, and the transcript starting and stopping, as small centred grey lines between the bubbles.
+
+There's nothing to type into yet: messages and files will be bubbles in the same chat once Quipcall has them, and a recording is only a line, since the file stays on the recorder's Mac. Bubbles are the one thing here iOS has no component for, so those two cells are ours, in the system's colours and type.
+
+**A call's page** (from the Calls tab) is a plain grouped list: its date, length and people, what happened in it, the earlier calls in the room under "Previous Calls", a way into the room's chat, and **Call** and **Share** on top.
 
 The call is full screen and dark, as the system's own call screens are: a tile per person (a row each up to three, two across from four, a shared screen on top), the room's name and the time, an invite button, and five round buttons (speaker, camera, microphone, flip, leave). White means on and worth noticing.
 

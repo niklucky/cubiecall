@@ -1,8 +1,8 @@
 import UIKit
 
 /// Your rooms, as the system draws a list: a face, the name, a line under
-/// it. Tap one for its page (its calls and what happened in them); the small
-/// button at the end of the row calls straight away.
+/// it. Tap one to open it as a chat (its calls and what was said in them);
+/// the small button at the end of the row calls straight away.
 final class RoomsViewController: ListViewController, UISearchResultsUpdating {
     private var rooms: [Room] = []
     private var shown: [Room] = []
@@ -153,8 +153,7 @@ final class RoomsViewController: ListViewController, UISearchResultsUpdating {
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         let room = shown[indexPath.row]
-        let page = HistoryViewController(.room(id: room.id, name: room.name, detail: Self.detail(room)))
-        navigationController?.pushViewController(page, animated: true)
+        navigationController?.pushViewController(ChatViewController(room: room.id, name: room.name), animated: true)
     }
 
     override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool { true }

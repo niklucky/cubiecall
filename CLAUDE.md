@@ -6,7 +6,7 @@ Read README.md first. Plan: docs/PLAN.md. Decisions: docs/ARCHITECTURE.md.
 - **Footprint first.** Keep binaries small and CPU and memory low. Don't add a dependency without a reason.
 - **UI is minimal and custom.** It's built on GPUI with no widget library. Less on screen is better (docs/UI.md).
 - `crates/core` contains no UI code. Media logic goes there.
-- Phones: `apps/ios` (Swift, UIKit, no packages) uses the system's components and colours (no custom controls or fixed colours outside the call's video tiles and faces) and is views only; what it shows comes from `crates/mobile`, which wraps `crates/core` without its `denoise` and `transcribe` features. The mobile budget in PLAN.md is a floor: raise a limit only when a real call hits it.
+- Phones: `apps/ios` (Swift, UIKit, no packages) uses the system's components and colours (no custom controls or fixed colours outside the call's video tiles, faces and the room chat's bubbles) and is views only; what it shows comes from `crates/mobile`, which wraps `crates/core` without its `denoise` and `transcribe` features. The mobile budget in PLAN.md is a floor: raise a limit only when a real call hits it.
 
 ## Conventions
 - In PLAN.md, finished tasks are marked `[x] ~~task~~` and finished stages `## ~~Stage N~~ ✅`. Update it as work lands.
