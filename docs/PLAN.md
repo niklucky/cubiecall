@@ -7,7 +7,7 @@ How to read this file:
 - Each stage ends with **Done when**: the checks that have to pass before we cross it out.
 - Decisions and the reasoning behind them live in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Current focus:** Stage 2 — Call UI (Stage 1 waits on a manual test of camera, speaker and screen share). An early alpha (Stage 7, partly) runs at https://quipcall.com so friends can test calls.
+**Current focus:** Stage 2 — Call UI (Stage 1 waits on a manual test of camera, speaker and screen share). An early alpha (Stage 7, partly) runs at https://quipcall.com so friends can test calls. The phone apps have their own stages, [Mobile](#mobile-ios-first-then-android) below: iOS first (M0, the media spike, is built and waits on a real iPhone), then Android.
 
 ---
 
@@ -209,6 +209,102 @@ Started early (2026-11-03), ahead of Stages 3–6, with open room links. Invite-
 
 **Done when:** a summary of a test call is generated and visible on both desktop and web.
 
+## Mobile (iOS first, then Android)
+
+Native apps: Swift and UIKit on iOS, Kotlin on Android, both thin views over the desktop's call engine (`crates/core`) through `crates/mobile`. Decisions: [ARCHITECTURE.md](ARCHITECTURE.md#mobile-ios-first-then-android). Design: [prototype/mobile.html](prototype/mobile.html), with Telegram as the model: rooms are its groups, contacts are for personal calls. We finish iOS (build, tune, test) before starting Android.
+
+### Mobile budget
+
+Set to the least we think can work. We raise a line only when a real call hits it, and write down why. Measured on a real iPhone, release build (`docs/FOOTPRINT.md`); the first numbers are from the Simulator and only show the direction.
+
+| Metric | Limit | So far (Simulator, 2026-11-16) |
+|---|---|---|
+| App on the phone (arm64, stripped) | ≤ 20 MB | 18.3 MB |
+| On the list, signed in | ≤ 30 MB, 0% CPU, nothing on a timer | 34 MB with the test runner attached |
+| Audio call | ≤ 40 MB, ≤ 5% of one core | not measured (the Simulator runs without audio) |
+| Call of two, video both ways | ≤ 70 MB, ≤ 15% | receiving two: 44 MB, ~8%; sending too: 215 MB (the Simulator's software encoder, see below) |
+| Room call, six on screen | ≤ 90 MB, ≤ 25% | not measured |
+| Camera you send | 540 × 960 at 24 fps, ≤ 800 kbps, with one 180 × 320 layer (150 kbps, 15 fps) under it | as set |
+| Video you receive | no more than its tile shows: the full layer only for a tile at least 700 px wide | as set |
+| GPU | none of our own: video goes to the system's renderer, the UI redraws only when something changes | as built |
+| In the background | audio only: nothing is decoded for a screen nobody sees | not built |
+
+### M0 — Foundations and media spike (riskiest part first)
+
+- [x] ~~Decide the stack: native UI over the Rust engine, bindings by UniFFI; UIKit, no storyboard, no packages~~
+- [x] ~~`crates/core` builds for iOS: the noise model and speech to text became features (`denoise`, `transcribe`), on for the desktop and off for phones; camera, permissions and pixel buffers are shared by macOS and iOS~~
+- [x] ~~`crates/mobile`: `Client` (sign in, rooms) and `Call` (events, mic, camera, video), with Swift bindings written by `dev/ios-core.sh`~~
+- [x] ~~`apps/ios`: an Xcode project with a "Rust core" build phase; sign-in, the room list, settings and a call screen~~ *Checked in the Simulator against an isolated server: the browser-approval sign-in ends in the Keychain, the list loads, a room is created.*
+- [x] ~~Receive video with no copy: decoded H.264 `CVPixelBuffer`s go from the engine's thread into each tile's `AVSampleBufferVideoRenderer`~~ *Two web guests (`dev/guests.mjs`) at 640 × 480: "first video frame on screen … zero_copy=true" for both, speaking ring follows them, leaving and rejoining works.*
+- [x] ~~Send the camera as H.264 at the budget's size, two layers~~ *With the synthetic camera (the Simulator has none): LiveKit lists 540 × 960 at 800 kbps and 180 × 320 at 150 kbps; your own tile shows the same buffers.*
+- [ ] The real camera: front and back, upright (the capture connection turns frames, so nothing rotates on the CPU), 24 fps. *Built; needs an iPhone.*
+- [ ] Audio on an iPhone: microphone and speaker through the system's voice processing (echo cancellation, noise suppression, gain), loudspeaker and receiver. *Built blind: the Simulator's microphone is the Mac's, so test runs there open no audio device at all.*
+- [ ] Footprint on an iPhone. *Simulator: 34 MB on the list, 44 MB and ~8% CPU receiving two cameras. Sending the camera adds about 170 MB there, all of it given back when the camera goes off; a process sample shows VideoToolbox encoding, which in the Simulator is software. Measure on a phone before anything else is built on it; if it costs that much there too, find what holds it (run with `MallocStackLogging`).*
+- [ ] The first join after the first install stayed on "Joining…" once (no request reached LiveKit). *Not reproduced in four more joins, cold and warm; the engine's log now goes to a file with `-log`.*
+- [ ] Go/no-go on the Rust engine for phones, against LiveKit's Swift and Android SDKs. *Recommendation: go. One engine for three platforms, the phone already follows the desktop's recording and transcript notices, and the app is 18 MB. What it costs: we own the audio session, CallKit and the camera ourselves.*
+
+**Done when:** a call between an iPhone and the Mac app works over quipcall.com with audio and video both ways, the budget table has phone numbers in it, and we've said go or no-go.
+
+### M1 — Design
+
+- [ ] Round 1 of the prototype ([prototype/mobile.html](prototype/mobile.html)): Calls (rooms and people in one list), a room, contacts, a person, an incoming call, a call of two, a room call, a shared screen, the minimised pill, sign-in, settings. *Drawn; waits for a look.*
+- [ ] Decide: one list (rooms and people together, as drawn) or a Rooms tab and people only under Contacts; whether a tap opens a room or calls it.
+
+**Done when:** every screen below is approved as drawn.
+
+### M2 — App shell
+
+- [ ] Sign in with an email link that opens the app (server: a native variant of the link exchange; universal links for quipcall.com). Until then: the Mac's code in the browser.
+- [ ] The list: last call and its length per room, who's in a room right now with Join (server: room presence, Stage 3's webhooks), search, long-press actions
+- [ ] A room: its calls as a chat, Call or Join, members, the link, invitations and access (the Mac's Room access)
+- [ ] Create, rename and close rooms; quick calls; share sheets
+- [ ] Room links open the app: `quipcall://` (built) and https://quipcall.com links
+- [ ] Call history on the phone; your name; offline and error states
+- [ ] Session lifecycle as on the Mac: expired sessions return to sign-in from anywhere (built for the list and for joining)
+
+**Done when:** everything the Mac's Home does with rooms can be done on the phone.
+
+### M3 — The call
+
+- [ ] Layouts: a call of two (they fill the screen, you in a corner you can drag), rows up to three people and a grid from four (built), pages past eight, a shared screen on top with pinch to zoom and landscape
+- [ ] The minimised pill inside the app; the system's picture in picture outside it
+- [ ] Audio routes: loudspeaker, receiver, Bluetooth and wired headsets, with the system's picker; the proximity sensor on audio calls
+- [ ] Interruptions: a phone call, Siri, an alarm; the app in the background (audio goes on, video stops both ways); the screen locked
+- [ ] Reconnecting when the network changes (Wi-Fi to mobile data and back)
+- [ ] Join muted or with the camera off (the engine publishes the microphone unmuted today; the phone mutes it the moment it opens)
+- [ ] Flip the camera without republishing the track; turn the phone (your video, and other phones' turned video)
+- [ ] Recording and transcript notices (the events arrive already); captions and the transcript itself wait for the transcription round
+- [ ] Use less when it matters: Low Power Mode and a hot phone lower what's sent and received
+
+**Done when:** a 30-minute room call with six people stays inside the budget on an iPhone, through a network change and a trip to the background.
+
+### M4 — Contacts and personal calls
+
+- [ ] Server: contacts (add by email, invitations), presence over the WebSocket hub, the ringing protocol (Stages 3–5)
+- [ ] Ringing a phone that's asleep: VoIP push and CallKit, so a Quipcall call rings like a phone call, on the lock screen too. *Needs the Apple Developer Program.*
+- [ ] Contacts, a person's screen, missed calls; the Mac and the web ring too, and the first to answer takes the call
+
+**Done when:** two phones call each other from Contacts with both apps closed.
+
+### M5 — iOS alpha
+
+- [ ] Apple Developer account, signing, TestFlight for friends; `make release-ios`
+- [ ] Privacy manifest, the icon's dark and tinted variants, crash logs
+- [ ] Battery: an hour's audio call, an hour's video call
+
+**Done when:** friends install it from TestFlight and call each other.
+
+### M6 — Android
+
+- [ ] Kotlin views over the same `crates/mobile` (UniFFI's Kotlin bindings), the engine's Android pieces (camera, video to a `Surface`, the session in the Keystore), calls through Telecom and FCM
+- [ ] The same budget, measured on a mid-range phone
+
+### Later (mobile)
+
+- [ ] Transcription on phones: captions and transcripts from a Mac in the call arrive already; a phone transcribing by itself is to discuss
+- [ ] Sharing the phone's screen (ReplayKit, a media projection)
+- [ ] iPad and landscape layouts
+
 ## Later
 
 - [ ] Windows desktop (Windows.Graphics.Capture, GPUI on DirectX 11)
@@ -218,4 +314,3 @@ Started early (2026-11-03), ahead of Stages 3–6, with open room links. Invite-
 - [ ] End-to-end encryption
 - [ ] Speaker separation for shared microphones
 - [ ] Peer-to-peer for 1:1 calls
-- [ ] Native mobile apps (reusing the Rust core through UniFFI)

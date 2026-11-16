@@ -1,7 +1,7 @@
 # Quipcall — Architecture
 
 A small, fast app for 1:1 and group video/audio calls, with screen sharing, local speech-to-text and LLM summaries.
-Desktop (macOS first, then Windows and Linux) plus a web client.
+Desktop (macOS first, then Windows and Linux), a web client, and phones (iOS first, then Android).
 
 ## Principles
 
@@ -16,6 +16,7 @@ Desktop (macOS first, then Windows and Linux) plus a web client.
                     │                                                           │
   Desktop (Rust) ───┼─ HTTPS/WS ─▶ nginx ─▶ quipcall-server (Axum, SQLite)       │
   Web (Svelte)  ────┤                        accounts, contacts, groups, invites│
+  iOS (Swift+Rust) ─┤                                                           │
                     │                        presence + ringing (WebSocket)     │
                     │                        LiveKit tokens, webhooks, transcripts, summaries
                     │                                                           │
@@ -29,6 +30,7 @@ Desktop (macOS first, then Windows and Linux) plus a web client.
 | Desktop | Rust, GPUI (`gpui-pre`, custom controls, no widget library), LiveKit Rust SDK (libwebrtc). UI design: [UI.md](UI.md) |
 | macOS media | `PlatformAudio` (CoreAudio, WebRTC echo cancellation / auto gain), DeepFilterNet 3 noise suppression (tract), ScreenCaptureKit, AVFoundation, VideoToolbox |
 | Web | Svelte 5, Vite, `livekit-client` |
+| iOS | Swift and UIKit over `crates/mobile` (the Rust engine through UniFFI); video by `AVSampleBufferDisplayLayer` |
 | Backend | Rust: Axum, tokio, sqlx + SQLite |
 | Shared types | `crates/protocol` (serde), with TypeScript types generated for web |
 | Speech-to-text | `crates/stt`: Silero VAD and Parakeet TDT v3 or Qwen3-ASR 0.6B, both run by transcribe.cpp (ggml, Metal) |
@@ -41,7 +43,9 @@ crates/protocol     shared request/response and WebSocket message types
 crates/core         call engine: LiveKit room, tracks, devices, call state (no UI)
 crates/capture-mac  ScreenCaptureKit and AVFoundation capture (added when needed)
 crates/stt          VAD + ASR pipeline and the model catalog (transcribe.cpp)
+crates/mobile       the engine for phones: accounts, rooms and calls behind UniFFI
 apps/desktop        GPUI app
+apps/ios            iPhone app (Swift, UIKit)
 apps/server         Axum backend
 apps/web            Svelte web client
 dev/                local LiveKit config
@@ -108,6 +112,30 @@ Native saved links and their local aliases are stored per principal, separately 
 - Each voice in its own file too (a Setting): the mixer hands out every voice's 10 ms along with the mix, and each voice gets its own AAC writer, made when it's first heard and filled with silence up to then, so every file lines up with the mix (`<recording> voices/<name>.m4a`). The voices' files are written on a thread of their own: an hour of silence for someone who joins late mustn't hold up the mix. Silence is encoded a second at a time, about 3 s per hour of it in a release build. Frames wait for that thread in a queue of 10 s; past that the voices' files miss them, and get silence in their place, so they still line up. On Stop the mix is finished first. Names are unique however the volume compares them: "Anna" and "anna" get a file each.
 - Home plays the recording under the call's transcript with AVPlayer (part of macOS): a line plays from where it was said, the line playing is outlined.
 - Files go to Movies › Quipcall (or a folder chosen in Settings), and only the recorder has them. Uploading them so the whole room gets them comes later, with the backend.
+
+## Mobile (iOS first, then Android)
+
+Stages and the budget: [PLAN.md](PLAN.md#mobile-ios-first-then-android). Screens: [prototype/mobile.html](prototype/mobile.html).
+
+```
+  Swift, UIKit (apps/ios)          Kotlin (later)
+        │  typed calls, events           │
+        └───────────── crates/mobile ────┘      UniFFI writes both sides
+                           │
+                      crates/core                the desktop's call engine
+                           │
+                   LiveKit SDK, libwebrtc
+```
+
+- **Native screens, one engine.** The apps are views only. Accounts, rooms and the call live in Rust: `crates/mobile` wraps `crates/core`, the engine the Mac runs, so a phone joins, publishes and follows a call (recording and transcript notices included) by the same code. The other way, LiveKit's Swift and Android SDKs, would be two more engines to keep in step with ours, with the same libwebrtc inside. The price of our way: the audio session, CallKit and the camera are ours to get right.
+- **UIKit, by hand.** No storyboard, no SwiftUI, no Swift packages: the lowest baseline, and we decide exactly what redraws (a call screen changes a ring or a badge, never the layout, when someone speaks). The lists follow Telegram: one fast table, a face per row, laid out without constraints. The system's bars are used as they come, so the app looks like the iOS it runs on. iOS 17 or later.
+- **The engine on a phone** is built without `denoise` and `transcribe` (features of `crates/core`, on by default for the desktop): no DeepFilterNet (17.6 MB) and no transcribe.cpp. iOS cancels echo and suppresses noise itself (the Voice Processing I/O unit), which is what WebRTC's platform audio uses there. Screen share, recording and transcribing on the phone are off; their events from others still arrive.
+- **The bridge** (`crates/mobile`, UniFFI 0.32): `Client` (the session in the Keychain, sign-in, rooms: `async` methods over the engine's HTTP runtime) and `Call`. A call has one thread of its own: it asks for admission (the microphone prompt first, as on the Mac), then passes the engine's events to the app as `CallEvent`s. The app keeps its picture of the call from those; nothing is polled. The Swift file and C header are written from the built library by `dev/ios-core.sh`, which Xcode's "Rust core" build phase runs; they aren't in git.
+- **Video never crosses the bridge.** A video view is an `AVSampleBufferDisplayLayer`. It gives the engine the address of its `AVSampleBufferVideoRenderer`, and the engine enqueues each decoded frame there from its own thread (`crates/mobile/src/video.rs`): hardware-decoded H.264 `CVPixelBuffer`s as they are, software-decoded frames packed into pooled NV12 buffers first. The system composites: the app has no Metal renderer, no shaders, no textures, and the UI thread never sees a frame. A tile nobody sees detaches, and nothing is drawn for it; each camera is received at the layer its tile needs.
+- **The camera** is the Mac's AVFoundation path with a phone's needs: front or back, turned upright by the capture connection (on the GPU, so buffers arrive as portrait and neither WebRTC nor the viewer rotates anything), 960 × 540 from the sensor at 24 fps, H.264, the full layer at 800 kbps and one 180 × 320 layer under it. These are the budget's floor, to raise when a call shows they're too little.
+- **Signing in** is the Mac's for now: the app shows a code, the browser approves it, the app polls with its secret and keeps the session in the Keychain (one entry per server). An email link that opens the app replaces it in M2.
+- **Personal calls** need the server's contacts, presence and ringing (Stages 3–5), and, to ring a phone that's asleep, VoIP push with CallKit: the Apple Developer Program. TestFlight needs it too.
+- **Android** gets the same `crates/mobile` through UniFFI's Kotlin bindings; what's per platform in the engine (camera, video sink, where the session is kept) is behind `cfg`.
 
 ## Alpha scope
 

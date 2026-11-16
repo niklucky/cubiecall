@@ -125,6 +125,10 @@ One window (1040 × 680): the room's name and the call's time in the title bar, 
 - No widget library: the look is custom, and every dependency costs footprint. Shared pieces (avatars, buttons, tooltips, empty states) are in `ui.rs`.
 - Icons: [Lucide](https://lucide.dev) (ISC licence), embedded as SVG.
 
+## Phones
+
+The iPhone app's screens are drawn in [prototype/mobile.html](prototype/mobile.html) (round 1, not approved yet), with Telegram as the model: a chat list of rooms and people, a room as its history of calls, contacts for personal calls, and the call full screen with five round buttons. The desktop's pill returns as the minimised call inside the app. What's built so far is the plain version of it: the room list, settings, and a call screen with a tile per person (a row each up to three, two across from four, a shared screen on top). Same colours as here, taken from `theme.rs`; the bars and the tab bar are the system's.
+
 ## Settings
 
 ⌘, or the gear next to your name on Home. Three tabs:

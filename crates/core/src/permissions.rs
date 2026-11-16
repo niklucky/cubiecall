@@ -1,6 +1,6 @@
 //! OS media permissions.
 //!
-//! On macOS the first access to the microphone or camera shows a system
+//! On macOS and iOS the first access to the microphone or camera shows a system
 //! prompt. If WebRTC's audio thread is what triggers it, that thread blocks
 //! until the user answers and the whole call freezes. So we always ask here,
 //! asynchronously, before any device is opened.
@@ -29,15 +29,15 @@ pub enum Access {
     Undecided,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
 pub use mac::{request, status};
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 pub fn status(_device: MediaDevice) -> Access {
     Access::Granted
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 pub async fn request(_device: MediaDevice) -> bool {
     true
 }
@@ -69,7 +69,7 @@ pub fn request_screen_recording() -> bool {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
 mod mac {
     use block2::RcBlock;
     use objc2::runtime::Bool;

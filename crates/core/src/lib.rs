@@ -7,13 +7,19 @@
 //! Each engine owns its runtime, including LiveKit internals. Application HTTP
 //! uses a separate lazy runtime that survives call teardown.
 
+// Without `transcribe` nothing starts a transcript here, but the call still
+// follows everyone else's: the rest of that machinery stays, part of it idle.
+#![cfg_attr(not(feature = "transcribe"), allow(dead_code))]
+
 pub mod audio_tap;
 mod camera;
+#[cfg(feature = "denoise")]
 pub mod denoise;
 pub mod http;
+#[cfg(feature = "transcribe")]
 pub mod models;
 pub mod permissions;
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
 pub mod pixel_buffer;
 #[cfg(target_os = "macos")]
 pub mod player;
@@ -25,6 +31,7 @@ mod screen;
 mod screen_mac;
 mod tasks;
 mod transcribe;
+#[cfg(feature = "transcribe")]
 pub mod trial;
 pub mod video;
 
@@ -44,6 +51,7 @@ use quipcall_protocol::JoinInfo;
 pub use audio_tap::{Listener, Speaker, VoiceFrame};
 pub use livekit;
 pub use livekit::track::VideoQuality;
+#[cfg(feature = "transcribe")]
 pub use models::{ModelInfo, catalog};
 pub use permissions::{Access, MediaDevice};
 pub use quipcall_protocol as protocol;
@@ -190,6 +198,7 @@ pub enum Event {
 }
 
 /// What to transcribe with.
+#[cfg(feature = "transcribe")]
 #[derive(Debug, Clone)]
 pub struct TranscribeOptions {
     pub model: &'static ModelInfo,
@@ -533,6 +542,12 @@ impl Engine {
         });
     }
 
+    /// A phone's front or back camera, for the next [`Engine::start_camera`].
+    #[cfg(target_os = "ios")]
+    pub fn set_camera_front(&self, front: bool) {
+        camera::set_front(front);
+    }
+
     pub fn stop_camera(&self) {
         let (room, camera) = {
             let mut s = self.state.lock();
@@ -718,6 +733,7 @@ impl Engine {
     /// Transcribe the call on this Mac: everyone's voice, each on its own.
     /// Loading the model takes a few seconds. Everyone is told before any
     /// voice is heard; one transcriber per call.
+    #[cfg(feature = "transcribe")]
     pub fn start_transcribing(&self, options: TranscribeOptions) {
         // For this call, as it is now: leaving or joining another before it's
         // through calls it off.
@@ -807,6 +823,7 @@ impl Engine {
 
     /// Tell everyone your Mac could transcribe the call with `model` (it's
     /// downloaded), or that it can't. Kept for the next call too.
+    #[cfg(feature = "transcribe")]
     pub fn set_can_transcribe(&self, model: Option<&'static ModelInfo>) {
         let value = model.map(|m| m.id.to_owned());
         let room = {
@@ -1061,6 +1078,7 @@ async fn on_transcript(
 }
 
 /// Start `id` ([`reserve_start`]) in `room`, the call `connection`.
+#[cfg(feature = "transcribe")]
 async fn start_transcribing(
     state: &Arc<Mutex<State>>,
     handle: &tasks::Tasks,
@@ -1240,6 +1258,7 @@ fn stop_passes_on(s: &mut State, by: Option<&str>) -> Vec<String> {
 /// transcriber from now. Not if the call ended, or Stop came while it got
 /// ready; then `make` isn't called, and nothing is heard. Under one lock
 /// with Stop, so it's one or the other.
+#[cfg_attr(not(feature = "transcribe"), allow(unreachable_code))]
 fn install_transcribing(
     state: &Arc<Mutex<State>>,
     connection: u64,
@@ -1667,11 +1686,11 @@ async fn capture_for_recording(
 /// (tokio workers, the synthetic camera) have no pool that ever drains, so
 /// without this every video frame, and the IOSurface behind it, leaks.
 pub(crate) fn autorelease_pool<R>(f: impl FnOnce() -> R) -> R {
-    #[cfg(target_os = "macos")]
+    #[cfg(target_vendor = "apple")]
     {
         objc2::rc::autoreleasepool(|_| f())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_vendor = "apple"))]
     {
         f()
     }
@@ -1789,6 +1808,7 @@ async fn connect(
 
     // Load the noise model while the room connects; the microphone track
     // must wait for it, since it fixes WebRTC's own suppression on creation.
+    #[cfg(feature = "denoise")]
     let denoise = mic_allowed.then(|| tokio::task::spawn_blocking(denoise::prepare));
 
     // The platform ADM has to exist before the peer connections are created.
@@ -1868,6 +1888,7 @@ async fn connect(
     if let Some(audio) = audio.filter(|_| mic_allowed) {
         let (room, state, events) = (room.clone(), state.clone(), events.clone());
         tasks::spawn(async move {
+            #[cfg(feature = "denoise")]
             if let Some(denoise) = denoise
                 && let Err(e) = denoise.await
             {

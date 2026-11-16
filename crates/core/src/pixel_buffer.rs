@@ -1,4 +1,4 @@
-//! IOSurface-backed `CVPixelBuffer` pools (macOS).
+//! IOSurface-backed `CVPixelBuffer` pools (macOS and iOS).
 //!
 //! Buffers are full-range NV12 (`420f`) and Metal-compatible: the format GPUI's
 //! `surface()` draws directly and VideoToolbox encodes without a copy.
@@ -25,7 +25,18 @@ pub struct PixelBufferPool {
 unsafe impl Send for PixelBufferPool {}
 
 impl PixelBufferPool {
+    /// Full-range NV12 (`420f`) buffers.
     pub fn new(width: u32, height: u32) -> Option<Self> {
+        Self::with_format(
+            width,
+            height,
+            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        )
+    }
+
+    /// Buffers of another pixel format, e.g. video-range NV12 (`420v`) for
+    /// frames a software decoder made.
+    pub fn with_format(width: u32, height: u32, pixel_format: u32) -> Option<Self> {
         // SAFETY: CoreVideo constant keys are valid static CFStrings.
         let (k_format, k_width, k_height, k_iosurface, k_metal) = unsafe {
             (
@@ -36,7 +47,7 @@ impl PixelBufferPool {
                 kCVPixelBufferMetalCompatibilityKey,
             )
         };
-        let format = CFNumber::new_i32(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange as i32);
+        let format = CFNumber::new_i32(pixel_format as i32);
         let w = CFNumber::new_i32(width as i32);
         let h = CFNumber::new_i32(height as i32);
         let iosurface = CFDictionary::<CFString, CFType>::empty();

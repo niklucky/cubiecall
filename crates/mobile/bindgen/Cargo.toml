@@ -1,0 +1,11 @@
+[package]
+name = "quipcall-bindgen"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Writes the Swift (later Kotlin) side of `quipcall-mobile` from its built
+# library: `dev/ios-core.sh`. A crate of its own, so running it never builds
+# the call engine for the Mac.
+[dependencies]
+uniffi = { version = "0.32", features = ["cli"] }

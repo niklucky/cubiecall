@@ -14,3 +14,9 @@ __pycache__/
 
 # Local branding explorations; production assets live in assets/branding.
 /output/branding/
+
+# iOS: the Rust core's library, header and generated Swift (dev/ios-core.sh).
+/apps/ios/Core/
+/apps/ios/Quipcall/Generated/
+xcuserdata/
+*.xcuserstate
