@@ -20,6 +20,11 @@
 			</array>
 		</dict>
 	</dict>
+	<!-- Export compliance: only the system's TLS and WebRTC's standard
+	     media encryption, which are exempt. Without this key every upload
+	     waits for the question to be answered by hand. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<!-- No storyboard: the launch screen is the app's background colour. -->
 	<key>UILaunchScreen</key>
 	<dict>

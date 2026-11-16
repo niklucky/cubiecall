@@ -2,7 +2,7 @@
 include dev/dev.env
 export
 
-.PHONY: dev livekit server web desktop check fmt deploy mac-app release-mac vendor ios-core ios-sim
+.PHONY: dev livekit server web desktop check fmt deploy mac-app release-mac vendor ios-core ios-sim release-ios
 
 # Cargo needs vendor/webrtc-sys (crates.io source + our patch) before any build.
 vendor:
@@ -36,6 +36,11 @@ ios-sim: ios-core
 	cd apps/ios && xcodebuild -project Quipcall.xcodeproj -scheme Quipcall -configuration Debug \
 		-sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
 		-derivedDataPath ../../target/ios ARCHS=arm64 build | grep -E "error:|warning: |\*\* BUILD" || true
+
+# Archive the iPhone app and upload it for TestFlight (deploy/ios/release.sh):
+# `make release-ios QUIPCALL_IOS_TEAM=<team id>`.
+release-ios: vendor
+	deploy/ios/release.sh
 
 check: vendor
 	cargo clippy --workspace --all-targets -- -D warnings

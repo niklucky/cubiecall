@@ -303,8 +303,12 @@ Set to the least we think can work. We raise a line only when a real call hits i
 
 ### M5 — iOS alpha
 
-- [ ] Apple Developer account, signing, TestFlight for friends; `make release-ios`
-- [ ] Privacy manifest, the icon's dark and tinted variants, crash logs
+- [x] ~~The app builds for a real iPhone in release mode~~ *arm64, iOS 17 and later: 17.3 MB of stripped binary, about 17.6 MB on the phone (the budget is 20). Not signed or installed yet.*
+- [x] ~~What an upload is checked for: a privacy manifest (no tracking; the account's email and name; the three system calls that need a reason), the export-compliance answer (only exempt encryption), an icon with no transparency~~
+- [ ] `make release-ios QUIPCALL_IOS_TEAM=<team>` archives, signs and uploads (`deploy/ios/release.sh`). *Written; not run: it needs the team, an App Store Connect key or login, and the app's record made by hand in App Store Connect.*
+- [ ] The first run on a real iPhone, before any tester's: audio both ways, the camera, the footprint (M0's open items)
+- [ ] TestFlight for people on the team (no review), then for friends outside it. *Outside testers go through Apple's beta review, and a reviewer has to be able to sign in: today that takes an invited email address and its inbox, so it needs a way in for them first.*
+- [ ] The icon's dark and tinted variants, crash logs
 - [ ] Battery: an hour's audio call, an hour's video call
 
 **Done when:** friends install it from TestFlight and call each other.
