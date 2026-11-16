@@ -11,3 +11,6 @@ dist/
 
 # Python bytecode from dev scripts
 __pycache__/
+
+# Local branding explorations; production assets live in assets/branding.
+/output/branding/

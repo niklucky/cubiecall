@@ -148,6 +148,7 @@ Started early (2026-11-03), ahead of Stages 3–6, with open room links. Invite-
 - [x] ~~HTTPS, systemd units, server, and static web files~~ — nginx + Let's Encrypt (the box already runs them for other projects, so not Caddy); `make deploy`
 - [ ] SQLite backups
 - [x] ~~macOS build: `.app` bundle, ad-hoc signing for friends~~ — one app per architecture, `curl … | sh` installer, call links (`quipcall://join/<room>`); `make release-mac`
+- [x] ~~Quby visual assets: macOS bundle icon, web favicon, transparent 1024px PNG, and editable SVG~~ — wired into packaging and the web build; assets prepared locally for the next release.
 - [ ] Updates keep their permissions: releases are signed with one self-signed certificate (`deploy/mac/signing.sh`), so macOS's requirement for the app stays the same across builds. *Built; needs two releases in a row to confirm.*
 - [ ] Notarization (Apple Developer ID), so a downloaded zip opens without the manual "Open"; simple update check
 - [x] ~~Email-bound account invitations for friends~~
