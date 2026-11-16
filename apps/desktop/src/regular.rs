@@ -1290,9 +1290,7 @@ fn share_tile(
             el.on_click(move |event: &ClickEvent, window, cx| {
                 if event.click_count() >= 2 {
                     let display = window.display(cx).map(|d| d.id());
-                    call.update(cx, |c, cx| {
-                        c.open_fullscreen(key.clone(), display, None, cx)
-                    });
+                    call.update(cx, |c, cx| c.open_fullscreen(key.clone(), display, cx));
                 }
             })
         })

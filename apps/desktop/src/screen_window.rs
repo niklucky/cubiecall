@@ -21,17 +21,36 @@ const RADIUS: f64 = 14.0;
 /// Distance of the handle's centre from the bottom-right corner.
 const HANDLE_INSET: f32 = 16.0;
 
+/// Opens at `bounds`, or exactly at `frame` (AppKit's coordinates, on any
+/// display) when it's coming back to where it was.
 pub fn open(
     call: Entity<Call>,
     screen: Entity<Screen>,
     bounds: gpui::Bounds<gpui::Pixels>,
+    frame: Option<mac::Rect>,
     cx: &mut App,
 ) -> Option<WindowHandle<ScreenWindow>> {
     let width = bounds.size.width / px(1.0);
-    cx.open_window(
-        mac::floating_options(WindowBounds::Windowed(bounds)),
-        |window, cx| cx.new(|cx| ScreenWindow::new(call, screen, width, window, cx)),
-    )
+    let options = match frame {
+        // Out of sight until it's there.
+        Some(_) => mac::hidden_floating_options(WindowBounds::Windowed(bounds)),
+        None => mac::floating_options(WindowBounds::Windowed(bounds)),
+    };
+    cx.open_window(options, |window, cx| {
+        if let (Some(frame), Some(native)) = (frame, mac::Native::of(window)) {
+            mac::place(
+                vec![mac::Placement {
+                    window: native,
+                    frame,
+                    radius: Some(RADIUS),
+                    parent: None,
+                    hidden: false,
+                }],
+                cx,
+            );
+        }
+        cx.new(|cx| ScreenWindow::new(call, screen, width, window, cx))
+    })
     .inspect_err(|e| tracing::warn!("open screen window: {e:#}"))
     .ok()
 }
@@ -95,10 +114,8 @@ impl ScreenWindow {
     fn fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let key = self.screen.read(cx).key.clone();
         let display = window.display(cx).map(|d| d.id());
-        let bounds = window.bounds();
-        self.call.update(cx, |c, cx| {
-            c.open_fullscreen(key, display, Some(bounds), cx)
-        });
+        self.call
+            .update(cx, |c, cx| c.open_fullscreen(key, display, cx));
     }
 }
 

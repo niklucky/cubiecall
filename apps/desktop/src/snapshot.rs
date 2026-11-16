@@ -345,7 +345,7 @@ fn act(action: &str, cx: &mut App) {
         }
         "fullscreen" => match c.screens.first().map(|s| s.read(cx).key.clone()) {
             Some(key) if c.is_fullscreen(&key) => c.close_fullscreen(&key, cx),
-            Some(key) => c.open_fullscreen(key, None, None, cx),
+            Some(key) => c.open_fullscreen(key, None, cx),
             None => tracing::warn!("script: nobody is sharing"),
         },
         other => tracing::warn!(action = other, "script: unknown action"),

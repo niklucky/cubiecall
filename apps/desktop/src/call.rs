@@ -20,6 +20,7 @@ use quipcall_core::{
 
 use crate::capsule::{self, Capsule};
 use crate::fullscreen::{self, Fullscreen};
+use crate::mac;
 use crate::models::{self, Models};
 use crate::regular::Regular;
 use crate::screen_window::{self, ScreenWindow};
@@ -306,8 +307,10 @@ pub struct Call {
     pub screens: Vec<Entity<Screen>>,
     /// Screen shares shown fullscreen, each on the display it was on.
     fullscreen: HashMap<TrackKey, Option<DisplayId>>,
-    /// Where a share's floating window was before it went fullscreen.
-    screen_bounds: HashMap<TrackKey, Bounds<Pixels>>,
+    /// Where a share's floating window was when it last closed (it went
+    /// fullscreen, or the call changed mode), to open it there again. In
+    /// AppKit's coordinates: GPUI's are relative to a window's own display.
+    screen_frames: HashMap<TrackKey, mac::Rect>,
     pub mic_on: bool,
     /// Unmuted only while a key or the mic button is held.
     pub held: bool,
@@ -526,7 +529,7 @@ impl Call {
             others: Vec::new(),
             screens: Vec::new(),
             fullscreen: HashMap::new(),
-            screen_bounds: HashMap::new(),
+            screen_frames: HashMap::new(),
             mic_on: false,
             held: false,
             key_held: false,
@@ -829,20 +832,16 @@ impl Call {
         self.fullscreen.contains_key(key)
     }
 
-    /// Show a screen share fullscreen on `display`. `floating` is where its
-    /// floating window is, to put it back there afterwards.
+    /// Show a screen share fullscreen on `display`. Its floating window
+    /// comes back where it was afterwards.
     pub fn open_fullscreen(
         &mut self,
         key: TrackKey,
         display: Option<DisplayId>,
-        floating: Option<Bounds<Pixels>>,
         cx: &mut Context<Self>,
     ) {
         if self.fullscreen.contains_key(&key) {
             return;
-        }
-        if let Some(bounds) = floating {
-            self.screen_bounds.insert(key.clone(), bounds);
         }
         self.fullscreen.insert(key, display);
         cx.notify();
@@ -1881,9 +1880,9 @@ fn sync_windows(call: &Entity<Call>, cx: &mut App) {
     call.update(cx, |c, cx| {
         let live: Vec<TrackKey> = c.screens.iter().map(|s| s.read(cx).key.clone()).collect();
         c.fullscreen.retain(|key, _| live.contains(key));
-        c.screen_bounds.retain(|key, _| live.contains(key));
+        c.screen_frames.retain(|key, _| live.contains(key));
     });
-    let (minimal, regular, transcript, screens, fullscreen, shares, screen_bounds, mut windows) = {
+    let (minimal, regular, transcript, screens, fullscreen, shares, mut screen_frames, mut windows) = {
         let c = call.read(cx);
         let live = c.status != Status::Ended;
         let minimal = live && c.mode == Mode::Minimal;
@@ -1922,7 +1921,7 @@ fn sync_windows(call: &Entity<Call>, cx: &mut App) {
             screens,
             fullscreen,
             shares,
-            c.screen_bounds.clone(),
+            c.screen_frames.clone(),
             Windows::default(),
         )
     };
@@ -1942,32 +1941,46 @@ fn sync_windows(call: &Entity<Call>, cx: &mut App) {
 
     // Screen shares.
     let wanted: Vec<TrackKey> = screens.iter().map(|s| s.read(cx).key.clone()).collect();
+    let mut closed_frames = Vec::new();
     windows.screens.retain(|key, handle| {
         let keep = wanted.contains(key);
         if !keep {
+            // A share still going opens where it was, next time.
+            if shares.contains(key)
+                && let Ok(Some(frame)) = handle.update(cx, |_, window, _| {
+                    mac::Native::of(window).map(|n| n.frame())
+                })
+            {
+                closed_frames.push((key.clone(), frame));
+            }
             close(handle, cx);
         }
         keep
     });
+    if !closed_frames.is_empty() {
+        screen_frames.extend(closed_frames.iter().cloned());
+        call.update(cx, |c, _| c.screen_frames.extend(closed_frames));
+    }
     for screen in &screens {
         let key = screen.read(cx).key.clone();
         if windows.screens.contains_key(&key) {
             continue;
         }
+        // Where it was, unless that display is gone.
+        let frame = screen_frames
+            .get(&key)
+            .copied()
+            .filter(|f| mac::screen_at((f.x + f.w / 2.0, f.y + f.h / 2.0)).is_some());
         let offset = px(32.0) * windows.screens.len() as f32;
-        let bounds = screen_bounds.get(&key).copied().unwrap_or_else(|| {
-            Bounds::new(
-                point(
-                    area.origin.x + px(48.0) + offset,
-                    area.origin.y + px(48.0) + offset,
-                ),
-                size(
-                    px(screen_window::WIDTH),
-                    px(screen_window::WIDTH * 9.0 / 16.0),
-                ),
-            )
-        });
-        if let Some(handle) = screen_window::open(call.clone(), screen.clone(), bounds, cx) {
+        let width = frame.map_or(screen_window::WIDTH, |f| f.w as f32);
+        let bounds = Bounds::new(
+            point(
+                area.origin.x + px(48.0) + offset,
+                area.origin.y + px(48.0) + offset,
+            ),
+            size(px(width), px(width * 9.0 / 16.0)),
+        );
+        if let Some(handle) = screen_window::open(call.clone(), screen.clone(), bounds, frame, cx) {
             windows.screens.insert(key, handle);
         }
     }

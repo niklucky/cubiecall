@@ -47,6 +47,20 @@ const icon = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"
 writeFileSync(join(branding, 'quby-app-icon.svg'), icon);
 writeFileSync(join(branding, 'quby-app-icon-1024.png'), render(icon, 1024));
 
+// The macOS icon without the tile: only the cube, on transparency, scaled
+// until its taller side fills the canvas less a thin margin for antialiasing.
+// The square viewBox is centred on the character's measured bounds.
+const MARGIN = 12;
+const bounds = new Resvg(source).getBBox();
+const side = (Math.max(bounds.width, bounds.height) * 1024) / (1024 - 2 * MARGIN);
+const round = n => Number(n.toFixed(2));
+const cube = source.replace(
+  'viewBox="0 0 1254 1254"',
+  `viewBox="${round(bounds.x + bounds.width / 2 - side / 2)} ${round(bounds.y + bounds.height / 2 - side / 2)} ${round(side)} ${round(side)}"`,
+);
+writeFileSync(join(branding, 'quby-app-icon-transparent.svg'), cube);
+writeFileSync(join(branding, 'quby-app-icon-transparent-1024.png'), render(cube, 1024));
+
 // Favicons use the full character without the black tile; tighter framing
 // keeps its eyes visible at 16/32 pixels on both light and dark browser tabs.
 const favicon = source
@@ -73,22 +87,27 @@ for (let i = 0; i < sizes.length; i++) {
 }
 writeFileSync(join(web, 'favicon.ico'), Buffer.concat([header, ...images]));
 
-if (process.platform === 'darwin') {
+function icns(svg, name) {
   const temp = mkdtempSync(join(tmpdir(), 'quby-icons-'));
   try {
-    const iconset = join(temp, 'Quby.iconset');
+    const iconset = join(temp, `${name}.iconset`);
     mkdirSync(iconset);
     for (const size of [16, 32, 128, 256, 512]) {
       for (const scale of [1, 2]) {
         const suffix = scale === 2 ? '@2x' : '';
-        writeFileSync(join(iconset, `icon_${size}x${size}${suffix}.png`), render(icon, size * scale));
+        writeFileSync(join(iconset, `icon_${size}x${size}${suffix}.png`), render(svg, size * scale));
       }
     }
-    execFileSync('iconutil', ['--convert', 'icns', '--output', join(desktop, 'Quby.icns'), iconset]);
+    execFileSync('iconutil', ['--convert', 'icns', '--output', join(desktop, `${name}.icns`), iconset]);
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }
+}
+
+if (process.platform === 'darwin') {
+  icns(icon, 'Quby');
+  icns(cube, 'QubyTransparent');
 } else {
-  console.warn('macOS is required to regenerate Quby.icns; other exports are ready.');
+  console.warn('macOS is required to regenerate Quby.icns and QubyTransparent.icns; other exports are ready.');
 }
 console.log('Exported Quby PNG/SVG artwork, web favicons, and macOS icon (on macOS).');

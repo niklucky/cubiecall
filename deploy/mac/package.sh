@@ -30,6 +30,9 @@ case "$BUILD" in
 esac
 [ "$BUILD" -gt 0 ] || { echo "error: QUIPCALL_BUILD must be a positive integer" >&2; exit 1; }
 OUT=target/mac
+# The app icon in apps/desktop/assets: the cube on transparency. `Quby` is
+# the earlier one, the cube on a black tile.
+ICON=QubyTransparent
 rm -rf "$OUT"
 
 for pair in aarch64-apple-darwin:apple-silicon x86_64-apple-darwin:intel; do
@@ -40,8 +43,8 @@ for pair in aarch64-apple-darwin:apple-silicon x86_64-apple-darwin:intel; do
 	app=$OUT/$name/Quipcall.app
 	mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 	cp "target/$target/release/quipcall-desktop" "$app/Contents/MacOS/Quipcall"
-	cp apps/desktop/assets/Quby.icns "$app/Contents/Resources/Quby.icns"
-	sed -e "s/@VERSION@/$VERSION/" -e "s/@BUILD@/$BUILD/" -e "s/@MIN_MACOS@/$MACOSX_DEPLOYMENT_TARGET/" \
+	cp "apps/desktop/assets/$ICON.icns" "$app/Contents/Resources/$ICON.icns"
+	sed -e "s/@VERSION@/$VERSION/" -e "s/@BUILD@/$BUILD/" -e "s/@MIN_MACOS@/$MACOSX_DEPLOYMENT_TARGET/" -e "s/@ICON@/$ICON/" \
 		deploy/mac/Info.plist >"$app/Contents/Info.plist"
 
 	# Everything the app loads must ship with macOS: no @rpath / @executable_path.
