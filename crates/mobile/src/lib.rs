@@ -15,6 +15,7 @@
 mod account;
 mod block;
 mod call;
+mod log;
 mod secrets;
 mod store;
 #[cfg(target_vendor = "apple")]
@@ -22,7 +23,7 @@ mod video;
 
 pub use account::{Account, Client, ContactMatch, Room, RoomKind, SignIn};
 pub use call::{Call, CallEvent, CallListener, Quality};
-pub use store::CallRecord;
+pub use store::{CallRecord, Moment, MomentKind};
 
 uniffi::setup_scaffolding!();
 

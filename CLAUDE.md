@@ -42,6 +42,7 @@ Read README.md first. Plan: docs/PLAN.md. Decisions: docs/ARCHITECTURE.md.
 - Its process is a Mac process: `dev/measure.sh $(pgrep -f "CoreSimulator/Devices/.*/Quipcall.app/Quipcall")`. Measure release builds.
 - The Simulator has six sample contacts (Kate Bell, kate-bell@mac.com, and others). Give one an account on the isolated server (an admin's `/api/auth/invites`, then the magic link from the outbox) to see "On Quipcall". It can't send texts, so Invite falls back to the share sheet. The system's contacts prompt has a second page: press "Share All 6 Contacts" by its coordinates.
 - People to talk to: `node dev/guests.mjs join "$QUIPCALL_PUBLIC_URL/?room=<public room id>" Anna Max`.
+- To fill a call's history, script a guest's page over DevTools (`http://127.0.0.1:9411/json` for the first guest, `window.qcRoom` in development): `qcRoom.localParticipant.setAttributes({"quipcall.recording":"audio"})`, a `"quipcall.transcribing"` claim (`"<model>@<unix ms>"`) and then `publishData` of `{"type":"lines","lines":[…]}` on the topic `quipcall.transcript`, and a canvas `captureStream()` track published with `source: "screen_share"` for a share that captures no screen.
 - After changing `crates/mobile`'s public items, `dev/ios-core.sh` rewrites `apps/ios/Quipcall/Generated/quipcall_mobile.swift`; names that are Swift keywords (`private`, `public`) come out in backticks, so avoid them.
 
 ## macOS gotchas

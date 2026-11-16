@@ -89,6 +89,28 @@ extension UIListContentConfiguration {
     }
 }
 
+extension UIFont {
+    var bold: UIFont {
+        fontDescriptor.withSymbolicTraits(.traitBold).map { UIFont(descriptor: $0, size: 0) } ?? self
+    }
+}
+
+extension UIButton {
+    /// The small round call button at the end of a row: the system's tinted
+    /// button, its symbol sized to sit inside the circle.
+    static func callAccessory(label: String, action: @escaping () -> Void) -> UIButton {
+        var look = UIButton.Configuration.tinted()
+        look.cornerStyle = .capsule
+        look.image = UIImage(systemName: "video.fill")
+        look.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+        look.contentInsets = .zero
+        let button = UIButton(configuration: look, primaryAction: UIAction { _ in action() })
+        button.accessibilityLabel = label
+        button.frame = CGRect(x: 0, y: 0, width: 36, height: 36)
+        return button
+    }
+}
+
 extension UIViewController {
     /// Something to say, the system's way.
     func say(_ message: String) {

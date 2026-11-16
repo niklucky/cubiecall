@@ -78,8 +78,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 }
 
-/// Contacts, Calls, Rooms, Settings: the system's tab bar, in a messenger's
-/// order. Rooms is where the app opens.
+/// Calls, Rooms, Contacts, Settings: the system's tab bar. The app opens on
+/// Calls, or on Rooms while there are no calls to show yet.
 final class MainTabs: UITabBarController {
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -90,11 +90,11 @@ final class MainTabs: UITabBarController {
             return navigation
         }
         viewControllers = [
-            tab(ContactsViewController(), "Contacts", "person.crop.circle.fill"),
             tab(CallsViewController(), "Calls", "phone.fill"),
             tab(RoomsViewController(), "Rooms", "bubble.left.and.bubble.right.fill"),
+            tab(ContactsViewController(), "Contacts", "person.crop.circle.fill"),
             tab(SettingsViewController(), "Settings", "gear"),
         ]
-        selectedIndex = 2
+        selectedIndex = AppEnv.shared.client.calls().isEmpty ? 1 : 0
     }
 }

@@ -1,7 +1,8 @@
 import UIKit
 
 /// Your rooms, as the system draws a list: a face, the name, a line under
-/// it. Tap one to call into it.
+/// it. Tap one for its page (its calls and what happened in them); the small
+/// button at the end of the row calls straight away.
 final class RoomsViewController: ListViewController, UISearchResultsUpdating {
     private var rooms: [Room] = []
     private var shown: [Room] = []
@@ -133,20 +134,27 @@ final class RoomsViewController: ListViewController, UISearchResultsUpdating {
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "room", for: indexPath)
         let room = shown[indexPath.row]
-        let detail: String
-        switch room.kind {
-        case .direct: detail = "Call for two"
-        case .open: detail = "Anyone with the link"
-        case .members: detail = room.mine ? "Private · yours" : "Private"
+        cell.contentConfiguration = UIListContentConfiguration.face(room.name, detail: Self.detail(room))
+        cell.accessoryView = UIButton.callAccessory(label: "Call \(room.name)") { [weak self] in
+            guard let self else { return }
+            CallViewController.present(room: room.id, name: room.name, from: self)
         }
-        cell.contentConfiguration = UIListContentConfiguration.face(room.name, detail: detail)
         return cell
+    }
+
+    private static func detail(_ room: Room) -> String {
+        switch room.kind {
+        case .direct: return "Call for two"
+        case .open: return "Anyone with the link"
+        case .members: return room.mine ? "Private · yours" : "Private"
+        }
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         let room = shown[indexPath.row]
-        CallViewController.present(room: room.id, name: room.name, from: self)
+        let page = HistoryViewController(.room(id: room.id, name: room.name, detail: Self.detail(room)))
+        navigationController?.pushViewController(page, animated: true)
     }
 
     override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool { true }

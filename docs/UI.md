@@ -127,12 +127,14 @@ One window (1040 × 680): the room's name and the call's time in the title bar, 
 
 ## Phones
 
-The iPhone app looks like iOS, not like the Mac app: the system's lists, search fields, bars, buttons and colours, light or dark as the phone is set. Only faces (initials on a person's colour, the same colour as here) and the video tiles are drawn by us. Four tabs, in Telegram's order:
+The iPhone app looks like iOS, not like the Mac app: the system's lists, search fields, bars, buttons and colours, light or dark as the phone is set. Only faces (initials on a person's colour, the same colour as here) and the video tiles are drawn by us. Four tabs:
 
-- **Contacts**: your address book, searchable by name, email or number. People with a Quipcall account come first, under "On Quipcall", with a call button; everyone else has **Invite**, which opens Messages with their number and a link to a room for the two of you (it opens in a browser, no app needed). Until calls can ring, calling someone on Quipcall sends them that link first, then takes you into the call.
-- **Calls**: the calls you were in on this phone, newest first, as the Phone app lists them: the room, who was there and for how long, when. A call nobody joined is red. Tap to call again; swipe to delete; Edit to clear.
-- **Rooms** (where the app opens): your rooms, searchable; + makes one; tap to call, swipe or long-press to share the link.
+- **Calls** (where the app opens, once there are any): the calls you were in on this phone, newest first, as the Phone app lists them: the room, who was there and for how long, when. A call nobody joined is red. Tap one for its page; swipe to delete; Edit to clear.
+- **Rooms**: your rooms, searchable; + makes one. Tap a room for its page; the small round button on the row calls at once; swipe or long-press to share the link.
+- **Contacts**: your address book, searchable by name, email or number. People with a Quipcall account come first, under "On Quipcall", with a call button; everyone else has **Invite**, which opens the system's share sheet (Messages, Telegram, WhatsApp, Mail…) with a link to a room for the two of you (it opens in a browser, no app needed). Until calls can ring, calling someone on Quipcall sends them that link first, then takes you into the call.
 - **Settings**: you, and Sign Out.
+
+**A room's page** is its history: the face, the name, **Call** and **Share**, then every call you were in there, newest first, each under its own header (the date and time). A call lists its people and length, then what happened in order: who joined and left, who started and stopped sharing a screen, who recorded, a transcript starting, and each thing that was said (who, when, the words) if someone's Mac transcribed the call. **A call's page** (from the Calls tab) shows that one call the same way, with its date, length and people on top, the earlier calls in the room under "Previous Calls", and a way to the room's whole history. Messages and files will be rows in the same history once Quipcall has them; recordings show as events, since the file stays on the recorder's Mac.
 
 The call is full screen and dark, as the system's own call screens are: a tile per person (a row each up to three, two across from four, a shared screen on top), the room's name and the time, an invite button, and five round buttons (speaker, camera, microphone, flip, leave). White means on and worth noticing.
 

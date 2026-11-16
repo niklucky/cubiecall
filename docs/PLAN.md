@@ -211,7 +211,7 @@ Started early (2026-11-03), ahead of Stages 3–6, with open room links. Invite-
 
 ## Mobile (iOS first, then Android)
 
-Native apps: Swift and UIKit on iOS, Kotlin on Android, both thin views over the desktop's call engine (`crates/core`) through `crates/mobile`. Decisions: [ARCHITECTURE.md](ARCHITECTURE.md#mobile-ios-first-then-android). The look is the system's own (its lists, bars, buttons and colours, light or dark as the phone is set); the shape is a messenger's, with Telegram as the model: four tabs, Contacts, Calls, Rooms and Settings. Rooms are its groups, contacts are for personal calls. We finish iOS (build, tune, test) before starting Android.
+Native apps: Swift and UIKit on iOS, Kotlin on Android, both thin views over the desktop's call engine (`crates/core`) through `crates/mobile`. Decisions: [ARCHITECTURE.md](ARCHITECTURE.md#mobile-ios-first-then-android). The look is the system's own (its lists, bars, buttons and colours, light or dark as the phone is set); the shape is a messenger's, with Telegram as the model: four tabs, Calls, Rooms, Contacts and Settings. Rooms are its groups, contacts are for personal calls. We finish iOS (build, tune, test) before starting Android.
 
 ### Mobile budget
 
@@ -237,7 +237,12 @@ Set to the least we think can work. We raise a line only when a real call hits i
 - [x] ~~`apps/ios`: an Xcode project with a "Rust core" build phase; sign-in, the room list, settings and a call screen~~ *Checked in the Simulator against an isolated server: the browser-approval sign-in ends in the Keychain, the list loads, a room is created.*
 - [x] ~~The system's look (asked for after the first build, which was dark and drawn by hand): system lists with content configurations, search controllers, the system's empty states, buttons (glass on iOS 26) and colours; light and dark follow the phone; the call screen stays dark, as the system's own are~~ *Checked in both appearances. The empty states are siblings of their lists (`ListViewController`): inside a table controller VoiceOver saw only "Empty list" and never the button.*
 - [x] ~~Contacts tab: the phone's address book, searchable by name, email or number, people with an account on top ("On Quipcall"), an Invite button on everyone else~~ *Each contact gets a room of their own (a kept call for two), and its link is the invitation: Messages opens with their number and the text, or the share sheet where the phone can't send texts. Who has an account: `POST /api/contacts/match` takes SHA-256 hashes of email addresses and names the matches (accounts only, 20 requests an hour, nothing stored). Checked in the Simulator with its sample contacts, one of them given an account: found, the rest invited through the share sheet, the room made on the server. Messages itself needs a phone. Needs `make deploy` before it works against quipcall.com; until then everyone shows Invite.*
-- [x] ~~Calls tab: the calls you were in on this phone, newest first, as the Phone app lists recents (who, how long, when; red when nobody joined); tap to call again, swipe to delete, Edit and Clear~~ *Kept by the engine in one JSON file (`crates/mobile/src/store.rs`), written as each call ends. Checked after two calls. Calls you missed can't be there until the server rings (M4).*
+- [x] ~~Calls tab: the calls you were in on this phone, newest first, as the Phone app lists recents (who, how long, when; red when nobody joined); swipe to delete, Edit and Clear~~ *Kept by the engine in one JSON file (`crates/mobile/src/store.rs`), written as each call ends. Checked after two calls. Calls you missed can't be there until the server rings (M4).*
+- [x] ~~What happened in a call, written down by the engine as it happens (`crates/mobile/src/log.rs`): who joined and left, screen shares starting and stopping, recordings, a transcript starting and stopping, and every finished transcript line from whichever Mac transcribes~~ *Checked with a scripted guest (`dev/guests.mjs` plus the page's `qcRoom`): a late joiner, a recording notice, a transcript claim with two lines (one in Russian), a made-up screen share. All of it was in the room's history after the call, in order.*
+- [x] ~~A call's page (tap a call in Calls): its date, length and people, what happened in it, the earlier calls in the same room, the room's history, and Call and Share~~
+- [x] ~~A room's page (tap a room in Rooms; the small button on the row still calls at once): every call there under its own header, with its people, length and what happened; Call and Share on top~~ *Messages and files have no rows yet because Quipcall has neither (see M2). Recordings show as "started / stopped recording": the file stays on the recorder's Mac.*
+- [x] ~~Tabs in the order Calls, Rooms, Contacts, Settings; the app opens on Calls, or on Rooms while there are no calls yet~~
+- [x] ~~Invitations go through the system's share sheet (Messages, Telegram, WhatsApp, Mail…), not straight to Messages~~
 - [x] ~~Receive video with no copy: decoded H.264 `CVPixelBuffer`s go from the engine's thread into each tile's `AVSampleBufferVideoRenderer`~~ *Two web guests (`dev/guests.mjs`) at 640 × 480: "first video frame on screen … zero_copy=true" for both, speaking ring follows them, leaving and rejoining works.*
 - [x] ~~Send the camera as H.264 at the budget's size, two layers~~ *With the synthetic camera (the Simulator has none): LiveKit lists 540 × 960 at 800 kbps and 180 × 320 at 150 kbps; your own tile shows the same buffers.*
 - [ ] The real camera: front and back, upright (the capture connection turns frames, so nothing rotates on the CPU), 24 fps. *Built; needs an iPhone.*
@@ -251,7 +256,7 @@ Set to the least we think can work. We raise a line only when a real call hits i
 ### M1 — Design
 
 - [x] ~~Round 1 of the prototype ([prototype/mobile.html](prototype/mobile.html)): Calls (rooms and people in one list), a room, contacts, a person, an incoming call, a call of two, a room call, a shared screen, the minimised pill, sign-in, settings~~ *Answered on 2026-11-16: the system's look instead of the drawn dark one, and separate tabs (Contacts, Calls, Rooms, Settings) instead of one mixed list. The built app is the reference for those now; the board still stands for the screens not built (a room's page, a person's, the incoming call, a call of two, the pill).*
-- [ ] Decide: whether a tap opens a room or calls it (today it calls).
+- [x] ~~Decide: whether a tap opens a room or calls it~~ *It opens the room's page; the small button on the row calls.*
 - [ ] Round 2, in the system's look: a room's page, a person's page, the incoming call, a call of two, the minimised call.
 
 **Done when:** every screen below is approved.
@@ -260,7 +265,10 @@ Set to the least we think can work. We raise a line only when a real call hits i
 
 - [ ] Sign in with an email link that opens the app (server: a native variant of the link exchange; universal links for quipcall.com). Until then: the Mac's code in the browser.
 - [ ] The list: last call and its length per room, who's in a room right now with Join (server: room presence, Stage 3's webhooks), search, long-press actions
-- [ ] A room: its calls as a chat, Call or Join, members, the link, invitations and access (the Mac's Room access)
+- [ ] A room's page (its calls and what happened in them are built): members, invitations and access (the Mac's Room access), Join while a call is on
+- [ ] Messages in a room. *Asked for in the room's history; Quipcall has no messages anywhere yet. To decide: chat only during a call (LiveKit data, kept by whoever was there, like transcripts) or a real room chat (stored on the server, delivered to people who weren't in the call).*
+- [ ] Files in a room. *The same question, plus where they're stored; the Mac's Files tab is an empty state today.*
+- [ ] Recordings in a room's history as something to play. *They stay on the recorder's Mac until uploading exists (Later).*
 - [ ] Create, rename and close rooms; quick calls; share sheets
 - [ ] Room links open the app: `quipcall://` (built) and https://quipcall.com links
 - [ ] Call history on the phone; your name; offline and error states

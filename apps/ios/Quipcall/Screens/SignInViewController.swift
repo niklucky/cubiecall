@@ -139,9 +139,3 @@ final class SignInViewController: UIViewController {
         polling?.cancel()
     }
 }
-
-private extension UIFont {
-    var bold: UIFont {
-        fontDescriptor.withSymbolicTraits(.traitBold).map { UIFont(descriptor: $0, size: 0) } ?? self
-    }
-}

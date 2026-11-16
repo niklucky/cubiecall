@@ -8,7 +8,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 use quipcall_core::livekit::prelude::RemoteVideoTrack;
@@ -17,7 +16,8 @@ use quipcall_core::{
 };
 
 use crate::account::Client;
-use crate::store::{CallRecord, Store};
+use crate::log::Log;
+use crate::store::Store;
 
 /// What happens in a call.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
@@ -122,20 +122,14 @@ struct Video {
     showing: Option<VideoSubscription>,
 }
 
-/// The call's entry for the Calls tab, while it's going on.
-struct Log {
-    /// When you got in: on the wall clock (unix ms), and for measuring.
-    began: u64,
-    since: Instant,
-    people: Vec<String>,
-}
-
 #[derive(uniffi::Object)]
 pub struct Call {
     engine: Engine,
     /// The room's id and what it's called, for the list of calls.
     room: String,
     name: Mutex<String>,
+    /// What you're called, for your own lines in the call's history.
+    your_name: String,
     store: Arc<Store>,
     log: Mutex<Option<Log>>,
     videos: Mutex<HashMap<String, Video>>,
@@ -169,6 +163,7 @@ impl Client {
             engine,
             room,
             name: Mutex::new(name.unwrap_or_default()),
+            your_name: self.account().map_or_else(|| "You".into(), |a| a.name),
             store: self.store.clone(),
             log: Mutex::default(),
             videos: Mutex::default(),
@@ -319,15 +314,15 @@ impl Call {
         let Some(log) = self.log.lock().take() else {
             return;
         };
-        let name = self.name.lock().clone();
-        self.store.add_call(CallRecord {
-            id: log.began,
-            room: self.room.clone(),
-            name: if name.is_empty() { "Call".into() } else { name },
-            started: log.began / 1000,
-            seconds: log.since.elapsed().as_secs(),
-            people: log.people,
-        });
+        let (record, moments) = log.finish(&self.room, &self.name.lock());
+        self.store.add_call(record, moments);
+    }
+
+    /// Write something into the call's history, while there's a call.
+    fn write(&self, note: impl FnOnce(&mut Log)) {
+        if let Some(log) = self.log.lock().as_mut() {
+            note(log);
+        }
     }
 
     fn start_camera(&self) {
@@ -350,14 +345,7 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
             camera: device == MediaDevice::Camera,
         }),
         Event::Connected { identity, .. } => {
-            let began = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_millis() as u64);
-            *call.log.lock() = Some(Log {
-                began,
-                since: Instant::now(),
-                people: Vec::new(),
-            });
+            *call.log.lock() = Some(Log::begin(identity.clone(), call.your_name.clone()));
             one(CallEvent::Connected {
                 you: identity,
                 room_name: None,
@@ -369,15 +357,13 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
             one(CallEvent::Ended { reason })
         }
         Event::ParticipantJoined { identity, name } => {
-            if let Some(log) = call.log.lock().as_mut()
-                && !name.is_empty()
-                && !log.people.contains(&name)
-            {
-                log.people.push(name.clone());
-            }
+            call.write(|log| log.joined(&identity, &name));
             one(CallEvent::Joined { id: identity, name })
         }
-        Event::ParticipantLeft { identity } => one(CallEvent::Left { id: identity }),
+        Event::ParticipantLeft { identity } => {
+            call.write(|log| log.left(&identity));
+            one(CallEvent::Left { id: identity })
+        }
         Event::ActiveSpeakers(ids) => one(CallEvent::Speaking { ids }),
         Event::ParticipantMic { identity, muted } => one(CallEvent::Mic {
             id: identity,
@@ -389,6 +375,9 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
                 id: key.participant.clone(),
                 screen: kind == VideoKind::Screen,
             };
+            if kind == VideoKind::Screen {
+                call.write(|log| log.screen_started(&key.sid, &key.participant));
+            }
             call.videos.lock().insert(
                 key.sid.clone(),
                 Video {
@@ -401,6 +390,7 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
         }
         Event::VideoTrackRemoved { key } => {
             call.videos.lock().remove(&key.sid);
+            call.write(|log| log.track_removed(&key.sid));
             one(CallEvent::VideoRemoved { track: key.sid })
         }
         Event::MicChanged { enabled } => {
@@ -422,22 +412,35 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
             identity,
             recording,
             screen,
-        } => one(CallEvent::Recording {
-            id: identity,
-            on: recording,
-            screen,
-        }),
-        Event::ParticipantTranscribing { identity, model } => one(CallEvent::Transcribing {
-            id: identity,
-            on: model.is_some(),
-        }),
-        Event::TranscriptLine { by, line, .. } => one(CallEvent::Line {
-            key: format!("{by}:{}", line.id),
-            speaker: line.speaker,
-            at_ms: line.at_ms,
-            text: line.text,
-            done: line.done,
-        }),
+        } => {
+            call.write(|log| log.recording(&identity, recording));
+            one(CallEvent::Recording {
+                id: identity,
+                on: recording,
+                screen,
+            })
+        }
+        Event::ParticipantTranscribing { identity, model } => {
+            call.write(|log| log.transcribing(&identity, model.is_some()));
+            one(CallEvent::Transcribing {
+                id: identity,
+                on: model.is_some(),
+            })
+        }
+        Event::TranscriptLine { by, line, .. } => {
+            let key = format!("{by}:{}", line.id);
+            // Finished lines go into the call's history; drafts only pass by.
+            if line.done {
+                call.write(|log| log.said(&key, &line.speaker, line.at_ms, &line.text));
+            }
+            one(CallEvent::Line {
+                key,
+                speaker: line.speaker,
+                at_ms: line.at_ms,
+                text: line.text,
+                done: line.done,
+            })
+        }
         Event::Error(message) => one(CallEvent::Notice { message }),
         // A phone neither shares its screen, records nor transcribes (yet),
         // and asks no Mac to.

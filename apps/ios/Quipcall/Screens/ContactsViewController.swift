@@ -1,5 +1,4 @@
 import Contacts
-import MessageUI
 import UIKit
 
 /// Someone in the phone's address book.
@@ -16,21 +15,18 @@ private struct Contact {
 
 /// The phone's own contacts, searchable, with the people who already use
 /// Quipcall on top. Tap someone who does to call them; tap anyone else to
-/// text them an invitation.
+/// send them an invitation through the system's share sheet (Messages,
+/// Telegram, WhatsApp, Mail: whatever the phone has).
 ///
 /// Each contact gets a room of their own (a call for two, kept), and its link
 /// is the invitation: it opens in a browser, no app or account needed.
 /// Ringing comes with the server's presence (PLAN.md, M4); until then a call
 /// starts by sending that link.
-final class ContactsViewController: ListViewController, UISearchResultsUpdating,
-    MFMessageComposeViewControllerDelegate
-{
+final class ContactsViewController: ListViewController, UISearchResultsUpdating {
     private let store = CNContactStore()
     private var people: [Contact] = []
     private var sections: [(title: String, people: [Contact])] = []
     private var loading: Task<Void, Never>?
-    /// What to do once a text has gone out (join the call).
-    private var afterMessage: (() -> Void)?
 
     init() {
         super.init(style: .plain)
@@ -239,18 +235,20 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating,
         cell.contentConfiguration = content
 
         // What a tap does, said by a small button on the right.
-        var button = person.here ? UIButton.Configuration.tinted() : UIButton.Configuration.gray()
-        button.buttonSize = .small
-        button.cornerStyle = .capsule
         if person.here {
-            button.image = UIImage(systemName: "video.fill")
-        } else {
-            button.title = "Invite"
+            cell.accessoryView = UIButton.callAccessory(label: "Call \(person.name)") { [weak self, weak cell] in
+                self?.act(on: person, from: cell)
+            }
+            return cell
         }
-        let action = UIButton(configuration: button, primaryAction: UIAction { [weak self, weak cell] _ in
+        var look = UIButton.Configuration.gray()
+        look.buttonSize = .small
+        look.cornerStyle = .capsule
+        look.title = "Invite"
+        let action = UIButton(configuration: look, primaryAction: UIAction { [weak self, weak cell] _ in
             self?.act(on: person, from: cell)
         })
-        action.accessibilityLabel = person.here ? "Call \(person.name)" : "Invite \(person.name)"
+        action.accessibilityLabel = "Invite \(person.name)"
         action.sizeToFit()
         cell.accessoryView = action
         return cell
@@ -275,7 +273,7 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating,
                         CallViewController.present(room: room.id, name: person.name, from: self)
                     }
                 },
-                UIAction(title: "Send Invitation", image: UIImage(systemName: "message")) { _ in
+                UIAction(title: "Send Invitation", image: UIImage(systemName: "square.and.arrow.up")) { _ in
                     self?.invite(person, thenCall: false, from: tableView.cellForRow(at: indexPath))
                 },
                 UIAction(title: "Copy Link", image: UIImage(systemName: "link")) { _ in
@@ -307,45 +305,22 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating,
         }
     }
 
-    /// Text `person` the link to their room: in Messages when the phone can
-    /// (and they have a number), through the share sheet otherwise. With
-    /// `thenCall`, go into the call once it's sent.
+    /// Send `person` the link to their room through the system's share
+    /// sheet, so it can go by text, Telegram, WhatsApp or anything else on
+    /// the phone. With `thenCall`, go into the call once it's sent.
     private func invite(_ person: Contact, thenCall: Bool, from source: UIView?) {
         room(of: person) { [weak self] room, link in
             guard let self else { return }
             let text = thenCall
                 ? "I'm calling you on Quipcall. Join me here: \(link)"
                 : "Let's talk on Quipcall. Open this to call me, no app needed: \(link)"
-            let call: (() -> Void)? = thenCall
-                ? { [weak self] in
-                    guard let self else { return }
-                    CallViewController.present(room: room.id, name: person.name, from: self)
-                }
-                : nil
-            if MFMessageComposeViewController.canSendText(), let phone = person.phones.first {
-                let message = MFMessageComposeViewController()
-                message.recipients = [phone]
-                message.body = text
-                message.messageComposeDelegate = self
-                self.afterMessage = call
-                self.present(message, animated: true)
-            } else {
-                let sheet = UIActivityViewController(activityItems: [text], applicationActivities: nil)
-                sheet.popoverPresentationController?.sourceView = source ?? self.view
-                sheet.completionWithItemsHandler = { _, sent, _, _ in
-                    if sent { call?() }
-                }
-                self.present(sheet, animated: true)
+            let sheet = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+            sheet.popoverPresentationController?.sourceView = source ?? self.view
+            sheet.completionWithItemsHandler = { [weak self] _, sent, _, _ in
+                guard let self, sent, thenCall else { return }
+                CallViewController.present(room: room.id, name: person.name, from: self)
             }
+            self.present(sheet, animated: true)
         }
-    }
-
-    func messageComposeViewController(
-        _ controller: MFMessageComposeViewController,
-        didFinishWith result: MessageComposeResult
-    ) {
-        let then = result == .sent ? afterMessage : nil
-        afterMessage = nil
-        controller.dismiss(animated: true) { then?() }
     }
 }

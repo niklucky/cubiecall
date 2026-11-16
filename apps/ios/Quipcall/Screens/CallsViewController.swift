@@ -1,7 +1,8 @@
 import UIKit
 
 /// The calls you were in, newest first, as the Phone app lists its recents:
-/// who, how long, when. Tap one to call that room again; swipe to delete.
+/// who, how long, when. Tap one for its page (details, what happened, the
+/// calls before it, and Call); swipe to delete.
 ///
 /// Kept on this phone (the engine writes each call down as it ends); the
 /// server has no call records yet.
@@ -76,14 +77,14 @@ final class CallsViewController: ListViewController {
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "call", for: indexPath)
         let call = calls[indexPath.row]
-        var content = UIListContentConfiguration.face(call.name, detail: Self.detail(call))
+        var content = UIListContentConfiguration.face(call.name, detail: call.summary)
         if call.people.isEmpty {
             // Nobody came: the Phone app's red for a call that didn't happen.
             content.textProperties.color = .systemRed
         }
         cell.contentConfiguration = content
         let when = UILabel()
-        when.text = Self.when(call.started)
+        when.text = call.whenText
         when.font = .preferredFont(forTextStyle: .subheadline)
         when.textColor = .secondaryLabel
         when.adjustsFontForContentSizeCategory = true
@@ -94,8 +95,8 @@ final class CallsViewController: ListViewController {
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        let call = calls[indexPath.row]
-        CallViewController.present(room: call.room, name: call.name, from: self)
+        let page = HistoryViewController(.call(calls[indexPath.row]))
+        navigationController?.pushViewController(page, animated: true)
     }
 
     override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool { true }
@@ -112,42 +113,5 @@ final class CallsViewController: ListViewController {
         editButtonItem.isEnabled = !calls.isEmpty
         if calls.isEmpty { setEditing(false, animated: true) }
         setNeedsUpdateContentUnavailableConfiguration()
-    }
-
-    // MARK: Words
-
-    /// "Anna, Max and Lena · 12 min", or that nobody came.
-    private static func detail(_ call: CallRecord) -> String {
-        guard !call.people.isEmpty else { return "Nobody joined" }
-        let people = ListFormatter.localizedString(byJoining: call.people)
-        return people + " · " + length(call.seconds)
-    }
-
-    private static let lengths: DateComponentsFormatter = {
-        let formatter = DateComponentsFormatter()
-        formatter.unitsStyle = .short
-        formatter.maximumUnitCount = 2
-        return formatter
-    }()
-
-    private static func length(_ seconds: UInt64) -> String {
-        lengths.allowedUnits = seconds < 60 ? [.second] : [.hour, .minute]
-        return lengths.string(from: TimeInterval(seconds)) ?? ""
-    }
-
-    /// The time today, "Yesterday", the weekday this week, the date before.
-    private static func when(_ started: UInt64) -> String {
-        let date = Date(timeIntervalSince1970: TimeInterval(started))
-        let calendar = Calendar.current
-        if calendar.isDateInToday(date) {
-            return date.formatted(date: .omitted, time: .shortened)
-        }
-        if calendar.isDateInYesterday(date) {
-            return "Yesterday"
-        }
-        if let days = calendar.dateComponents([.day], from: date, to: Date()).day, days < 7 {
-            return date.formatted(.dateTime.weekday(.wide))
-        }
-        return date.formatted(date: .numeric, time: .omitted)
     }
 }

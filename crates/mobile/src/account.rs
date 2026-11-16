@@ -12,7 +12,7 @@ use quipcall_core::http::{self, request};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::store::{CallRecord, Store};
+use crate::store::{CallRecord, Moment, Store};
 use crate::{AppError, secrets};
 
 /// The signed-in person.
@@ -129,6 +129,17 @@ impl Client {
     /// The calls you were in on this phone, newest first.
     pub fn calls(&self) -> Vec<CallRecord> {
         self.store.calls()
+    }
+
+    /// The calls you were in in `room` (its id), newest first.
+    pub fn room_calls(&self, room: String) -> Vec<CallRecord> {
+        self.store.room_calls(&room)
+    }
+
+    /// What happened in call `id`, in order: who came and went, screen
+    /// shares, recordings, and what was said if it was transcribed.
+    pub fn call_moments(&self, id: u64) -> Vec<Moment> {
+        self.store.moments(id)
     }
 
     pub fn delete_call(&self, id: u64) {

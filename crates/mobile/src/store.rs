@@ -32,6 +32,41 @@ pub struct CallRecord {
     pub people: Vec<String>,
 }
 
+/// What a [`Moment`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, uniffi::Enum)]
+pub enum MomentKind {
+    Joined,
+    Left,
+    /// Someone began sharing their screen, or stopped.
+    ShareStarted,
+    ShareStopped,
+    /// Someone began recording the call (on their Mac), or stopped.
+    RecordingStarted,
+    RecordingStopped,
+    /// Someone's Mac began transcribing the call, or stopped.
+    TranscriptStarted,
+    TranscriptStopped,
+    /// Something was said: a line of the transcript, in `text`.
+    Said,
+}
+
+/// Something that happened in a call: its history is these, in order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Record)]
+pub struct Moment {
+    /// When, unix seconds.
+    pub at: u64,
+    pub kind: MomentKind,
+    /// Whose doing it was, by name.
+    pub who: String,
+    /// It was you.
+    pub mine: bool,
+    /// What was said ([`MomentKind::Said`]); empty otherwise.
+    pub text: String,
+    /// The transcript line's own id, for the engine; empty otherwise.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub key: String,
+}
+
 #[derive(Default, Serialize, Deserialize)]
 struct Data {
     /// Newest first.
@@ -41,6 +76,9 @@ struct Data {
     /// them.
     #[serde(default)]
     lines: HashMap<String, String>,
+    /// What happened in each call, by the call's id.
+    #[serde(default)]
+    moments: HashMap<u64, Vec<Moment>>,
 }
 
 pub(crate) struct Store {
@@ -80,19 +118,51 @@ impl Store {
         self.data.lock().calls.clone()
     }
 
-    pub(crate) fn add_call(&self, call: CallRecord) {
+    /// The calls made in `room`, newest first.
+    pub(crate) fn room_calls(&self, room: &str) -> Vec<CallRecord> {
+        let data = self.data.lock();
+        data.calls
+            .iter()
+            .filter(|c| c.room == room)
+            .cloned()
+            .collect()
+    }
+
+    /// What happened in call `id`, in order.
+    pub(crate) fn moments(&self, id: u64) -> Vec<Moment> {
+        self.data
+            .lock()
+            .moments
+            .get(&id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn add_call(&self, call: CallRecord, moments: Vec<Moment>) {
         self.change(|data| {
+            if !moments.is_empty() {
+                data.moments.insert(call.id, moments);
+            }
             data.calls.insert(0, call);
-            data.calls.truncate(KEEP);
+            // The oldest calls go, and their histories with them.
+            for old in data.calls.split_off(KEEP.min(data.calls.len())) {
+                data.moments.remove(&old.id);
+            }
         });
     }
 
     pub(crate) fn remove_call(&self, id: u64) {
-        self.change(|data| data.calls.retain(|c| c.id != id));
+        self.change(|data| {
+            data.calls.retain(|c| c.id != id);
+            data.moments.remove(&id);
+        });
     }
 
     pub(crate) fn clear_calls(&self) {
-        self.change(|data| data.calls.clear());
+        self.change(|data| {
+            data.calls.clear();
+            data.moments.clear();
+        });
     }
 
     pub(crate) fn line(&self, contact: &str) -> Option<String> {
@@ -151,13 +221,25 @@ mod tests {
         let dir = dir.to_str().unwrap();
         let store = Store::open(dir, "http://127.0.0.1:8180");
         store.wipe();
-        store.add_call(call(1000));
-        store.add_call(call(2000));
+        let joined = Moment {
+            at: 2,
+            kind: MomentKind::Joined,
+            who: "Anna".into(),
+            mine: false,
+            text: String::new(),
+            key: String::new(),
+        };
+        store.add_call(call(1000), vec![joined.clone()]);
+        store.add_call(call(2000), vec![joined.clone()]);
         store.set_line("contact-1", "room-1");
         store.remove_call(1000);
 
         let again = Store::open(dir, "http://127.0.0.1:8180");
         assert_eq!(again.calls(), [call(2000)]);
+        assert_eq!(again.room_calls("r"), [call(2000)]);
+        assert!(again.room_calls("another").is_empty());
+        assert_eq!(again.moments(2000), [joined]);
+        assert!(again.moments(1000).is_empty());
         assert_eq!(again.line("contact-1").as_deref(), Some("room-1"));
         // Another server's store is another file.
         assert!(Store::open(dir, "https://quipcall.com").calls().is_empty());
@@ -171,7 +253,7 @@ mod tests {
     fn the_newest_calls_are_kept() {
         let store = Store::in_memory();
         for id in 0..(KEEP as u64 + 5) {
-            store.add_call(call(id));
+            store.add_call(call(id), Vec::new());
         }
         let calls = store.calls();
         assert_eq!(calls.len(), KEEP);
