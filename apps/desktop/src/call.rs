@@ -48,7 +48,7 @@ const KEY_POLL: Duration = Duration::from_millis(50);
 const KEY_IDLE: Duration = Duration::from_millis(400);
 const KEY_OFF: Duration = Duration::from_secs(2);
 /// The key talks once it has been held this long by itself: Option is also
-/// how "@" and "é" are typed.
+/// how "@" and "é" are typed, and how files are copied with a drag.
 const KEY_HOLD_AFTER: Duration = Duration::from_millis(200);
 
 /// The hold-to-talk key, as last looked at.
@@ -56,23 +56,34 @@ const KEY_HOLD_AFTER: Duration = Duration::from_millis(200);
 struct HoldKey {
     /// When it was first seen down.
     since: Option<Instant>,
-    /// Another key went down meanwhile: it's typing, until the key comes up.
+    /// Another key or a mouse button went down meanwhile: it's typing or an
+    /// Option-click, until the key comes up.
     typed: bool,
 }
 
 impl HoldKey {
-    /// Whether to talk now. `down`: the key is held. `since_key`: how long
-    /// ago any ordinary key last went down.
-    fn talk(&mut self, down: bool, since_key: Duration, now: Instant) -> bool {
+    /// Whether to talk now. `down`: the key is held. `since_press`: how
+    /// long ago any ordinary key or mouse button last went down.
+    fn talk(&mut self, down: bool, since_press: Duration, now: Instant) -> bool {
         if !down {
             *self = Self::default();
             return false;
         }
         let held = now.duration_since(*self.since.get_or_insert(now));
-        if since_key <= held {
+        // The key was seen down up to one look after it went down: a press
+        // just before that look counts as after it.
+        if since_press <= held + KEY_POLL {
             self.typed = true;
         }
         !self.typed && held >= KEY_HOLD_AFTER
+    }
+
+    /// The key is down for something else now (the mic was clicked): it
+    /// doesn't talk again until it has come up.
+    fn spoil(&mut self) {
+        if self.since.is_some() {
+            self.typed = true;
+        }
     }
 }
 
@@ -396,8 +407,8 @@ impl Call {
                     let watching = on && call.status == Status::Connected;
                     if watching || call.key_held {
                         let down = watching && crate::mac::key_down(HOLD_KEY);
-                        let since_key = crate::mac::since_key_down();
-                        let talk = call.hold_key.talk(down, since_key, Instant::now());
+                        let since_press = crate::mac::since_press();
+                        let talk = call.hold_key.talk(down, since_press, Instant::now());
                         call.key_hold(talk, cx);
                     }
                     if !on {
@@ -656,10 +667,14 @@ impl Call {
     // ---- actions (called from any window) ---------------------------------
 
     pub fn toggle_mic(&mut self, cx: &mut Context<Self>) {
+        // Held to talk counts as on, even before the engine has said so; and
+        // a key still down mustn't turn it back on.
+        let on = self.mic_on || self.held;
         self.held = false;
         self.key_held = false;
+        self.hold_key.spoil();
         self.nudged = None;
-        self.engine.set_mic_enabled(!self.mic_on);
+        self.engine.set_mic_enabled(!on);
         cx.notify();
     }
 
@@ -2068,5 +2083,22 @@ mod hold_key_tests {
         assert!(!key.talk(false, long_ago, at(7050)));
         assert!(!key.talk(true, long_ago, at(8000)));
         assert!(key.talk(true, long_ago, at(8250)));
+        assert!(!key.talk(false, long_ago, at(8300)));
+
+        // A key that went down just before the key was first seen down
+        // (between two looks) still counts.
+        assert!(!key.talk(true, Duration::from_millis(30), at(9000)));
+        assert!(!key.talk(true, Duration::from_millis(330), at(9300)));
+        assert!(!key.talk(false, long_ago, at(9350)));
+
+        // The mic clicked while the key talks: no more talk from this press.
+        assert!(!key.talk(true, long_ago, at(10000)));
+        assert!(key.talk(true, long_ago, at(10250)));
+        key.spoil();
+        assert!(!key.talk(true, long_ago, at(10300)));
+        assert!(!key.talk(false, long_ago, at(10350)));
+        key.spoil();
+        assert!(!key.talk(true, long_ago, at(11000)));
+        assert!(key.talk(true, long_ago, at(11250)));
     }
 }

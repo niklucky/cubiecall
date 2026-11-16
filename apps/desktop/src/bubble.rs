@@ -162,8 +162,8 @@ impl Bubble {
         cx: &mut Context<Self>,
     ) -> Self {
         // Drawn again only for what it shows: the widget says who's on the
-        // stage, the call how you share. A camera's own frames ask for the
-        // rest (see `follow`).
+        // stage, the call how you share. The frames of what's shown ask for
+        // the rest (see `follow`).
         let mut subscriptions = Vec::new();
         if who == Who::Share {
             subscriptions.push(cx.observe(&call, |_, _, cx| cx.notify()));
@@ -344,7 +344,12 @@ impl Render for Bubble {
             .capsule
             .upgrade()
             .and_then(|c| c.read(cx).bubble_member(&self.who, cx));
-        self.follow(member.as_ref(), cx);
+        // What you share comes in on your own member's frames.
+        let frames = match self.who {
+            Who::Share => Some(self.call.read(cx).me.clone()),
+            _ => member.clone(),
+        };
+        self.follow(frames.as_ref(), cx);
         let body = match (&self.who, &member) {
             (Who::Share, _) => self.share(cx),
             (_, Some(member)) => self.camera(member.read(cx), w, h, r),

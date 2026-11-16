@@ -99,7 +99,7 @@ impl From<NSRect> for Rect {
 
 /// A window of ours, to move and size from another window's view: the call
 /// widget places the bubbles that ride on it.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Native(Retained<NSWindow>);
 
 impl Native {
@@ -114,6 +114,11 @@ impl Native {
     /// The usable part of the screen the window is on.
     pub fn visible(&self) -> Option<Rect> {
         Some(self.0.screen()?.visibleFrame().into())
+    }
+
+    /// All of the screen the window is on, menu bar and Dock included.
+    pub fn screen(&self) -> Option<Rect> {
+        Some(self.0.screen()?.frame().into())
     }
 
     pub fn shown(&self) -> bool {
@@ -231,14 +236,26 @@ pub fn key_down(code: u16) -> bool {
     CGEventSource::key_state(CGEventSourceStateID::HIDSystemState, code)
 }
 
-/// How long ago an ordinary key last went down, in any app (modifiers don't
-/// count). A question about the keyboard's state too: no permission.
-pub fn since_key_down() -> Duration {
-    let secs = CGEventSource::seconds_since_last_event_type(
-        CGEventSourceStateID::HIDSystemState,
+/// How long ago an ordinary key or a mouse button last went down, in any
+/// app (modifiers don't count). A question about the input devices' state
+/// too: no permission.
+pub fn since_press() -> Duration {
+    [
         CGEventType::KeyDown,
-    );
-    Duration::try_from_secs_f64(secs).unwrap_or(Duration::MAX)
+        CGEventType::LeftMouseDown,
+        CGEventType::RightMouseDown,
+        CGEventType::OtherMouseDown,
+    ]
+    .into_iter()
+    .map(|kind| {
+        let secs = CGEventSource::seconds_since_last_event_type(
+            CGEventSourceStateID::HIDSystemState,
+            kind,
+        );
+        Duration::try_from_secs_f64(secs).unwrap_or(Duration::MAX)
+    })
+    .min()
+    .unwrap_or(Duration::MAX)
 }
 
 /// The screen `p` is on: its usable part, and all of it. `None` between
@@ -247,7 +264,8 @@ pub fn screen_at(p: (f64, f64)) -> Option<(Rect, Rect)> {
     let mtm = MainThreadMarker::new()?;
     NSScreen::screens(mtm).iter().find_map(|screen| {
         let whole: Rect = screen.frame().into();
-        let inside = p.0 >= whole.x && p.0 < whole.right() && p.1 >= whole.y && p.1 < whole.top();
+        // The cursor in a screen's top row is at exactly its top.
+        let inside = p.0 >= whole.x && p.0 <= whole.right() && p.1 >= whole.y && p.1 <= whole.top();
         inside.then(|| (screen.visibleFrame().into(), whole))
     })
 }
@@ -466,6 +484,11 @@ pub fn cursor_inside(window: &Window) -> Option<bool> {
 /// Whether a mouse button is held down right now, anywhere on screen.
 pub fn mouse_down() -> bool {
     NSEvent::pressedMouseButtons() != 0
+}
+
+/// Whether the left mouse button is held down right now.
+pub fn left_mouse_down() -> bool {
+    NSEvent::pressedMouseButtons() & 1 != 0
 }
 
 /// Whether any of `window` is on screen now (`None` if the window can't be

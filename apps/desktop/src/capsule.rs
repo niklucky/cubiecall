@@ -959,7 +959,8 @@ impl Capsule {
                 x += w + gap;
             }
         }
-        // By themselves: where they are, at their size, around their middle.
+        // By themselves: where they are, at their size, around their middle,
+        // and on their screen.
         let aspect = plan.preview.unwrap_or(1.6);
         for who in &plan.bubbles {
             let (Some(slot), Some(geo)) = (self.bubbles.get(who), self.geo.get(who)) else {
@@ -980,7 +981,6 @@ impl Capsule {
                 w,
                 h,
             };
-            let frame = if old.w == w && old.h == h { old } else { frame };
             put(slot, frame, r, false, false);
         }
         out
@@ -1023,13 +1023,21 @@ impl Capsule {
             let (call, this, who) = (self.call.clone(), cx.weak_entity(), who.clone());
             cx.defer(move |cx| {
                 let opened = bubble::open(call, this.clone(), who.clone(), cx);
-                let _ = this.update(cx, |this, cx| {
+                let handle = opened.as_ref().map(|(handle, _)| *handle);
+                let kept = this.update(cx, |this, cx| {
                     this.opening.remove(&who);
                     if let Some((handle, native)) = opened {
                         this.bubbles.insert(who, Slot { handle, native });
                     }
                     cx.notify();
                 });
+                // The widget went while its bubble was opening: nobody
+                // else would close it.
+                if kept.is_err()
+                    && let Some(handle) = handle
+                {
+                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                }
             });
         }
         // The layer that fits: small bubbles don't decode 720p, and video
@@ -1062,12 +1070,21 @@ impl Capsule {
         };
         let start = native.frame();
         let who = who.clone();
+        self.end_drag(cx);
         self.dragging = Some(who.clone());
         self.drag_task = Some(cx.spawn(async move |this, cx| {
             let mut moved = false;
             loop {
                 cx.background_executor().timer(DRAG_POLL).await;
                 let done = this.update(cx, |this, cx| {
+                    // Closed meanwhile (their camera went off): nothing left
+                    // to follow, and nothing to put anywhere.
+                    if this.bubbles.get(&who).is_none_or(|s| s.native != native) {
+                        this.dragging = None;
+                        this.magnet = false;
+                        cx.notify();
+                        return true;
+                    }
                     let frame = native.frame();
                     moved |= (frame.x - start.x).abs() > 3.0 || (frame.y - start.y).abs() > 3.0;
                     let near = moved && this.tucked.is_none() && this.near_pill(&frame, cx);
@@ -1214,6 +1231,7 @@ impl Capsule {
     /// the pill turns or tucks away.
     fn begin_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.start_window_move();
+        self.end_drag(cx);
         let start = mac::cursor();
         self.drag_task = Some(cx.spawn(async move |this, cx| {
             let (mut moved, mut last, mut still) = (false, start, Duration::ZERO);
@@ -1250,13 +1268,23 @@ impl Capsule {
         }));
     }
 
+    /// A new drag takes the place of one whose button came up less than a
+    /// look ago: leave nothing of the old one behind.
+    fn end_drag(&mut self, cx: &mut Context<Self>) {
+        self.drag_task = None;
+        if self.dragging.take().is_some() || std::mem::take(&mut self.magnet) {
+            cx.notify();
+        }
+        self.show_ghost(None, cx);
+    }
+
     /// What a drop with the cursor at `p` makes of the pill, if anything.
     fn zone_at(&self, p: (f64, f64), cx: &App) -> Option<Zone> {
         // The screen under the cursor, not the one most of the window is
         // still on: a pill on its way to another display belongs there.
         let (v, whole) = mac::screen_at(p).or_else(|| {
-            let v = self.native.as_ref()?.visible()?;
-            Some((v, v))
+            let native = self.native.as_ref()?;
+            Some((native.visible()?, native.screen()?))
         })?;
         let plan = self.plan(cx);
         let main = MAIN as f64;
@@ -1365,9 +1393,14 @@ impl Capsule {
             // one the tab is on now.
             let mut home = self.home;
             if let Some(v) = self.native.as_ref().and_then(|n| n.visible()) {
-                let main = MAIN as f64;
-                home.0 = home.0.clamp(v.x + main, v.right().max(v.x + main));
-                home.1 = home.1.clamp(v.y, (v.top() - main).max(v.y));
+                let len = pill_len(&self.plan(cx), self.column) as f64;
+                let (w, h) = if self.column {
+                    (MAIN as f64, len)
+                } else {
+                    (len, MAIN as f64)
+                };
+                home.0 = home.0.clamp(v.x + w, v.right().max(v.x + w));
+                home.1 = home.1.clamp(v.y, (v.top() - h).max(v.y));
             }
             self.jump = Some(home);
             cx.notify();
@@ -1391,11 +1424,17 @@ impl Capsule {
                 let this = cx.weak_entity();
                 cx.defer(move |cx| {
                     let ghost = open_ghost(cx);
-                    let _ = this.update(cx, |this, cx| {
+                    let handle = ghost.as_ref().map(|(handle, _)| *handle);
+                    let kept = this.update(cx, |this, cx| {
                         this.ghost_opening = false;
                         this.ghost = ghost;
                         this.sync_ghost(cx);
                     });
+                    if kept.is_err()
+                        && let Some(handle) = handle
+                    {
+                        let _ = handle.update(cx, |_, window, _| window.remove_window());
+                    }
                 });
             }
             return;
@@ -1496,19 +1535,32 @@ impl Capsule {
             while waited < HOLD_AFTER {
                 cx.background_executor().timer(DRAG_POLL).await;
                 waited += DRAG_POLL;
-                if !mac::mouse_down() {
+                if !mac::left_mouse_down() {
                     return;
                 }
             }
             let held = this.update(cx, |this, cx| {
+                // Already talking (the key holds it): the button adds
+                // nothing, and its release mustn't mute the key's hold.
+                if this.call.read(cx).held {
+                    return false;
+                }
                 this.held_click = true;
                 this.mic_held = true;
                 this.call.update(cx, |c, cx| c.hold_to_talk(true, cx));
+                true
             });
-            if held.is_err() {
+            if !held.unwrap_or(false) {
                 return;
             }
-            while mac::mouse_down() {
+            // Until the button comes up, or Settings turns hold to talk off.
+            while mac::left_mouse_down()
+                && this
+                    .update(cx, |_, cx| {
+                        Shell::global(cx).read(cx).store.call.hold_to_talk
+                    })
+                    .unwrap_or(false)
+            {
                 cx.background_executor().timer(DRAG_POLL).await;
             }
             let _ = this.update(cx, |this, cx| {
