@@ -5,7 +5,8 @@
 //! the engine the desktop app runs. UniFFI writes the Swift and Kotlin side of
 //! this crate's public items (`dev/ios-core.sh`).
 //!
-//! - [`Client`]: who you are and your rooms, over the server's HTTP API.
+//! - [`Client`]: who you are, your rooms and which contacts are here, over
+//!   the server's HTTP API; and the phone's own list of calls.
 //! - [`Call`]: one call. Things you do are methods; what happens comes back
 //!   through a [`CallListener`].
 //! - Video never crosses the bridge: a view hands over its system display
@@ -15,11 +16,13 @@ mod account;
 mod block;
 mod call;
 mod secrets;
+mod store;
 #[cfg(target_vendor = "apple")]
 mod video;
 
-pub use account::{Account, Client, Room, RoomKind, SignIn};
+pub use account::{Account, Client, ContactMatch, Room, RoomKind, SignIn};
 pub use call::{Call, CallEvent, CallListener, Quality};
+pub use store::CallRecord;
 
 uniffi::setup_scaffolding!();
 

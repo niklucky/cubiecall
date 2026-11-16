@@ -15,18 +15,18 @@ final class SignInViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = Theme.bg
+        view.backgroundColor = .systemBackground
 
         logo.contentMode = .scaleAspectFit
         titleLabel.text = "Quipcall"
-        titleLabel.font = .systemFont(ofSize: 34, weight: .bold)
-        titleLabel.textColor = Theme.text
-        message.font = .systemFont(ofSize: 16)
-        message.textColor = Theme.textDim
+        titleLabel.font = .preferredFont(forTextStyle: .largeTitle).bold
+        titleLabel.textColor = .label
+        message.font = .preferredFont(forTextStyle: .body)
+        message.textColor = .secondaryLabel
         message.numberOfLines = 0
         message.textAlignment = .center
         code.font = .monospacedSystemFont(ofSize: 34, weight: .semibold)
-        code.textColor = Theme.text
+        code.textColor = .label
         code.textAlignment = .center
 
         button.configuration?.cornerStyle = .large
@@ -137,5 +137,11 @@ final class SignInViewController: UIViewController {
 
     deinit {
         polling?.cancel()
+    }
+}
+
+private extension UIFont {
+    var bold: UIFont {
+        fontDescriptor.withSymbolicTraits(.traitBold).map { UIFont(descriptor: $0, size: 0) } ?? self
     }
 }

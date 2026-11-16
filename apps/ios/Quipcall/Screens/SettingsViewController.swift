@@ -2,8 +2,6 @@ import UIKit
 
 /// You, and signing out. More comes with the call settings.
 final class SettingsViewController: UITableViewController {
-    private let avatar = AvatarView()
-
     init() {
         super.init(style: .insetGrouped)
     }
@@ -14,7 +12,6 @@ final class SettingsViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Settings"
-        tableView.backgroundColor = Theme.bg
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "cell")
     }
 
@@ -27,27 +24,22 @@ final class SettingsViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { 1 }
 
-    override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        indexPath.section == 0 ? 76 : 48
-    }
-
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "cell", for: indexPath)
-        cell.backgroundColor = Theme.raised
-        var content = cell.defaultContentConfiguration()
         if indexPath.section == 0 {
             let account = AppEnv.shared.client.account()
-            content.text = account?.name ?? "You"
-            content.secondaryText = account?.email
-            content.textProperties.font = .systemFont(ofSize: 20, weight: .semibold)
-            content.textProperties.color = Theme.text
-            content.secondaryTextProperties.color = Theme.textDim
+            var content = UIListContentConfiguration.face(account?.name ?? "You", detail: account?.email)
+            content.image = Avatar.image(account?.name ?? "You", side: 60)
+            content.textProperties.font = .preferredFont(forTextStyle: .title3)
+            cell.contentConfiguration = content
             cell.selectionStyle = .none
         } else {
-            content.text = "Sign out"
-            content.textProperties.color = Theme.danger
+            var content = cell.defaultContentConfiguration()
+            content.text = "Sign Out"
+            content.textProperties.color = .systemRed
+            cell.contentConfiguration = content
+            cell.selectionStyle = .default
         }
-        cell.contentConfiguration = content
         return cell
     }
 
@@ -62,14 +54,19 @@ final class SettingsViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         guard indexPath.section == 1 else { return }
-        let alert = UIAlertController(title: nil, message: "Sign out of Quipcall on this iPhone?", preferredStyle: .actionSheet)
-        alert.addAction(UIAlertAction(title: "Sign out", style: .destructive) { _ in
+        let alert = UIAlertController(
+            title: nil,
+            message: "Your list of calls on this iPhone goes too.",
+            preferredStyle: .actionSheet
+        )
+        alert.addAction(UIAlertAction(title: "Sign Out", style: .destructive) { _ in
             Task {
                 await AppEnv.shared.client.signOut()
                 SceneDelegate.signedOut()
             }
         })
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.popoverPresentationController?.sourceView = tableView.cellForRow(at: indexPath)
         present(alert, animated: true)
     }
 }

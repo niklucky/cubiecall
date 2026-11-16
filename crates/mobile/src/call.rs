@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 use quipcall_core::livekit::prelude::RemoteVideoTrack;
@@ -16,6 +17,7 @@ use quipcall_core::{
 };
 
 use crate::account::Client;
+use crate::store::{CallRecord, Store};
 
 /// What happens in a call.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
@@ -120,9 +122,22 @@ struct Video {
     showing: Option<VideoSubscription>,
 }
 
+/// The call's entry for the Calls tab, while it's going on.
+struct Log {
+    /// When you got in: on the wall clock (unix ms), and for measuring.
+    began: u64,
+    since: Instant,
+    people: Vec<String>,
+}
+
 #[derive(uniffi::Object)]
 pub struct Call {
     engine: Engine,
+    /// The room's id and what it's called, for the list of calls.
+    room: String,
+    name: Mutex<String>,
+    store: Arc<Store>,
+    log: Mutex<Option<Log>>,
     videos: Mutex<HashMap<String, Video>>,
     /// Your camera, as you see it. It outlives the camera being on or off.
     #[cfg(target_vendor = "apple")]
@@ -136,11 +151,13 @@ pub struct Call {
 
 #[uniffi::export]
 impl Client {
-    /// Join `room` (its id). Events go to `listener` until the call is
-    /// dropped; drop it (after [`Call::leave`]) when the call is over.
+    /// Join `room` (its id; `name` is what you know it as, if anything).
+    /// Events go to `listener` until the call is dropped; drop it (after
+    /// [`Call::leave`]) when the call is over.
     pub fn join(
         &self,
         room: String,
+        name: Option<String>,
         listener: Arc<dyn CallListener>,
     ) -> Result<Arc<Call>, crate::AppError> {
         let (engine, events) = Engine::new().map_err(crate::AppError::from)?;
@@ -150,6 +167,10 @@ impl Client {
         let admission = engine.join(&self.server, &room, session.as_deref().unwrap_or(""));
         let call = Arc::new(Call {
             engine,
+            room,
+            name: Mutex::new(name.unwrap_or_default()),
+            store: self.store.clone(),
+            log: Mutex::default(),
             videos: Mutex::default(),
             #[cfg(target_vendor = "apple")]
             preview: Arc::default(),
@@ -164,7 +185,11 @@ impl Client {
                 let room_name = match crate::block::on(admission) {
                     Ok(info) => {
                         let Some(call) = weak.upgrade() else { return };
+                        // The server's name for the room is the newest.
                         let name = info.room_name.clone();
+                        if let Some(name) = name.as_ref().filter(|n| !n.is_empty()) {
+                            call.name.lock().clone_from(name);
+                        }
                         call.engine.connect(info);
                         name
                     }
@@ -277,10 +302,34 @@ impl Call {
     pub fn leave(&self) {
         self.videos.lock().clear();
         self.engine.disconnect();
+        self.keep_record();
+    }
+}
+
+impl Drop for Call {
+    fn drop(&mut self) {
+        self.keep_record();
     }
 }
 
 impl Call {
+    /// The call is over, however it ended: into the list of calls it goes,
+    /// once. A call you never got into leaves nothing.
+    fn keep_record(&self) {
+        let Some(log) = self.log.lock().take() else {
+            return;
+        };
+        let name = self.name.lock().clone();
+        self.store.add_call(CallRecord {
+            id: log.began,
+            room: self.room.clone(),
+            name: if name.is_empty() { "Call".into() } else { name },
+            started: log.began / 1000,
+            seconds: log.since.elapsed().as_secs(),
+            people: log.people,
+        });
+    }
+
     fn start_camera(&self) {
         #[cfg(target_vendor = "apple")]
         self.engine.start_camera(Some(self.preview.clone()));
@@ -300,15 +349,32 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
         Event::WaitingForPermission(device) => one(CallEvent::WaitingForPermission {
             camera: device == MediaDevice::Camera,
         }),
-        Event::Connected { identity, .. } => one(CallEvent::Connected {
-            you: identity,
-            room_name: None,
-        }),
+        Event::Connected { identity, .. } => {
+            let began = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            *call.log.lock() = Some(Log {
+                began,
+                since: Instant::now(),
+                people: Vec::new(),
+            });
+            one(CallEvent::Connected {
+                you: identity,
+                room_name: None,
+            })
+        }
         Event::Disconnected { reason } => {
             call.videos.lock().clear();
+            call.keep_record();
             one(CallEvent::Ended { reason })
         }
         Event::ParticipantJoined { identity, name } => {
+            if let Some(log) = call.log.lock().as_mut()
+                && !name.is_empty()
+                && !log.people.contains(&name)
+            {
+                log.people.push(name.clone());
+            }
             one(CallEvent::Joined { id: identity, name })
         }
         Event::ParticipantLeft { identity } => one(CallEvent::Left { id: identity }),

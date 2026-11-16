@@ -1,33 +1,34 @@
 import UIKit
 
-/// Your rooms, as a chat list: a face, the name, a line under it. Tap one to
-/// call into it.
-final class RoomsViewController: UITableViewController {
+/// Your rooms, as the system draws a list: a face, the name, a line under
+/// it. Tap one to call into it.
+final class RoomsViewController: ListViewController, UISearchResultsUpdating {
     private var rooms: [Room] = []
+    private var shown: [Room] = []
     private var loading: Task<Void, Never>?
-    private let empty = UILabel()
+    private var failure: String?
+
+    init() {
+        super.init(style: .plain)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Rooms"
-        view.backgroundColor = Theme.bg
-        tableView.backgroundColor = Theme.bg
-        tableView.separatorColor = Theme.line
-        tableView.separatorInset = UIEdgeInsets(top: 0, left: 84, bottom: 0, right: 0)
-        tableView.rowHeight = 76
-        tableView.register(RoomCell.self, forCellReuseIdentifier: RoomCell.id)
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "room")
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             systemItem: .add,
             primaryAction: UIAction { [weak self] _ in self?.newRoom() }
         )
-        refreshControl = UIRefreshControl()
-        refreshControl?.addAction(UIAction { [weak self] _ in self?.load() }, for: .valueChanged)
-
-        empty.text = "No rooms yet.\nMake one with + and send its link."
-        empty.numberOfLines = 0
-        empty.textAlignment = .center
-        empty.textColor = Theme.textDim
-        empty.font = .systemFont(ofSize: 16)
+        let search = UISearchController(searchResultsController: nil)
+        search.searchResultsUpdater = self
+        search.obscuresBackgroundDuringPresentation = false
+        navigationItem.searchController = search
+        tableView.refreshControl = UIRefreshControl()
+        tableView.refreshControl?.addAction(UIAction { [weak self] _ in self?.load() }, for: .valueChanged)
 
         // Refreshed when the app comes back, not on a timer: nothing runs
         // while the list just sits there.
@@ -47,23 +48,54 @@ final class RoomsViewController: UITableViewController {
                 let rooms = try await client.rooms()
                 guard let self, !Task.isCancelled else { return }
                 self.rooms = rooms
-                self.tableView.reloadData()
-                self.tableView.backgroundView = rooms.isEmpty ? self.empty : nil
+                self.failure = nil
+                self.filter()
             } catch AppError.SignedOut {
                 SceneDelegate.signedOut()
             } catch {
                 guard let self, !Task.isCancelled else { return }
-                if self.rooms.isEmpty {
-                    self.empty.text = error.shown
-                    self.tableView.backgroundView = self.empty
-                }
+                self.failure = error.shown
+                self.filter()
             }
-            self?.refreshControl?.endRefreshing()
+            self?.tableView.refreshControl?.endRefreshing()
         }
     }
 
+    func updateSearchResults(for searchController: UISearchController) {
+        filter()
+    }
+
+    private func filter() {
+        let query = navigationItem.searchController?.searchBar.text ?? ""
+        shown = query.isEmpty ? rooms : rooms.filter { $0.name.localizedCaseInsensitiveContains(query) }
+        tableView.reloadData()
+        setNeedsUpdateContentUnavailableConfiguration()
+    }
+
+    override func updateContentUnavailableConfiguration(using state: UIContentUnavailableConfigurationState) {
+        guard shown.isEmpty else {
+            showEmpty(nil)
+            return
+        }
+        if !(navigationItem.searchController?.searchBar.text ?? "").isEmpty {
+            showEmpty(UIContentUnavailableConfiguration.search())
+            return
+        }
+        var empty = UIContentUnavailableConfiguration.empty()
+        if let failure, rooms.isEmpty {
+            empty.image = UIImage(systemName: "wifi.exclamationmark")
+            empty.text = "Can't Load Rooms"
+            empty.secondaryText = failure
+        } else {
+            empty.image = UIImage(systemName: "bubble.left.and.bubble.right")
+            empty.text = "No Rooms"
+            empty.secondaryText = "Make one with + and send its link."
+        }
+        showEmpty(empty)
+    }
+
     private func newRoom() {
-        let alert = UIAlertController(title: "New room", message: "Only people you invite get in.", preferredStyle: .alert)
+        let alert = UIAlertController(title: "New Room", message: "Only people you invite get in.", preferredStyle: .alert)
         alert.addTextField { field in
             field.placeholder = "Name"
             field.autocapitalizationType = .sentences
@@ -76,8 +108,7 @@ final class RoomsViewController: UITableViewController {
                 do {
                     let room = try await AppEnv.shared.client.createRoom(name: name, membersOnly: true)
                     self?.rooms.insert(room, at: 0)
-                    self?.tableView.reloadData()
-                    self?.tableView.backgroundView = nil
+                    self?.filter()
                 } catch {
                     self?.say(error.shown)
                 }
@@ -86,28 +117,52 @@ final class RoomsViewController: UITableViewController {
         present(alert, animated: true)
     }
 
-    private func say(_ message: String) {
-        let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .default))
-        present(alert, animated: true)
+    private func share(_ room: Room, from source: UIView?) {
+        guard let url = URL(string: AppEnv.shared.client.roomLink(room: room.id)) else { return }
+        let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        sheet.popoverPresentationController?.sourceView = source ?? view
+        present(sheet, animated: true)
     }
 
     // MARK: The list
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        rooms.count
+        shown.count
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: RoomCell.id, for: indexPath) as! RoomCell
-        cell.show(rooms[indexPath.row])
+        let cell = tableView.dequeueReusableCell(withIdentifier: "room", for: indexPath)
+        let room = shown[indexPath.row]
+        let detail: String
+        switch room.kind {
+        case .direct: detail = "Call for two"
+        case .open: detail = "Anyone with the link"
+        case .members: detail = room.mine ? "Private · yours" : "Private"
+        }
+        cell.contentConfiguration = UIListContentConfiguration.face(room.name, detail: detail)
         return cell
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        let room = rooms[indexPath.row]
+        let room = shown[indexPath.row]
         CallViewController.present(room: room.id, name: room.name, from: self)
+    }
+
+    override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool { true }
+
+    override func tableView(
+        _ tableView: UITableView,
+        trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
+    ) -> UISwipeActionsConfiguration? {
+        let room = shown[indexPath.row]
+        let share = UIContextualAction(style: .normal, title: "Share") { [weak self] _, view, done in
+            self?.share(room, from: view)
+            done(true)
+        }
+        share.image = UIImage(systemName: "square.and.arrow.up")
+        share.backgroundColor = .systemBlue
+        return UISwipeActionsConfiguration(actions: [share])
     }
 
     override func tableView(
@@ -115,66 +170,21 @@ final class RoomsViewController: UITableViewController {
         contextMenuConfigurationForRowAt indexPath: IndexPath,
         point: CGPoint
     ) -> UIContextMenuConfiguration? {
-        let room = rooms[indexPath.row]
+        let room = shown[indexPath.row]
         let link = AppEnv.shared.client.roomLink(room: room.id)
         return UIContextMenuConfiguration(actionProvider: { [weak self] _ in
             UIMenu(children: [
-                UIAction(title: "Copy link", image: UIImage(systemName: "link")) { _ in
+                UIAction(title: "Call", image: UIImage(systemName: "video")) { _ in
+                    guard let self else { return }
+                    CallViewController.present(room: room.id, name: room.name, from: self)
+                },
+                UIAction(title: "Copy Link", image: UIImage(systemName: "link")) { _ in
                     UIPasteboard.general.string = link
                 },
-                UIAction(title: "Share…", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in
-                    guard let self, let url = URL(string: link) else { return }
-                    self.present(UIActivityViewController(activityItems: [url], applicationActivities: nil), animated: true)
+                UIAction(title: "Share…", image: UIImage(systemName: "square.and.arrow.up")) { _ in
+                    self?.share(room, from: tableView.cellForRow(at: indexPath))
                 },
             ])
         })
-    }
-}
-
-/// One room: its face, its name, what kind it is.
-final class RoomCell: UITableViewCell {
-    static let id = "room"
-    private let avatar = AvatarView()
-    private let name = UILabel()
-    private let detail = UILabel()
-
-    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
-        super.init(style: style, reuseIdentifier: reuseIdentifier)
-        backgroundColor = Theme.bg
-        let selected = UIView()
-        selected.backgroundColor = Theme.raised
-        selectedBackgroundView = selected
-        name.font = .systemFont(ofSize: 17, weight: .semibold)
-        name.textColor = Theme.text
-        detail.font = .systemFont(ofSize: 15)
-        detail.textColor = Theme.textDim
-        for view in [avatar, name, detail] {
-            contentView.addSubview(view)
-        }
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    func show(_ room: Room) {
-        avatar.name = room.name
-        name.text = room.name
-        switch room.kind {
-        case .direct: detail.text = "Call for two"
-        case .open: detail.text = "Open to anyone with the link"
-        case .members: detail.text = room.mine ? "Private · yours" : "Private"
-        }
-    }
-
-    // Laid out by hand: three views, no constraints to solve while scrolling.
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let bounds = contentView.bounds
-        let left = contentView.layoutMargins.left
-        avatar.frame = CGRect(x: left, y: (bounds.height - 56) / 2, width: 56, height: 56)
-        let x = avatar.frame.maxX + 12
-        let width = bounds.width - x - contentView.layoutMargins.right
-        name.frame = CGRect(x: x, y: bounds.midY - 23, width: width, height: 22)
-        detail.frame = CGRect(x: x, y: bounds.midY + 1, width: width, height: 20)
     }
 }

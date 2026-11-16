@@ -45,15 +45,24 @@ final class CallModel {
 
     var onChange: ((Change) -> Void)?
 
+    /// What the caller knew the room as, for the list of calls.
+    private let knownName: String?
+
     init(room: String, name: String?) {
         self.room = room
+        knownName = name
         roomName = name ?? "Call"
+    }
+
+    /// The room's address, to send to people.
+    var link: String {
+        AppEnv.shared.client.roomLink(room: room)
     }
 
     func start() {
         Audio.prepare()
         do {
-            call = try AppEnv.shared.client.join(room: room, listener: Relay(self))
+            call = try AppEnv.shared.client.join(room: room, name: knownName, listener: Relay(self))
         } catch {
             onChange?(.ended(error.shown, signedOut: false))
         }
@@ -87,6 +96,7 @@ final class CallModel {
         call?.leave()
         call = nil
         Audio.finish()
+        NotificationCenter.default.post(name: .callsChanged, object: nil)
     }
 
     func name(of id: String) -> String {
@@ -170,6 +180,7 @@ final class CallModel {
         call?.leave()
         call = nil
         Audio.finish()
+        NotificationCenter.default.post(name: .callsChanged, object: nil)
         onChange?(.ended(message, signedOut: signedOut))
     }
 }

@@ -6,7 +6,7 @@ Read README.md first. Plan: docs/PLAN.md. Decisions: docs/ARCHITECTURE.md.
 - **Footprint first.** Keep binaries small and CPU and memory low. Don't add a dependency without a reason.
 - **UI is minimal and custom.** It's built on GPUI with no widget library. Less on screen is better (docs/UI.md).
 - `crates/core` contains no UI code. Media logic goes there.
-- Phones: `apps/ios` (Swift, UIKit, no packages) is views only; what it shows comes from `crates/mobile`, which wraps `crates/core` without its `denoise` and `transcribe` features. The mobile budget in PLAN.md is a floor: raise a limit only when a real call hits it.
+- Phones: `apps/ios` (Swift, UIKit, no packages) uses the system's components and colours (no custom controls or fixed colours outside the call's video tiles and faces) and is views only; what it shows comes from `crates/mobile`, which wraps `crates/core` without its `denoise` and `transcribe` features. The mobile budget in PLAN.md is a floor: raise a limit only when a real call hits it.
 
 ## Conventions
 - In PLAN.md, finished tasks are marked `[x] ~~task~~` and finished stages `## ~~Stage N~~ ✅`. Update it as work lands.
@@ -40,6 +40,7 @@ Read README.md first. Plan: docs/PLAN.md. Decisions: docs/ARCHITECTURE.md.
 - In the Simulator the app sets `QUIPCALL_NO_MIC` and `QUIPCALL_FAKE_CAMERA` itself: its microphone is the Mac's real one, and it has no camera. Never pass `-mic YES` without asking.
 - Signing in for real: the app opens Safari and shows a code; approve it with `curl` (`/api/auth/desktop/approve` with the id from the isolated database's `desktop_logins` and the code from the screen).
 - Its process is a Mac process: `dev/measure.sh $(pgrep -f "CoreSimulator/Devices/.*/Quipcall.app/Quipcall")`. Measure release builds.
+- The Simulator has six sample contacts (Kate Bell, kate-bell@mac.com, and others). Give one an account on the isolated server (an admin's `/api/auth/invites`, then the magic link from the outbox) to see "On Quipcall". It can't send texts, so Invite falls back to the share sheet. The system's contacts prompt has a second page: press "Share All 6 Contacts" by its coordinates.
 - People to talk to: `node dev/guests.mjs join "$QUIPCALL_PUBLIC_URL/?room=<public room id>" Anna Max`.
 - After changing `crates/mobile`'s public items, `dev/ios-core.sh` rewrites `apps/ios/Quipcall/Generated/quipcall_mobile.swift`; names that are Swift keywords (`private`, `public`) come out in backticks, so avoid them.
 

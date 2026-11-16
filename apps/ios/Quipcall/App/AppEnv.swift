@@ -39,7 +39,11 @@ final class AppEnv {
         setenv("QUIPCALL_FAKE_CAMERA", "1", 1)
         #endif
 
-        client = Client(server: server, web: web)
+        // Its own list of calls lives in Application Support (backed up with
+        // the phone, out of the user's sight).
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        client = Client(server: server, web: web, dataDir: support.path)
         #if DEBUG
         if let session = defaults.string(forKey: "session") {
             client.useSession(session: session)

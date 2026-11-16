@@ -4,6 +4,7 @@
 //! email link, then the code) approves it, and the phone picks up its session
 //! by polling with a secret only it has. The session stays in the Keychain.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -11,6 +12,7 @@ use quipcall_core::http::{self, request};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::store::{CallRecord, Store};
 use crate::{AppError, secrets};
 
 /// The signed-in person.
@@ -73,6 +75,15 @@ pub struct SignIn {
     pub code: String,
 }
 
+/// Someone in your address book who has an account.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ContactMatch {
+    /// The address you asked about, as you gave it.
+    pub email: String,
+    /// What they call themselves here.
+    pub name: String,
+}
+
 struct Pending {
     id: String,
     secret: String,
@@ -90,17 +101,20 @@ pub struct Client {
     pub(crate) server: String,
     web: String,
     state: Mutex<State>,
+    pub(crate) store: Arc<Store>,
 }
 
 #[uniffi::export]
 impl Client {
     /// `server` is the API's address and `web` the site's (they differ only
-    /// in development). Picks up the session kept from last time.
+    /// in development); `data_dir` is where the phone keeps its own list of
+    /// calls. Picks up the session kept from last time.
     #[uniffi::constructor]
-    pub fn new(server: String, web: String) -> Arc<Self> {
+    pub fn new(server: String, web: String, data_dir: String) -> Arc<Self> {
         crate::init_logging();
         let session = secrets::load(&server);
         tracing::info!(%server, signed_in = session.is_some(), "client");
+        let store = Arc::new(Store::open(&data_dir, &server));
         Arc::new(Self {
             server,
             web,
@@ -108,7 +122,81 @@ impl Client {
                 session,
                 ..Default::default()
             }),
+            store,
         })
+    }
+
+    /// The calls you were in on this phone, newest first.
+    pub fn calls(&self) -> Vec<CallRecord> {
+        self.store.calls()
+    }
+
+    pub fn delete_call(&self, id: u64) {
+        self.store.remove_call(id);
+    }
+
+    pub fn clear_calls(&self) {
+        self.store.clear_calls();
+    }
+
+    /// Which of these email addresses (from the address book) have an
+    /// account. Only a SHA-256 of each leaves the phone, and the server
+    /// keeps none of them.
+    pub async fn match_contacts(&self, emails: Vec<String>) -> Result<Vec<ContactMatch>, AppError> {
+        let mut by_hash: HashMap<String, String> = HashMap::new();
+        for email in emails {
+            by_hash.entry(email_hash(&email)).or_insert(email);
+        }
+        let hashes: Vec<&String> = by_hash.keys().collect();
+        let mut matches = Vec::new();
+        // The server takes a thousand at a time.
+        for chunk in hashes.chunks(1000) {
+            let value = self
+                .authorized("/contacts/match", Some(json!({"hashes": chunk})), "POST")
+                .await?;
+            for found in value["matches"].as_array().into_iter().flatten() {
+                let (Some(hash), Some(name)) = (found["hash"].as_str(), found["name"].as_str())
+                else {
+                    continue;
+                };
+                if let Some(email) = by_hash.get(hash) {
+                    matches.push(ContactMatch {
+                        email: email.clone(),
+                        name: name.to_owned(),
+                    });
+                }
+            }
+        }
+        Ok(matches)
+    }
+
+    /// The room for calls with one contact: theirs and yours, kept for as
+    /// long as you like, so its link (the invitation you text them) keeps
+    /// working. Made the first time; `contact` is the address book's
+    /// identifier, `name` what to call them.
+    pub async fn contact_room(&self, contact: String, name: String) -> Result<Room, AppError> {
+        if let Some(id) = self.store.line(&contact) {
+            // Still open? (You, or its clean-up, may have closed it.)
+            if let Some(room) = self.rooms().await?.into_iter().find(|r| r.id == id) {
+                return Ok(room);
+            }
+        }
+        let you = self.account().map(|a| a.name).unwrap_or_default();
+        let title = if you.is_empty() {
+            name
+        } else {
+            format!("{you} & {name}")
+        };
+        let body = json!({"name": title, "kind": "direct"});
+        let value = self.authorized("/rooms", Some(body), "POST").await?;
+        let room: RoomJson = serde_json::from_value(value).map_err(anyhow::Error::from)?;
+        // A call for two expires in a day unless it's kept: this one is an
+        // address, so keep it.
+        let keep = format!("/rooms/{}/keep", room.id);
+        self.authorized(&keep, Some(json!({})), "POST").await?;
+        self.store.set_line(&contact, &room.id);
+        let you = self.state.lock().account.as_ref().map(|a| a.id.clone());
+        Ok(room.room(you.as_deref()))
     }
 
     pub fn signed_in(&self) -> bool {
@@ -235,6 +323,7 @@ impl Client {
             s.session.take()
         };
         secrets::clear(&self.server);
+        self.store.wipe();
         if let Some(session) = session {
             let logout = request(
                 &self.server,
@@ -291,6 +380,15 @@ impl Client {
     }
 }
 
+/// What the server compares: SHA-256 of the address, trimmed and lowercased.
+fn email_hash(email: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+    format!(
+        "{:x}",
+        Sha256::digest(email.trim().to_lowercase().as_bytes())
+    )
+}
+
 fn cancelled() -> anyhow::Error {
     anyhow::anyhow!("Sign-in cancelled")
 }
@@ -327,11 +425,21 @@ mod tests {
     }
 
     #[test]
+    fn an_address_is_hashed_as_the_server_does() {
+        // `printf admin@example.com | shasum -a 256`
+        assert_eq!(
+            email_hash("  Admin@Example.com "),
+            "258d8dc916db8cea2cafb6c3cd0cb0246efe061421dbd83ec3a350428cabda4f"
+        );
+    }
+
+    #[test]
     fn a_room_link_is_the_sites() {
         let client = Client {
             server: "http://127.0.0.1:8180".into(),
             web: "http://127.0.0.1:5273/".into(),
             state: Default::default(),
+            store: Arc::new(Store::in_memory()),
         };
         assert_eq!(
             client.room_link("a1".into()),

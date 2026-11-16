@@ -21,9 +21,6 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     ) {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
-        window.backgroundColor = Theme.bg
-        window.tintColor = Theme.accent
-        window.overrideUserInterfaceStyle = .dark
         self.window = window
         showRoot()
         window.makeKeyAndVisible()
@@ -81,16 +78,23 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 }
 
-/// Rooms and Settings. Contacts joins them once the server has contacts.
+/// Contacts, Calls, Rooms, Settings: the system's tab bar, in a messenger's
+/// order. Rooms is where the app opens.
 final class MainTabs: UITabBarController {
     override func viewDidLoad() {
         super.viewDidLoad()
-        let rooms = UINavigationController(rootViewController: RoomsViewController())
-        rooms.navigationBar.prefersLargeTitles = true
-        rooms.tabBarItem = UITabBarItem(title: "Rooms", image: UIImage(systemName: "bubble.left.and.bubble.right.fill"), tag: 0)
-        let settings = UINavigationController(rootViewController: SettingsViewController())
-        settings.navigationBar.prefersLargeTitles = true
-        settings.tabBarItem = UITabBarItem(title: "Settings", image: UIImage(systemName: "gearshape.fill"), tag: 1)
-        viewControllers = [rooms, settings]
+        func tab(_ root: UIViewController, _ title: String, _ symbol: String) -> UIViewController {
+            let navigation = UINavigationController(rootViewController: root)
+            navigation.navigationBar.prefersLargeTitles = true
+            navigation.tabBarItem = UITabBarItem(title: title, image: UIImage(systemName: symbol), selectedImage: nil)
+            return navigation
+        }
+        viewControllers = [
+            tab(ContactsViewController(), "Contacts", "person.crop.circle.fill"),
+            tab(CallsViewController(), "Calls", "phone.fill"),
+            tab(RoomsViewController(), "Rooms", "bubble.left.and.bubble.right.fill"),
+            tab(SettingsViewController(), "Settings", "gear"),
+        ]
+        selectedIndex = 2
     }
 }

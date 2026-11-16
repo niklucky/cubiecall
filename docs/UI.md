@@ -127,7 +127,16 @@ One window (1040 × 680): the room's name and the call's time in the title bar, 
 
 ## Phones
 
-The iPhone app's screens are drawn in [prototype/mobile.html](prototype/mobile.html) (round 1, not approved yet), with Telegram as the model: a chat list of rooms and people, a room as its history of calls, contacts for personal calls, and the call full screen with five round buttons. The desktop's pill returns as the minimised call inside the app. What's built so far is the plain version of it: the room list, settings, and a call screen with a tile per person (a row each up to three, two across from four, a shared screen on top). Same colours as here, taken from `theme.rs`; the bars and the tab bar are the system's.
+The iPhone app looks like iOS, not like the Mac app: the system's lists, search fields, bars, buttons and colours, light or dark as the phone is set. Only faces (initials on a person's colour, the same colour as here) and the video tiles are drawn by us. Four tabs, in Telegram's order:
+
+- **Contacts**: your address book, searchable by name, email or number. People with a Quipcall account come first, under "On Quipcall", with a call button; everyone else has **Invite**, which opens Messages with their number and a link to a room for the two of you (it opens in a browser, no app needed). Until calls can ring, calling someone on Quipcall sends them that link first, then takes you into the call.
+- **Calls**: the calls you were in on this phone, newest first, as the Phone app lists them: the room, who was there and for how long, when. A call nobody joined is red. Tap to call again; swipe to delete; Edit to clear.
+- **Rooms** (where the app opens): your rooms, searchable; + makes one; tap to call, swipe or long-press to share the link.
+- **Settings**: you, and Sign Out.
+
+The call is full screen and dark, as the system's own call screens are: a tile per person (a row each up to three, two across from four, a shared screen on top), the room's name and the time, an invite button, and five round buttons (speaker, camera, microphone, flip, leave). White means on and worth noticing.
+
+Earlier drawings: [prototype/mobile.html](prototype/mobile.html) (round 1, in a dark hand-drawn look that was dropped) still shows the screens not built yet: a room's page, a person's, the incoming call, a call of two, the minimised call.
 
 ## Settings
 

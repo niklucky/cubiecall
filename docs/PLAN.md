@@ -211,7 +211,7 @@ Started early (2026-11-03), ahead of Stages 3–6, with open room links. Invite-
 
 ## Mobile (iOS first, then Android)
 
-Native apps: Swift and UIKit on iOS, Kotlin on Android, both thin views over the desktop's call engine (`crates/core`) through `crates/mobile`. Decisions: [ARCHITECTURE.md](ARCHITECTURE.md#mobile-ios-first-then-android). Design: [prototype/mobile.html](prototype/mobile.html), with Telegram as the model: rooms are its groups, contacts are for personal calls. We finish iOS (build, tune, test) before starting Android.
+Native apps: Swift and UIKit on iOS, Kotlin on Android, both thin views over the desktop's call engine (`crates/core`) through `crates/mobile`. Decisions: [ARCHITECTURE.md](ARCHITECTURE.md#mobile-ios-first-then-android). The look is the system's own (its lists, bars, buttons and colours, light or dark as the phone is set); the shape is a messenger's, with Telegram as the model: four tabs, Contacts, Calls, Rooms and Settings. Rooms are its groups, contacts are for personal calls. We finish iOS (build, tune, test) before starting Android.
 
 ### Mobile budget
 
@@ -235,6 +235,9 @@ Set to the least we think can work. We raise a line only when a real call hits i
 - [x] ~~`crates/core` builds for iOS: the noise model and speech to text became features (`denoise`, `transcribe`), on for the desktop and off for phones; camera, permissions and pixel buffers are shared by macOS and iOS~~
 - [x] ~~`crates/mobile`: `Client` (sign in, rooms) and `Call` (events, mic, camera, video), with Swift bindings written by `dev/ios-core.sh`~~
 - [x] ~~`apps/ios`: an Xcode project with a "Rust core" build phase; sign-in, the room list, settings and a call screen~~ *Checked in the Simulator against an isolated server: the browser-approval sign-in ends in the Keychain, the list loads, a room is created.*
+- [x] ~~The system's look (asked for after the first build, which was dark and drawn by hand): system lists with content configurations, search controllers, the system's empty states, buttons (glass on iOS 26) and colours; light and dark follow the phone; the call screen stays dark, as the system's own are~~ *Checked in both appearances. The empty states are siblings of their lists (`ListViewController`): inside a table controller VoiceOver saw only "Empty list" and never the button.*
+- [x] ~~Contacts tab: the phone's address book, searchable by name, email or number, people with an account on top ("On Quipcall"), an Invite button on everyone else~~ *Each contact gets a room of their own (a kept call for two), and its link is the invitation: Messages opens with their number and the text, or the share sheet where the phone can't send texts. Who has an account: `POST /api/contacts/match` takes SHA-256 hashes of email addresses and names the matches (accounts only, 20 requests an hour, nothing stored). Checked in the Simulator with its sample contacts, one of them given an account: found, the rest invited through the share sheet, the room made on the server. Messages itself needs a phone. Needs `make deploy` before it works against quipcall.com; until then everyone shows Invite.*
+- [x] ~~Calls tab: the calls you were in on this phone, newest first, as the Phone app lists recents (who, how long, when; red when nobody joined); tap to call again, swipe to delete, Edit and Clear~~ *Kept by the engine in one JSON file (`crates/mobile/src/store.rs`), written as each call ends. Checked after two calls. Calls you missed can't be there until the server rings (M4).*
 - [x] ~~Receive video with no copy: decoded H.264 `CVPixelBuffer`s go from the engine's thread into each tile's `AVSampleBufferVideoRenderer`~~ *Two web guests (`dev/guests.mjs`) at 640 × 480: "first video frame on screen … zero_copy=true" for both, speaking ring follows them, leaving and rejoining works.*
 - [x] ~~Send the camera as H.264 at the budget's size, two layers~~ *With the synthetic camera (the Simulator has none): LiveKit lists 540 × 960 at 800 kbps and 180 × 320 at 150 kbps; your own tile shows the same buffers.*
 - [ ] The real camera: front and back, upright (the capture connection turns frames, so nothing rotates on the CPU), 24 fps. *Built; needs an iPhone.*
@@ -247,10 +250,11 @@ Set to the least we think can work. We raise a line only when a real call hits i
 
 ### M1 — Design
 
-- [ ] Round 1 of the prototype ([prototype/mobile.html](prototype/mobile.html)): Calls (rooms and people in one list), a room, contacts, a person, an incoming call, a call of two, a room call, a shared screen, the minimised pill, sign-in, settings. *Drawn; waits for a look.*
-- [ ] Decide: one list (rooms and people together, as drawn) or a Rooms tab and people only under Contacts; whether a tap opens a room or calls it.
+- [x] ~~Round 1 of the prototype ([prototype/mobile.html](prototype/mobile.html)): Calls (rooms and people in one list), a room, contacts, a person, an incoming call, a call of two, a room call, a shared screen, the minimised pill, sign-in, settings~~ *Answered on 2026-11-16: the system's look instead of the drawn dark one, and separate tabs (Contacts, Calls, Rooms, Settings) instead of one mixed list. The built app is the reference for those now; the board still stands for the screens not built (a room's page, a person's, the incoming call, a call of two, the pill).*
+- [ ] Decide: whether a tap opens a room or calls it (today it calls).
+- [ ] Round 2, in the system's look: a room's page, a person's page, the incoming call, a call of two, the minimised call.
 
-**Done when:** every screen below is approved as drawn.
+**Done when:** every screen below is approved.
 
 ### M2 — App shell
 
@@ -282,7 +286,8 @@ Set to the least we think can work. We raise a line only when a real call hits i
 
 - [ ] Server: contacts (add by email, invitations), presence over the WebSocket hub, the ringing protocol (Stages 3–5)
 - [ ] Ringing a phone that's asleep: VoIP push and CallKit, so a Quipcall call rings like a phone call, on the lock screen too. *Needs the Apple Developer Program.*
-- [ ] Contacts, a person's screen, missed calls; the Mac and the web ring too, and the first to answer takes the call
+- [ ] Calling from Contacts rings (today it sends the link to the contact's room first); a person's screen; missed calls in the Calls tab; the Mac and the web ring too, and the first to answer takes the call
+- [ ] Find people by phone number too (accounts have only an email today, so a contact without one can't be matched)
 
 **Done when:** two phones call each other from Contacts with both apps closed.
 

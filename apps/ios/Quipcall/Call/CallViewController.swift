@@ -1,19 +1,22 @@
 import UIKit
 
 /// The call, full screen: everyone as a tile, a shared screen on top, the
-/// controls underneath. It only redraws when something changes; video is the
-/// system's (see `VideoView`).
+/// controls underneath. Dark whatever the phone's appearance, as the system's
+/// own call screens are; the buttons are the system's (glass on iOS 26). It
+/// only redraws when something changes; video is the system's too (see
+/// `VideoView`).
 final class CallViewController: UIViewController {
     private let model: CallModel
     private let stage = UIView()
     private let nameLabel = UILabel()
     private let statusLabel = UILabel()
     private let controls = UIStackView()
-    private let speaker = RoundButton(symbol: "speaker.wave.2.fill")
-    private let camera = RoundButton(symbol: "video.fill")
-    private let mic = RoundButton(symbol: "mic.fill")
-    private let flip = RoundButton(symbol: "arrow.triangle.2.circlepath")
-    private let leave = RoundButton(symbol: "phone.down.fill")
+    private let speaker = CallButton.make("speaker.wave.2.fill", label: "Speaker")
+    private let camera = CallButton.make("video.fill", label: "Camera")
+    private let mic = CallButton.make("mic.fill", label: "Microphone")
+    private let flip = CallButton.make("arrow.triangle.2.circlepath.camera.fill", label: "Flip camera")
+    private let leave = CallButton.make("phone.down.fill", label: "Leave")
+    private let invite = CallButton.make("person.badge.plus", label: "Invite", side: 40)
 
     /// Tiles by who they show: "you", someone's identity, or "screen:<track>".
     private var tiles: [String: Tile] = [:]
@@ -38,31 +41,30 @@ final class CallViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = Theme.stage
+        overrideUserInterfaceStyle = .dark
+        view.backgroundColor = .black
         view.addSubview(stage)
 
-        nameLabel.font = .systemFont(ofSize: 17, weight: .semibold)
-        nameLabel.textColor = Theme.text
+        nameLabel.font = .preferredFont(forTextStyle: .headline)
+        nameLabel.textColor = .label
         nameLabel.textAlignment = .center
         statusLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
-        statusLabel.textColor = Theme.textDim
+        statusLabel.textColor = .secondaryLabel
         statusLabel.textAlignment = .center
         view.addSubview(nameLabel)
         view.addSubview(statusLabel)
+        view.addSubview(invite)
+        invite.addAction(UIAction { [weak self] _ in self?.shareLink() }, for: .touchUpInside)
 
-        leave.tint(background: Theme.danger, symbol: .white)
+        CallButton.style(leave, symbol: "phone.down.fill", fill: .systemRed)
         speaker.addAction(UIAction { [weak self] _ in self?.model.toggleSpeaker() }, for: .touchUpInside)
         camera.addAction(UIAction { [weak self] _ in self?.model.toggleCamera() }, for: .touchUpInside)
         mic.addAction(UIAction { [weak self] _ in self?.model.toggleMic() }, for: .touchUpInside)
         flip.addAction(UIAction { [weak self] _ in self?.model.flipCamera() }, for: .touchUpInside)
         leave.addAction(UIAction { [weak self] _ in self?.hangUp() }, for: .touchUpInside)
-        speaker.accessibilityLabel = "Speaker"
-        camera.accessibilityLabel = "Camera"
-        mic.accessibilityLabel = "Microphone"
-        flip.accessibilityLabel = "Flip camera"
-        leave.accessibilityLabel = "Leave"
         controls.axis = .horizontal
         controls.distribution = .equalSpacing
+        controls.alignment = .center
         for button in [speaker, camera, mic, flip, leave] {
             controls.addArrangedSubview(button)
         }
@@ -93,6 +95,14 @@ final class CallViewController: UIViewController {
         case .status: syncStatus()
         case let .ended(message, signedOut): finish(message, signedOut: signedOut)
         }
+    }
+
+    /// The room's link, through the system's share sheet (Messages, AirDrop…).
+    private func shareLink() {
+        guard let url = URL(string: model.link) else { return }
+        let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        sheet.popoverPresentationController?.sourceView = invite
+        present(sheet, animated: true)
     }
 
     private func hangUp() {
@@ -180,9 +190,9 @@ final class CallViewController: UIViewController {
     }
 
     private func syncControls() {
-        mic.set(symbol: model.micOn ? "mic.fill" : "mic.slash.fill", lit: !model.micOn)
-        camera.set(symbol: model.cameraOn ? "video.fill" : "video.slash.fill", lit: model.cameraOn)
-        speaker.set(symbol: model.speakerOn ? "speaker.wave.2.fill" : "speaker.fill", lit: model.speakerOn)
+        CallButton.style(mic, symbol: model.micOn ? "mic.fill" : "mic.slash.fill", lit: !model.micOn)
+        CallButton.style(camera, symbol: model.cameraOn ? "video.fill" : "video.slash.fill", lit: model.cameraOn)
+        CallButton.style(speaker, symbol: model.speakerOn ? "speaker.wave.2.fill" : "speaker.fill", lit: model.speakerOn)
         flip.isHidden = !model.cameraOn
         if let tile = tiles["you"] {
             let you = AppEnv.shared.client.account()?.name ?? "You"
@@ -210,8 +220,9 @@ final class CallViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let safe = view.bounds.inset(by: view.safeAreaInsets)
-        nameLabel.frame = CGRect(x: safe.minX + 16, y: safe.minY + 4, width: safe.width - 32, height: 22)
-        statusLabel.frame = CGRect(x: safe.minX + 16, y: nameLabel.frame.maxY, width: safe.width - 32, height: 18)
+        nameLabel.frame = CGRect(x: safe.minX + 60, y: safe.minY + 4, width: safe.width - 120, height: 22)
+        statusLabel.frame = CGRect(x: safe.minX + 60, y: nameLabel.frame.maxY, width: safe.width - 120, height: 18)
+        invite.frame = CGRect(x: safe.maxX - 52, y: safe.minY + 4, width: 40, height: 40)
         let controlsHeight: CGFloat = 60
         controls.frame = CGRect(
             x: safe.minX + 24, y: safe.maxY - controlsHeight - 8,
@@ -282,9 +293,9 @@ final class CallViewController: UIViewController {
 /// camera is off, with a name and a ring while they speak.
 private final class Tile: UIView {
     private let video = VideoView()
-    private let avatar = AvatarView()
+    private let avatar = UIImageView()
     private let label = UILabel()
-    private let labelBack = UIView()
+    private let labelBack = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
     private let mutedIcon = UIImageView(image: UIImage(systemName: "mic.slash.fill"))
     /// The track showing, if any.
     private var track: String?
@@ -296,17 +307,17 @@ private final class Tile: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = Theme.raised
+        backgroundColor = .secondarySystemBackground
         layer.cornerRadius = 18
         layer.cornerCurve = .continuous
         layer.masksToBounds = true
-        layer.borderColor = Theme.speaking.cgColor
+        layer.borderColor = UIColor.systemGreen.cgColor
         video.isHidden = true
-        labelBack.backgroundColor = UIColor.black.withAlphaComponent(0.45)
-        labelBack.layer.cornerRadius = 9
-        label.font = .systemFont(ofSize: 13, weight: .medium)
+        labelBack.layer.cornerRadius = 11
+        labelBack.clipsToBounds = true
+        label.font = .preferredFont(forTextStyle: .footnote)
         label.textColor = .white
-        mutedIcon.tintColor = Theme.danger
+        mutedIcon.tintColor = .systemRed
         mutedIcon.contentMode = .scaleAspectFit
         for view in [video, avatar, labelBack, label, mutedIcon] {
             addSubview(view)
@@ -326,7 +337,7 @@ private final class Tile: UIView {
     func show(name: String, muted: Bool) {
         if label.text != name {
             label.text = name
-            avatar.name = name
+            avatar.image = Avatar.image(name, side: 96)
             setNeedsLayout()
         }
         if mutedIcon.isHidden == muted {
@@ -391,48 +402,46 @@ private final class Tile: UIView {
     }
 }
 
-/// A round call control. Lit (white) says "this is on, and worth noticing".
-private final class RoundButton: UIControl {
-    private let icon = UIImageView()
-    private var symbol: String
-
-    init(symbol: String) {
-        self.symbol = symbol
-        super.init(frame: .zero)
-        isAccessibilityElement = true
-        accessibilityTraits = .button
-        backgroundColor = UIColor.white.withAlphaComponent(0.14)
-        icon.tintColor = .white
-        icon.contentMode = .center
-        icon.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .medium))
-        addSubview(icon)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    override var intrinsicContentSize: CGSize { CGSize(width: 60, height: 60) }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        layer.cornerRadius = bounds.height / 2
-        icon.frame = bounds
-    }
-
-    override var isHighlighted: Bool {
-        didSet { alpha = isHighlighted ? 0.6 : 1 }
-    }
-
-    func tint(background: UIColor, symbol: UIColor) {
-        backgroundColor = background
-        icon.tintColor = symbol
-    }
-
-    func set(symbol: String, lit: Bool) {
-        if symbol != self.symbol {
-            self.symbol = symbol
-            icon.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .medium))
+/// The call's round buttons: the system's button, in the system's material.
+/// Lit (white) says "this is on, and worth noticing"; a colour fills the one
+/// that ends the call.
+private enum CallButton {
+    static func make(_ symbol: String, label: String, side: CGFloat = 60) -> UIButton {
+        let button = UIButton(type: .system)
+        button.accessibilityLabel = label
+        button.translatesAutoresizingMaskIntoConstraints = side == 60 ? false : true
+        if side == 60 {
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: side),
+                button.heightAnchor.constraint(equalToConstant: side),
+            ])
         }
-        tint(background: lit ? .white : UIColor.white.withAlphaComponent(0.14), symbol: lit ? Theme.stage : .white)
+        style(button, symbol: symbol, pointSize: side == 60 ? 21 : 16)
+        return button
+    }
+
+    static func style(
+        _ button: UIButton, symbol: String, lit: Bool = false, fill: UIColor? = nil, pointSize: CGFloat = 21
+    ) {
+        var look: UIButton.Configuration
+        if let fill {
+            look = .filled()
+            look.baseBackgroundColor = fill
+            look.baseForegroundColor = .white
+        } else if lit {
+            look = .filled()
+            look.baseBackgroundColor = .white
+            look.baseForegroundColor = .black
+        } else if #available(iOS 26.0, *) {
+            look = .glass()
+        } else {
+            look = .gray()
+            look.baseBackgroundColor = UIColor.white.withAlphaComponent(0.18)
+            look.baseForegroundColor = .white
+        }
+        look.cornerStyle = .capsule
+        look.image = UIImage(systemName: symbol)
+        look.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
+        button.configuration = look
     }
 }
