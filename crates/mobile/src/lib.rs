@@ -51,10 +51,16 @@ impl std::error::Error for AppError {}
 
 impl From<anyhow::Error> for AppError {
     fn from(error: anyhow::Error) -> Self {
-        let signed_out = error
-            .downcast_ref::<quipcall_core::http::RequestError>()
-            .is_some_and(|e| e.status == 401);
-        let message = format!("{error:#}");
+        let answered = error.downcast_ref::<quipcall_core::http::RequestError>();
+        let signed_out = answered.is_some_and(|e| e.status == 401);
+        // The server never answered (no network, or it's down): say that,
+        // not the transport's own words.
+        let message = if answered.is_none() && quipcall_core::http::transient(&error) {
+            tracing::warn!("request failed: {error:#}");
+            "Can't reach Quipcall. Check your connection and try again.".to_owned()
+        } else {
+            format!("{error:#}")
+        };
         if signed_out {
             Self::SignedOut { message }
         } else {
@@ -76,4 +82,44 @@ fn init_logging() {
             .with_writer(std::io::stderr)
             .try_init();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_server_that_cant_be_reached_is_said_plainly() {
+        // A port nothing listens on.
+        let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let server = format!("http://{}", socket.local_addr().unwrap());
+        drop(socket);
+        let request = quipcall_core::http::request(&server, None, "/rooms", None, "GET");
+        let error = AppError::from(block::on(request).unwrap_err());
+        assert!(matches!(&error, AppError::Failed { .. }));
+        assert_eq!(
+            error.to_string(),
+            "Can't reach Quipcall. Check your connection and try again."
+        );
+    }
+
+    #[test]
+    fn what_the_server_says_is_passed_on() {
+        let refused = quipcall_core::http::RequestError {
+            status: 403,
+            message: "Only the owner can do that".into(),
+        };
+        assert_eq!(
+            AppError::from(anyhow::Error::from(refused)).to_string(),
+            "Only the owner can do that"
+        );
+        let expired = quipcall_core::http::RequestError {
+            status: 401,
+            message: "Sign in to continue".into(),
+        };
+        assert!(matches!(
+            AppError::from(anyhow::Error::from(expired)),
+            AppError::SignedOut { .. }
+        ));
+    }
 }

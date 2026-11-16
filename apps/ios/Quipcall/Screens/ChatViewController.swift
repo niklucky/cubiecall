@@ -3,12 +3,15 @@ import UIKit
 /// A room, as a group chat: oldest on top, newest at the bottom.
 ///
 /// - A call is bracketed by two centred lines: "Call started" and "Call
-///   finished", as a messenger marks its service messages.
+///   finished", as a messenger marks its service messages. The closing one
+///   ends with small symbols for what the call had: a shared screen, a
+///   recording, a transcript.
 /// - What people said (the transcript, when someone's Mac made one) reads as
 ///   chat bubbles: yours on the right, everyone else's on the left under
 ///   their name, a face beside the last of a run.
-/// - Who joined or left, screen shares and recordings are small centred
-///   lines between the bubbles.
+/// - Who joined or left, screen shares, recordings and the transcript
+///   starting are small centred lines between the bubbles, the last three
+///   with their symbol.
 ///
 /// Messages and files will be bubbles here too once Quipcall has them; there
 /// is nothing to type into yet. iOS has no chat-bubble component, so the two
@@ -18,12 +21,15 @@ final class ChatViewController: UIViewController, UITableViewDataSource, UITable
     private let name: String
     private let tableView = UITableView(frame: .zero, style: .plain)
     private var rows: [Row] = []
+    /// Shown at its newest end once, when the list first has its size.
+    private var openedAtEnd = false
 
     private enum Row {
         /// "Today", "Yesterday", "16 Nov": where a new day begins.
         case day(String)
-        /// A centred line: a call starting or finishing, someone joining.
-        case service(String, symbol: String?)
+        /// A centred line: a call starting or finishing (`strong`), someone
+        /// joining. A symbol may lead it, and others close it.
+        case service(String, lead: String?, trail: [String], strong: Bool)
         /// Something said. `first` and `last`: of a run by the same person.
         case said(Moment, first: Bool, last: Bool)
     }
@@ -110,11 +116,13 @@ final class ChatViewController: UIViewController, UITableViewDataSource, UITable
                 day = today
                 rows.append(.day(today))
             }
-            rows.append(.service("Call started · \(Self.time(started))", symbol: "phone.fill"))
+            rows.append(.service(
+                "Call started · \(Self.time(started))", lead: "phone.fill", trail: [], strong: true
+            ))
             let moments = client.callMoments(id: call.id)
             for (index, moment) in moments.enumerated() {
                 guard moment.kind == .said else {
-                    rows.append(.service(moment.event.text, symbol: nil))
+                    rows.append(.service(moment.event.text, lead: Self.symbol(for: moment), trail: [], strong: false))
                     continue
                 }
                 // A run of lines by one person shares a name and a face.
@@ -128,16 +136,31 @@ final class ChatViewController: UIViewController, UITableViewDataSource, UITable
             let ending = call.people.isEmpty
                 ? "Nobody joined · finished \(Self.time(finished))"
                 : "Call finished · \(Self.time(finished)) · \(call.lengthText)"
-            rows.append(.service(ending, symbol: "phone.down.fill"))
+            rows.append(.service(ending, lead: "phone.down.fill", trail: Self.had(moments), strong: true))
         }
         self.rows = rows
         tableView.reloadData()
         showEmptyIfNeeded()
-        // A chat opens at its newest end.
-        if !rows.isEmpty {
-            tableView.layoutIfNeeded()
-            tableView.scrollToRow(at: IndexPath(row: rows.count - 1, section: 0), at: .bottom, animated: false)
+        // A call just ended while the chat was open: show its end.
+        if openedAtEnd {
+            scrollToEnd()
         }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // A chat opens at its newest end. Not before now: until the list
+        // has its size and insets, there's no "end" to scroll to.
+        if !openedAtEnd, tableView.bounds.height > 0 {
+            openedAtEnd = true
+            scrollToEnd()
+        }
+    }
+
+    private func scrollToEnd() {
+        guard !rows.isEmpty else { return }
+        tableView.layoutIfNeeded()
+        tableView.scrollToRow(at: IndexPath(row: rows.count - 1, section: 0), at: .bottom, animated: false)
     }
 
     private func showEmptyIfNeeded() {
@@ -159,6 +182,34 @@ final class ChatViewController: UIViewController, UITableViewDataSource, UITable
         tableView.isHidden = true
     }
 
+    /// Screen shares, recordings and transcripts get their symbol in the
+    /// line; comings and goings stay plain.
+    private static func symbol(for moment: Moment) -> String? {
+        switch moment.kind {
+        case .shareStarted, .shareStopped, .recordingStarted, .recordingStopped,
+             .transcriptStarted, .transcriptStopped:
+            return moment.event.symbol
+        default:
+            return nil
+        }
+    }
+
+    /// What a call had, as symbols for its closing line: a shared screen, a
+    /// recording, a transcript.
+    private static func had(_ moments: [Moment]) -> [String] {
+        var symbols: [String] = []
+        if moments.contains(where: { $0.kind == .shareStarted }) {
+            symbols.append("rectangle.inset.filled.and.person.filled")
+        }
+        if moments.contains(where: { $0.kind == .recordingStarted }) {
+            symbols.append("record.circle")
+        }
+        if moments.contains(where: { $0.kind == .transcriptStarted || $0.kind == .said }) {
+            symbols.append("captions.bubble")
+        }
+        return symbols
+    }
+
     private static func time(_ date: Date) -> String {
         date.formatted(date: .omitted, time: .shortened)
     }
@@ -178,11 +229,11 @@ final class ChatViewController: UIViewController, UITableViewDataSource, UITable
         switch rows[indexPath.row] {
         case let .day(text):
             let cell = tableView.dequeueReusableCell(withIdentifier: "service", for: indexPath) as! ServiceCell
-            cell.show(text, symbol: nil, strong: true)
+            cell.show(text, lead: nil, trail: [], strong: true)
             return cell
-        case let .service(text, symbol):
+        case let .service(text, lead, trail, strong):
             let cell = tableView.dequeueReusableCell(withIdentifier: "service", for: indexPath) as! ServiceCell
-            cell.show(text, symbol: symbol, strong: symbol != nil)
+            cell.show(text, lead: lead, trail: trail, strong: strong)
             return cell
         case let .said(moment, first, last):
             let cell = tableView.dequeueReusableCell(withIdentifier: "bubble", for: indexPath) as! BubbleCell
@@ -227,19 +278,43 @@ private final class ServiceCell: UITableViewCell {
     required init?(coder: NSCoder) { fatalError() }
 
     /// `strong`: a day or a call's edge, which stands out a little more than
-    /// someone joining.
-    func show(_ text: String, symbol: String?, strong: Bool) {
+    /// someone joining. `lead` is a symbol before the words; `trail` are
+    /// symbols after them (what a call had).
+    func show(_ text: String, lead: String?, trail: [String], strong: Bool) {
         let font = UIFont.preferredFont(forTextStyle: .footnote)
         let line = NSMutableAttributedString()
-        if let symbol, let image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(font: font)) {
-            line.append(NSAttributedString(attachment: NSTextAttachment(image: image.withTintColor(.secondaryLabel))))
+        func symbol(_ name: String) -> NSAttributedString? {
+            let configuration = UIImage.SymbolConfiguration(font: font)
+            guard let image = UIImage(systemName: name, withConfiguration: configuration) else { return nil }
+            return NSAttributedString(attachment: NSTextAttachment(image: image.withTintColor(.secondaryLabel)))
+        }
+        if let lead, let mark = symbol(lead) {
+            line.append(mark)
             line.append(NSAttributedString(string: "  "))
         }
         line.append(NSAttributedString(string: text))
+        for (index, name) in trail.enumerated() {
+            guard let mark = symbol(name) else { continue }
+            line.append(NSAttributedString(string: index == 0 ? "  ·  " : "  "))
+            line.append(mark)
+        }
         label.font = strong ? font.bold : font
         label.textColor = .secondaryLabel
         label.attributedText = line
+        label.accessibilityLabel = trail.isEmpty ? text : text + ", " + Self.spoken(trail)
         pill.backgroundColor = strong ? .tertiarySystemFill : .clear
+    }
+
+    /// The closing symbols, in words, for VoiceOver.
+    private static func spoken(_ symbols: [String]) -> String {
+        let words = symbols.map { symbol -> String in
+            switch symbol {
+            case "record.circle": return "recorded"
+            case "captions.bubble": return "transcribed"
+            default: return "a screen was shared"
+            }
+        }
+        return ListFormatter.localizedString(byJoining: words)
     }
 }
 

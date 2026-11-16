@@ -138,7 +138,7 @@ The iPhone app looks like iOS, not like the Mac app: the system's lists, search 
 
 - A day's name where a new day begins, and around each call two centred lines: "Call started · 21:44" and "Call finished · 21:45 · 33 sec" (or that nobody joined).
 - What was said, when someone's Mac transcribed the call, as chat bubbles: yours on the right in the tint colour, everyone else's on the left in grey, under their name in their own colour, with a face beside the last bubble of a run. Each has its time and a small captions mark: it was transcribed, not typed.
-- Who joined or left, who started or stopped sharing a screen or recording, and the transcript starting and stopping, as small centred grey lines between the bubbles.
+- Who joined or left, who started or stopped sharing a screen or recording, and the transcript starting and stopping, as small centred grey lines between the bubbles; the share, recording and transcript lines lead with their symbol. The "Call finished" line ends with the same three symbols for whichever of them the call had, so a call can be sized up without reading it.
 
 There's nothing to type into yet: messages and files will be bubbles in the same chat once Quipcall has them, and a recording is only a line, since the file stays on the recorder's Mac. Bubbles are the one thing here iOS has no component for, so those two cells are ours, in the system's colours and type.
 
