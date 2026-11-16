@@ -99,8 +99,8 @@ const TAB_STEP: f32 = 15.0;
 /// down at the top or bottom. In the inner one it tucks into the edge.
 const TURN: f64 = 0.10;
 const TUCK: f64 = 0.05;
-/// A drop is for an edge only after the drag went this far towards it: a
-/// pill parked by an edge slides along it, or away from it, as it is.
+/// A drop is for an edge only after the drag came this far towards it: a
+/// pill standing by an edge slides along it, or comes away from it, as it is.
 const PUSH: f64 = 20.0;
 /// What the pill keeps from the screen's edges when a drop places it.
 const MARGIN: f64 = 8.0;
@@ -181,6 +181,38 @@ enum Edge {
     Right,
     Top,
     Bottom,
+}
+
+impl Edge {
+    /// The left or the right: where the pill stands as a column.
+    fn side(self) -> bool {
+        matches!(self, Edge::Left | Edge::Right)
+    }
+}
+
+/// How a drag of the pill went: where the cursor was when it began, and how
+/// far it has been each way since.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Drag {
+    start: (f64, f64),
+    min: (f64, f64),
+    max: (f64, f64),
+}
+
+impl Drag {
+    fn new(start: (f64, f64)) -> Self {
+        Self {
+            start,
+            min: start,
+            max: start,
+        }
+    }
+
+    fn through(mut self, p: (f64, f64)) -> Self {
+        self.min = (self.min.0.min(p.0), self.min.1.min(p.1));
+        self.max = (self.max.0.max(p.0), self.max.1.max(p.1));
+        self
+    }
 }
 
 /// What dropping the pill here makes of it.
@@ -1240,12 +1272,14 @@ impl Capsule {
         let start = mac::cursor();
         self.drag_task = Some(cx.spawn(async move |this, cx| {
             let (mut moved, mut last, mut still) = (false, start, Duration::ZERO);
+            let mut drag = Drag::new(start);
             loop {
                 cx.background_executor().timer(DRAG_POLL).await;
                 let done = this.update(cx, |this, cx| {
                     let p = mac::cursor();
+                    drag = drag.through(p);
                     moved |= (p.0 - start.0).hypot(p.1 - start.1) > 4.0;
-                    let zone = moved.then(|| this.zone_at(p, Some(start), cx)).flatten();
+                    let zone = moved.then(|| this.zone_at(p, Some(&drag), cx)).flatten();
                     if !mac::mouse_down() {
                         this.show_ghost(None, cx);
                         if let Some(zone) = zone {
@@ -1284,8 +1318,8 @@ impl Capsule {
     }
 
     /// What a drop with the cursor at `p` makes of the pill, if anything.
-    /// `from` is where the drag began.
-    fn zone_at(&self, p: (f64, f64), from: Option<(f64, f64)>, cx: &App) -> Option<Zone> {
+    /// `drag` is how the cursor got there; a script drops with none.
+    fn zone_at(&self, p: (f64, f64), drag: Option<&Drag>, cx: &App) -> Option<Zone> {
         // The screen under the cursor, not the one most of the window is
         // still on: a pill on its way to another display belongs there.
         let (v, whole) = mac::screen_at(p).or_else(|| {
@@ -1302,13 +1336,14 @@ impl Capsule {
             };
             mac::screen_at(past).is_none()
         };
-        let (edge, tuck) = edge_for(p, from, &v, open)?;
-        let column = matches!(edge, Edge::Left | Edge::Right);
         let plan = self.plan(cx);
+        let now = self.pill_rect(&plan, self.corner()?.0);
+        let (edge, tuck) = edge_for(p, drag, &now, &v, &whole, open)?;
+        let column = edge.side();
         let (main, len) = (MAIN as f64, pill_len(&plan, column) as f64);
         // A pill that already lies this way keeps its place along the edge;
         // one that turns comes out under the cursor.
-        let here = (self.column == column)
+        let here = (self.column == column && self.tucked.is_none())
             .then(|| self.corner())
             .flatten()
             .map(|(corner, _)| corner);
@@ -1358,8 +1393,8 @@ impl Capsule {
                 pill: tab_rect(edge, corner, len, plan.faces.len(), v),
             });
         }
-        // Standing there already.
-        if here.is_some_and(|c| (c.0 - corner.0).abs() < 1.0 && (c.1 - corner.1).abs() < 1.0) {
+        // Standing there already, or as good as.
+        if here.is_some_and(|c| (c.0 - corner.0).abs() < 4.0 && (c.1 - corner.1).abs() < 4.0) {
             return None;
         }
         Some(Zone {
@@ -1757,36 +1792,91 @@ fn ghost_radius(frame: &Rect) -> f64 {
 }
 
 /// The edge a drop with the cursor at `p` is for, and whether it's deep
-/// enough to tuck there. `from` is where the drag began: unless it went
-/// [`PUSH`] towards the edge, the drop is for none. By a corner, the edge the
-/// cursor is deeper into counts, and the other doesn't.
+/// enough to tuck there. `visible` is the screen without its menu bar and
+/// Dock, `whole` all of it; `pill` is the pill's outline where it is now.
+///
+/// A pill dragged from beside an edge it lies along (its home) is still
+/// inside that edge's band, and by a corner inside the next one's too. So it
+/// stays with its home: pushed [`PUSH`] into it, the drop is for that edge;
+/// slid along it, for none, unless the pill itself was pushed out over the
+/// edge at the end of the slide. Come away from its home, the pill is any
+/// other edge's whose band the cursor is in, the one it's deeper into (as a
+/// share of the band) if there are two, once the cursor has come [`PUSH`]
+/// back towards that edge from the furthest it was from it.
 fn edge_for(
     p: (f64, f64),
-    from: Option<(f64, f64)>,
+    drag: Option<&Drag>,
+    pill: &Rect,
     visible: &Rect,
+    whole: &Rect,
     open: impl Fn(Edge) -> bool,
 ) -> Option<(Edge, bool)> {
     let v = visible;
-    let (turn_x, turn_y) = (v.w * TURN, v.h * TURN);
-    // How far into its band the cursor is (0 at the edge, 1 where the band
-    // ends), and how far the drag went towards the edge.
-    let (edge, depth, pushed) = [
-        (Edge::Left, (p.0 - v.x) / turn_x, from.map(|f| f.0 - p.0)),
-        (
-            Edge::Right,
-            (v.right() - p.0) / turn_x,
-            from.map(|f| p.0 - f.0),
-        ),
-        (Edge::Bottom, (p.1 - v.y) / turn_y, from.map(|f| f.1 - p.1)),
-        (Edge::Top, (v.top() - p.1) / turn_y, from.map(|f| p.1 - f.1)),
-    ]
-    .into_iter()
-    .filter(|(edge, depth, _)| *depth < 1.0 && open(*edge))
-    .min_by(|a, b| a.1.total_cmp(&b.1))?;
-    if pushed.is_some_and(|d| d < PUSH) {
-        return None;
+    let column = pill.h > pill.w;
+    // How far a point is from an edge, and that as a share of the edge's
+    // band: 0 at the edge, 1 where the band ends.
+    let from = |q: (f64, f64), edge: Edge| match edge {
+        Edge::Left => q.0 - v.x,
+        Edge::Right => v.right() - q.0,
+        Edge::Bottom => q.1 - v.y,
+        Edge::Top => v.top() - q.1,
+    };
+    let depth =
+        |q: (f64, f64), edge: Edge| from(q, edge) / (TURN * if edge.side() { v.w } else { v.h });
+    // The cursor came `PUSH` towards the edge from `far` away; or any way at
+    // all, where the screen ends and it can go no further.
+    let pushed = |edge: Edge, far: f64| {
+        let by = far - from(p, edge);
+        let stopped = match edge {
+            Edge::Left => p.0 - whole.x,
+            Edge::Right => whole.right() - p.0,
+            Edge::Bottom => p.1 - whole.y,
+            Edge::Top => whole.top() - p.1,
+        } <= 2.0;
+        by >= PUSH || (stopped && by > 0.0)
+    };
+    let found = |edge: Edge| Some((edge, depth(p, edge) < TUCK / TURN));
+    let edges = [Edge::Left, Edge::Right, Edge::Bottom, Edge::Top];
+    let home = drag.and_then(|drag| {
+        edges
+            .into_iter()
+            .find(|edge| edge.side() == column && depth(drag.start, *edge) < 1.0 && open(*edge))
+            .map(|edge| (edge, from(drag.start, edge)))
+    });
+    if let Some((home, was)) = home {
+        if pushed(home, was) {
+            return found(home);
+        }
+        if from(p, home) < was + PUSH {
+            let over = |edge: Edge| match edge {
+                Edge::Left => v.x - pill.x,
+                Edge::Right => pill.right() - v.right(),
+                Edge::Bottom => v.y - pill.y,
+                Edge::Top => pill.top() - v.top(),
+            };
+            return edges
+                .into_iter()
+                .filter(|edge| *edge != home && depth(p, *edge) < 1.0 && open(*edge))
+                .filter(|edge| over(*edge) >= PUSH)
+                .max_by(|a, b| over(*a).total_cmp(&over(*b)))
+                .and_then(found);
+        }
     }
-    Some((edge, depth < TUCK / TURN))
+    let edge = edges
+        .into_iter()
+        .filter(|edge| home.is_none_or(|(home, _)| home != *edge))
+        .filter(|edge| depth(p, *edge) < 1.0 && open(*edge))
+        .min_by(|a, b| depth(p, *a).total_cmp(&depth(p, *b)))?;
+    if let Some(drag) = drag {
+        let furthest = match edge {
+            Edge::Left | Edge::Bottom => drag.max,
+            Edge::Right | Edge::Top => drag.min,
+        };
+        if !pushed(edge, from(furthest, edge)) {
+            return None;
+        }
+    }
+    found(edge)
 }
 
 /// The tab for a pill tucked into `edge`, by where the pill (its
@@ -3341,41 +3431,161 @@ mod tests {
         assert_eq!((tab.x, tab.top()), (0.0, 860.0));
     }
 
+    /// [`SCREEN`] with its menu bar and the Dock.
+    const WHOLE: Rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 1440.0,
+        h: 900.0,
+    };
+
+    /// Where a drop is for, after a drag through these points of a pill
+    /// that was at `pill` when it began. The bands are 144 deep at the sides
+    /// and 80 at the top and bottom (from y 60 to 860), tucking in the inner
+    /// half.
+    fn dropped(pill: Rect, path: &[(f64, f64)]) -> Option<(Edge, bool)> {
+        let (start, p) = (path[0], *path.last().unwrap());
+        let drag = path.iter().fold(Drag::new(start), |d, p| d.through(*p));
+        let pill = Rect {
+            x: pill.x + p.0 - start.0,
+            y: pill.y + p.1 - start.1,
+            ..pill
+        };
+        edge_for(p, Some(&drag), &pill, &SCREEN, &WHOLE, |_| true)
+    }
+
+    /// A pill 280 long, lying with its left end at `x` and its foot at `y`,
+    /// or standing as a column.
+    fn lying(x: f64, y: f64) -> Rect {
+        Rect {
+            x,
+            y,
+            w: 280.0,
+            h: 52.0,
+        }
+    }
+
+    fn standing(x: f64, y: f64) -> Rect {
+        Rect {
+            x,
+            y,
+            w: 52.0,
+            h: 280.0,
+        }
+    }
+
     #[test]
-    fn a_drop_is_for_the_edge_the_drag_went_to() {
-        // 1440 x 800 from y 60: bands 144 deep at the sides and 80 at the
-        // top and bottom, tucking in the inner half.
-        let all = |_| true;
-        let middle = Some((700.0, 400.0));
-        let at = |p, from| edge_for(p, from, &SCREEN, all);
-        assert_eq!(at((700.0, 400.0), middle), None);
-        assert_eq!(at((1300.0, 400.0), middle), Some((Edge::Right, false)));
-        assert_eq!(at((1400.0, 400.0), middle), Some((Edge::Right, true)));
-        assert_eq!(at((100.0, 400.0), middle), Some((Edge::Left, false)));
-        assert_eq!(at((700.0, 130.0), middle), Some((Edge::Bottom, false)));
-        assert_eq!(at((700.0, 90.0), middle), Some((Edge::Bottom, true)));
-        assert_eq!(at((700.0, 800.0), middle), Some((Edge::Top, false)));
-        // Over the Dock, past what's visible of the screen.
-        assert_eq!(at((700.0, 20.0), middle), Some((Edge::Bottom, true)));
-        // A pill parked at the bottom slides along it, and comes away,
-        // without tucking: only pushed into the edge it does.
-        let parked = Some((700.0, 98.0));
-        assert_eq!(at((300.0, 92.0), parked), None);
-        assert_eq!(at((700.0, 125.0), parked), None);
-        assert_eq!(at((700.0, 76.0), parked), Some((Edge::Bottom, true)));
-        // By a corner the edge the cursor is deeper into counts: slid along
-        // the bottom to the right, the pill is still the bottom's.
-        assert_eq!(at((1340.0, 98.0), parked), None);
-        assert_eq!(at((1420.0, 98.0), parked), Some((Edge::Right, true)));
+    fn a_drop_is_for_the_edge_the_drag_came_to() {
+        // From the middle of the screen, held by its middle.
+        let (pill, middle) = (lying(560.0, 374.0), (700.0, 400.0));
+        assert_eq!(dropped(pill, &[middle, (700.0, 300.0)]), None);
+        let to = |p| dropped(pill, &[middle, p]);
+        assert_eq!(to((1300.0, 400.0)), Some((Edge::Right, false)));
+        assert_eq!(to((1400.0, 400.0)), Some((Edge::Right, true)));
+        assert_eq!(to((100.0, 400.0)), Some((Edge::Left, false)));
+        assert_eq!(to((700.0, 130.0)), Some((Edge::Bottom, false)));
+        assert_eq!(to((700.0, 90.0)), Some((Edge::Bottom, true)));
+        assert_eq!(to((700.0, 800.0)), Some((Edge::Top, false)));
+        // Over the Dock and the menu bar, past what's visible of the screen.
+        assert_eq!(to((700.0, 20.0)), Some((Edge::Bottom, true)));
+        assert_eq!(to((700.0, 880.0)), Some((Edge::Top, true)));
+        // By a corner, the edge the cursor is deeper into its band.
+        assert_eq!(to((60.0, 110.0)), Some((Edge::Left, true)));
+        assert_eq!(to((120.0, 80.0)), Some((Edge::Bottom, true)));
         // Where another display begins is no edge.
         let no_right = |edge| edge != Edge::Right;
-        assert_eq!(edge_for((1400.0, 400.0), middle, &SCREEN, no_right), None);
-        assert_eq!(
-            edge_for((1400.0, 130.0), middle, &SCREEN, no_right),
-            Some((Edge::Bottom, false))
-        );
+        let drag = Drag::new(middle);
+        let at = |p| edge_for(p, Some(&drag.through(p)), &pill, &SCREEN, &WHOLE, no_right);
+        assert_eq!(at((1400.0, 400.0)), None);
+        assert_eq!(at((1400.0, 130.0)), Some((Edge::Bottom, false)));
         // A script drops with no drag behind it.
-        assert_eq!(at((1300.0, 400.0), None), Some((Edge::Right, false)));
+        assert_eq!(
+            edge_for((1300.0, 400.0), None, &pill, &SCREEN, &WHOLE, |_| true),
+            Some((Edge::Right, false))
+        );
+    }
+
+    #[test]
+    fn a_pill_by_an_edge_stays_with_it() {
+        // Lying at the bottom, held by its middle 38 over the edge. It slides
+        // along the edge and comes away without tucking; pushed into the
+        // edge, it tucks.
+        let (pill, held) = (lying(560.0, 72.0), (700.0, 98.0));
+        assert_eq!(dropped(pill, &[held, (300.0, 92.0)]), None);
+        assert_eq!(dropped(pill, &[held, (700.0, 125.0)]), None);
+        assert_eq!(
+            dropped(pill, &[held, (700.0, 76.0)]),
+            Some((Edge::Bottom, true))
+        );
+        // Taken away and brought back to about where it was: as it is.
+        assert_eq!(dropped(pill, &[held, (600.0, 400.0), (650.0, 90.0)]), None);
+        // Taken from the bottom to a side, it's the side's.
+        assert_eq!(
+            dropped(pill, &[held, (1400.0, 400.0)]),
+            Some((Edge::Right, true))
+        );
+        // Slid along the bottom into a corner, by the end that gets there
+        // first: it lies in the corner, though the cursor is in the side's
+        // band, and the inner half of it at that.
+        assert_eq!(dropped(pill, &[(590.0, 98.0), (38.0, 98.0)]), None);
+        assert_eq!(dropped(pill, &[(810.0, 98.0), (1402.0, 98.0)]), None);
+        // Slid on until it hangs out over the side, it's the side's.
+        assert_eq!(
+            dropped(pill, &[held, (1372.0, 98.0)]),
+            Some((Edge::Right, true))
+        );
+        assert_eq!(
+            dropped(pill, &[held, (100.0, 98.0)]),
+            Some((Edge::Left, false))
+        );
+    }
+
+    #[test]
+    fn a_pill_in_a_corner_is_not_the_other_edges() {
+        // Lying in the bottom right corner, held by its right end.
+        let (pill, held) = (lying(1152.0, 72.0), (1410.0, 98.0));
+        // Lifted straight up along the side: it only moved.
+        assert_eq!(dropped(pill, &[held, (1410.0, 300.0)]), None);
+        // Out from the side and back to it: a column.
+        assert_eq!(
+            dropped(pill, &[held, (1250.0, 300.0), (1320.0, 300.0)]),
+            Some((Edge::Right, false))
+        );
+        // A column at the right, held by its foot, slides down into the
+        // corner as it is, and tucks pushed into its side.
+        let (pill, held) = (standing(1380.0, 260.0), (1410.0, 290.0));
+        assert_eq!(dropped(pill, &[held, (1410.0, 100.0)]), None);
+        assert_eq!(
+            dropped(pill, &[held, (1432.0, 290.0)]),
+            Some((Edge::Right, true))
+        );
+    }
+
+    #[test]
+    fn a_push_is_as_far_as_the_screen_goes() {
+        // A column at the left, held 12 from where the screen ends: there's
+        // no 20 to push, so any push to the very edge counts.
+        let (pill, held) = (standing(8.0, 260.0), (12.0, 400.0));
+        assert_eq!(dropped(pill, &[held, (6.0, 400.0)]), None);
+        assert_eq!(
+            dropped(pill, &[held, (1.0, 400.0)]),
+            Some((Edge::Left, true))
+        );
+        // The same for a pill lying on the screen's very bottom: the Dock is
+        // elsewhere, so what's visible ends where the screen does.
+        let whole = Rect { y: 60.0, ..WHOLE };
+        let drag = Drag::new((700.0, 78.0)).through((700.0, 61.0));
+        assert_eq!(
+            edge_for(
+                (700.0, 61.0),
+                Some(&drag),
+                &lying(560.0, 55.0),
+                &SCREEN,
+                &whole,
+                |_| true
+            ),
+            Some((Edge::Bottom, true))
+        );
     }
 
     #[test]
