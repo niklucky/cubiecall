@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="227.64 227.64 798.72 798.72" role="img" aria-labelledby="quby-title quby-description">
+  <title id="quby-title">Quby</title>
+  <desc id="quby-description">A softly rounded pastel cube with a black face and two ivory pill eyes. Transparent background.</desc>
+  <defs>
+    <path id="quby-body" d="M 575,252 C 609,232 641,232 676,252 L 925,397 C 966,421 980,452 980,504 L 980,770 C 980,818 968,844 929,868 L 678,1000 C 643,1020 610,1021 575,1003 L 327,861 C 288,839 273,811 273,763 L 273,501 C 273,453 286,423 326,399 Z"/>
+    <clipPath id="quby-body-clip"><use href="#quby-body"/></clipPath>
+    <linearGradient id="quby-base" x1="626" y1="237" x2="626" y2="1016" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#cbdcff"/>
+      <stop offset="0.43" stop-color="#e2e3f4"/>
+      <stop offset="1" stop-color="#ffe7f5"/>
+    </linearGradient>
+    <radialGradient id="quby-ivory" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(283 509) scale(437 449)">
+      <stop offset="0.05" stop-color="#ffffe9"/>
+      <stop offset="0.38" stop-color="#ffffe9" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#ffffe9" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="quby-blue" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(764 370) scale(371 324)">
+      <stop stop-color="#c6d7ff" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#c6d7ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="quby-peach" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(977 839) scale(475 471)">
+      <stop stop-color="#ffe0cf"/>
+      <stop offset="0.42" stop-color="#ffe0cf" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#ffe0cf" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="quby-pink" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(353 866) scale(390 340)">
+      <stop stop-color="#ffe5fc" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#ffe5fc" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="quby-face-fill" x1="330" y1="525" x2="565" y2="860" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#101112"/>
+      <stop offset="1" stop-color="#050506"/>
+    </linearGradient>
+  </defs>
+  <g id="quby-character">
+    <use href="#quby-body" fill="url(#quby-base)"/>
+    <g clip-path="url(#quby-body-clip)">
+      <path d="M273 237H981V1017H273Z" fill="url(#quby-ivory)"/>
+      <path d="M273 237H981V1017H273Z" fill="url(#quby-blue)"/>
+      <path d="M273 237H981V1017H273Z" fill="url(#quby-peach)"/>
+      <path d="M273 237H981V1017H273Z" fill="url(#quby-pink)"/>
+    </g>
+    <path id="quby-face" fill="url(#quby-face-fill)" d="M 358,520 L 551,631 C 575,645 586,666 586,696 L 586,820 C 586,862 561,882 531,864 L 347,759 C 323,745 311,724 311,694 L 311,559 C 311,525 331,507 358,520 Z"/>
+    <g id="quby-eyes" fill="#ffffeb">
+      <path id="quby-eye-left" d="M 391,605 C 403,610 413,627 413,644 L 413,695 C 413,716 404,726 392,719 C 380,713 372,699 372,682 L 372,629 C 372,609 380,599 391,605 Z"/>
+      <path id="quby-eye-right" d="M 490,656 C 503,662 512,677 512,695 L 512,745 C 512,765 503,776 491,769 C 479,763 471,748 471,731 L 471,679 C 471,660 479,650 490,656 Z"/>
+    </g>
+  </g>
+</svg>
