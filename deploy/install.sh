@@ -32,10 +32,6 @@ activate_site() (
     if [ "$2" = final ] && [ -L "$OLD_SITE" ]; then
         old_link=$(readlink "$OLD_SITE")
     fi
-    if [ "$phase" != publishing ] && cmp -s "$source" "$SITE" && [ -L "$ENABLED_SITE" ] && [ -z "$old_link" ]; then
-        return
-    fi
-
     backup="$STAGE/previous-site"
     rm -f "$backup"
     if [ -f "$SITE" ]; then cp "$SITE" "$backup"; fi
@@ -89,7 +85,8 @@ if [ -d "$OLD_STATE" ]; then
             *) echo "Both $OLD_STATE and $STATE exist. Reconcile them before deploying." >&2; exit 1 ;;
         esac
     fi
-    if [ ! -e "$STATE" ] || [ "$phase" = unpublished ]; then
+    if [ ! -e "$STATE" ] || [ "$phase" = unpublished ] ||
+       { [ "$phase" = publishing ] && [ -L "$OLD_SITE" ]; }; then
         upgrade=1
         for suffix in '' -wal -shm -journal; do
             if [ -e "$OLD_STATE/cubie.db$suffix" ]; then
@@ -161,6 +158,7 @@ if [ -n "$upgrade" ]; then
     # Keep the legacy database and services recoverable until nginx publishes
     # the healthy candidate. Its API uses a separate loopback port, so the
     # old site cannot send writes to a candidate we might discard.
+    touch "$ROOT/.cutover-pending"
     services="$ROOT/.legacy-services"
     if [ ! -f "$services" ]; then
         : > "$services.new"
@@ -180,7 +178,7 @@ if [ -n "$upgrade" ]; then
                 systemctl disable --now cubie-server cubie-livekit || true
                 if [ -f "$STATE/.from-quipcall" ]; then rm -rf "$STATE"; fi
                 while read -r action unit; do systemctl "$action" "$unit"; done < "$services"
-                rm -f "$services"
+                rm -f "$services" "$ROOT/.cutover-pending"
                 echo "Cubie cutover failed. Restored the previous services." >&2
             fi
         fi
@@ -252,8 +250,8 @@ trap - EXIT HUP INT TERM
 if [ "$phase" = publishing ]; then
     echo live > "$STATE/.from-quipcall.new"
     mv "$STATE/.from-quipcall.new" "$STATE/.from-quipcall"
-    rm -f "$ROOT/.legacy-services"
 fi
+rm -f "$ROOT/.legacy-services" "$ROOT/.cutover-pending"
 eventually curl -fsS --resolve $DOMAIN:443:127.0.0.1 https://$DOMAIN/api/health || {
 	echo "https://$DOMAIN/api/health failed" >&2
 	journalctl -u cubie-server -n 30 --no-pager

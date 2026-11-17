@@ -33,7 +33,7 @@ for unit in "$@"; do
         disable) rm -f "/mock/units/$unit.enabled"; if [ "${1:-}" = --now ]; then rm -f "/mock/units/$unit.active"; fi ;;
         start|restart) touch "/mock/units/$unit.active"; echo "$action $unit" >>/mock/service-log ;;
         stop) rm -f "/mock/units/$unit.active" ;;
-        reload) test ! -e /mock/fail-nginx ;;
+        reload) test ! -e /mock/fail-nginx || exit 1; echo reload >> /mock/service-log ;;
         *) exit 1 ;;
     esac
 done
@@ -43,6 +43,14 @@ cat >/mock/bin/curl <<'SH'
 #!/bin/sh
 case "$*" in *4601/api/health*) test ! -e /mock/fail-api ;; *) exit 0 ;; esac
 SH
+cat >/mock/bin/mv <<'SH'
+#!/bin/sh
+/bin/mv "$@" || exit 1
+if [ "$2" = /var/lib/cubie/.from-quipcall ] && [ -e /mock/kill-at-publishing ]; then
+    kill -KILL "$PPID"
+fi
+SH
+chmod +x /mock/bin/mv
 for name in nginx certbot sleep journalctl; do ln -s /bin/true "/mock/bin/$name"; done
 chmod +x /mock/bin/systemctl /mock/bin/curl /opt/cubie/bin/livekit-server
 export PATH=/mock/bin:$PATH
@@ -76,6 +84,15 @@ for failure in api nginx; do
     rm "/mock/fail-$failure"
 done
 
+touch /mock/kill-at-publishing
+must_fail
+rm /mock/kill-at-publishing
+test "$(cat /var/lib/cubie/.from-quipcall)" = publishing
+touch /mock/fail-nginx
+must_fail
+legacy_active
+rm /mock/fail-nginx
+
 install_app
 test ! -e /etc/nginx/sites-enabled/quipcall.com.conf
 test "$(cat /var/lib/cubie/.from-quipcall)" = live
@@ -98,6 +115,8 @@ grep -qx 'restart cubie-livekit' /mock/service-log
 : >/mock/service-log
 install_app
 grep -qx 'start cubie-livekit' /mock/service-log
+grep -qx reload /mock/service-log
+test ! -e /opt/cubie/.cutover-pending
 python3 - <<'PY'
 import sqlite3
 with sqlite3.connect('/var/lib/cubie/cubie.db') as db:

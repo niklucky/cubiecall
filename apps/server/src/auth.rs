@@ -521,7 +521,8 @@ async fn deliver_link(s: &AppState, mail: &QueuedMail) -> Result<()> {
         .as_deref()
         .filter(|origin| s.config.trusts_origin(origin))
         .unwrap_or(&s.config.public_url);
-    let url = format!("{origin}/#magic={token}");
+    // This landing path also works when the legacy tab has no cookie yet.
+    let url = format!("{origin}/signin#magic={token}");
     if let Err(e) = send(s, email, &url).await {
         // A timeout can happen after provider acceptance. Keep this token
         // valid, and count the attempt, so a late email works and ambiguous

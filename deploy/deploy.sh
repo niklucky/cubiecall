@@ -31,4 +31,7 @@ COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C "$bundle" -czf - . |
         stage=$(mktemp -d /opt/cubie-incoming.XXXXXX)
         trap "rm -rf -- \"$stage\"" EXIT
         tar -xzf - -C "$stage"
-        flock /run/lock/cubie-deploy.lock sh "$stage/deploy/install.sh"'
+        status=0
+        flock /run/lock/cubie-deploy.lock sh "$stage/deploy/install.sh" >"$stage/install.log" 2>&1 || status=$?
+        cat "$stage/install.log"
+        exit "$status"'

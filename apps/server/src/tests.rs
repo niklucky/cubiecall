@@ -646,7 +646,7 @@ async fn email_signin_returns_to_the_requesting_browser_origin() {
         assert!(
             message
                 .lines()
-                .any(|line| line.starts_with(&format!("{origin}/#magic=")))
+                .any(|line| line.starts_with(&format!("{origin}/signin#magic=")))
         );
     }
 }

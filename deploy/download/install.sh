@@ -23,21 +23,9 @@ if [ -e "$dest/Cubie.app" ] && [ "$(bundle_id "$dest/Cubie.app")" != com.quipcal
     exit 1
 fi
 
-# Stage beside the destination so both the replacement and rollback are renames.
+# Stage on the destination volume so macOS can atomically replace the bundle.
 tmp=$(mktemp -d "$dest/.cubie-install.XXXXXX")
-cleanup() {
-    status=$?
-    trap - EXIT HUP INT TERM
-    if [ -d "$tmp/previous.app" ] && [ ! -e "$dest/Cubie.app" ]; then
-        mv "$tmp/previous.app" "$dest/Cubie.app" || {
-            echo "Previous installation saved at $tmp/previous.app" >&2
-            exit 1
-        }
-    fi
-    rm -rf "$tmp"
-    exit "$status"
-}
-trap cleanup EXIT
+trap 'rm -rf "$tmp"' EXIT
 trap 'exit 1' HUP INT TERM
 echo "Downloading Cubie…"
 curl -fL --progress-bar "$URL" -o "$tmp/Cubie.zip"
@@ -60,9 +48,21 @@ if [ -d "$dest/Cubie.app" ] && pgrep -xq Cubie; then
 	sleep 1
 fi
 if [ -d "$dest/Cubie.app" ]; then
-    mv "$dest/Cubie.app" "$tmp/previous.app"
+    /usr/bin/osascript -l JavaScript - "$dest/Cubie.app" "$tmp/Cubie.app" <<'JS'
+ObjC.import('Foundation');
+function run(paths) {
+    const url = path => $.NSURL.fileURLWithPath(path);
+    const error = Ref();
+    // NSFileManagerItemReplacementUsingNewMetadataOnly preserves the signed bundle.
+    const replaced = $.NSFileManager.defaultManager.replaceItemAtURLWithItemAtURLBackupItemNameOptionsResultingItemURLError(
+        url(paths[0]), url(paths[1]), $(), 1, Ref(), error
+    );
+    if (!replaced) throw Error(ObjC.unwrap(error[0].localizedDescription));
+}
+JS
+else
+    mv "$tmp/Cubie.app" "$dest/Cubie.app"
 fi
-mv "$tmp/Cubie.app" "$dest/Cubie.app"
 if [ "$legacy_id" = com.quipcall.desktop ]; then
     rm -rf "$legacy"
 fi

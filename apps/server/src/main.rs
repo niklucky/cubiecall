@@ -170,9 +170,20 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
     let state = AppState::new(Config::from_env()?).await?;
-    tokio::spawn(auth::mail_worker(state.clone()));
-    let _cleanup = start_cleanup(state.clone());
     let listener = tokio::net::TcpListener::bind(&state.config.bind).await?;
+    let workers = state.clone();
+    tokio::spawn(async move {
+        // During the first cutover this DB is an unpublished copy. Sending
+        // mail or cleaning live rooms now would leak effects across rollback.
+        if let Some(path) = std::env::var_os("CUBIE_WORKER_HOLD") {
+            let path = std::path::Path::new(&path);
+            while path.try_exists().unwrap_or(true) {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+        let _cleanup = start_cleanup(workers.clone());
+        auth::mail_worker(workers).await;
+    });
     tracing::info!("listening on {}", listener.local_addr()?);
     axum::serve(listener, router(state)).await?;
     Ok(())
