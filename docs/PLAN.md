@@ -7,7 +7,7 @@ How to read this file:
 - Each stage ends with **Done when**: the checks that have to pass before we cross it out.
 - Decisions and the reasoning behind them live in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Current focus:** Stage 2 — Call UI (Stage 1 waits on a manual test of camera, speaker and screen share). An early alpha (Stage 7, partly) runs at https://quipcall.com so friends can test calls.
+**Current focus:** Stage 2 — Call UI (Stage 1 waits on a manual test of camera, speaker and screen share). An early alpha (Stage 7, partly) runs at https://quipcall.com so friends can test calls. The phone apps have their own stages, [Mobile](#mobile-ios-first-then-android) below: iOS first (M0, the media spike, is built and waits on a real iPhone), then Android.
 
 ---
 
@@ -209,6 +209,123 @@ Started early (2026-11-03), ahead of Stages 3–6, with open room links. Invite-
 
 **Done when:** a summary of a test call is generated and visible on both desktop and web.
 
+## Mobile (iOS first, then Android)
+
+Native apps: Swift and UIKit on iOS, Kotlin on Android, both thin views over the desktop's call engine (`crates/core`) through `crates/mobile`. Decisions: [ARCHITECTURE.md](ARCHITECTURE.md#mobile-ios-first-then-android). The look is the system's own (its lists, bars, buttons and colours, light or dark as the phone is set); the shape is a messenger's, with Telegram as the model: four tabs, Calls, Rooms, Contacts and Settings. Rooms are its groups, contacts are for personal calls. We finish iOS (build, tune, test) before starting Android.
+
+### Mobile budget
+
+Set to the least we think can work. We raise a line only when a real call hits it, and write down why. Measured on a real iPhone, release build (`docs/FOOTPRINT.md`); the first numbers are from the Simulator and only show the direction.
+
+| Metric | Limit | So far (Simulator, 2026-11-16) |
+|---|---|---|
+| App on the phone (arm64, stripped) | ≤ 20 MB | 18.3 MB |
+| On the list, signed in | ≤ 30 MB, 0% CPU, nothing on a timer | 34 MB with the test runner attached |
+| Audio call | ≤ 40 MB, ≤ 5% of one core | not measured (the Simulator runs without audio) |
+| Call of two, video both ways | ≤ 70 MB, ≤ 15% | receiving two: 44 MB, ~8%; sending too: 215 MB (the Simulator's software encoder, see below) |
+| Room call, six on screen | ≤ 90 MB, ≤ 25% | not measured |
+| Camera you send | 540 × 960 at 24 fps, ≤ 800 kbps, with one 180 × 320 layer (150 kbps, 15 fps) under it | as set |
+| Video you receive | no more than its tile shows: the full layer only for a tile at least 700 px wide | as set |
+| GPU | none of our own: video goes to the system's renderer, the UI redraws only when something changes | as built |
+| In the background | audio only: nothing is decoded for a screen nobody sees | not built |
+
+### M0 — Foundations and media spike (riskiest part first)
+
+- [x] ~~Decide the stack: native UI over the Rust engine, bindings by UniFFI; UIKit, no storyboard, no packages~~
+- [x] ~~`crates/core` builds for iOS: the noise model and speech to text became features (`denoise`, `transcribe`), on for the desktop and off for phones; camera, permissions and pixel buffers are shared by macOS and iOS~~
+- [x] ~~`crates/mobile`: `Client` (sign in, rooms) and `Call` (events, mic, camera, video), with Swift bindings written by `dev/ios-core.sh`~~
+- [x] ~~`apps/ios`: an Xcode project with a "Rust core" build phase; sign-in, the room list, settings and a call screen~~ *Checked in the Simulator against an isolated server: the browser-approval sign-in ends in the Keychain, the list loads, a room is created.*
+- [x] ~~The system's look (asked for after the first build, which was dark and drawn by hand): system lists with content configurations, search controllers, the system's empty states, buttons (glass on iOS 26) and colours; light and dark follow the phone; the call screen stays dark, as the system's own are~~ *Checked in both appearances. The empty states are siblings of their lists (`ListViewController`): inside a table controller VoiceOver saw only "Empty list" and never the button.*
+- [x] ~~Contacts tab: the phone's address book, searchable by name, email or number, people with an account on top ("On Cubie"), an Invite button on everyone else~~ *Each contact gets a room of their own (a kept call for two), and its link is the invitation: Messages opens with their number and the text, or the share sheet where the phone can't send texts. Who has an account: `POST /api/contacts/match` takes SHA-256 hashes of email addresses and names the matches (accounts only, 20 requests an hour, nothing stored). Checked in the Simulator with its sample contacts, one of them given an account: found, the rest invited through the share sheet, the room made on the server. Messages itself needs a phone. Needs `make deploy` before it works against quipcall.com; until then everyone shows Invite.*
+- [x] ~~Calls tab: the calls you were in on this phone, newest first, as the Phone app lists recents (who, how long, when; red when nobody joined); swipe to delete, Edit and Clear~~ *Kept by the engine in one JSON file (`crates/mobile/src/store.rs`), written as each call ends. Checked after two calls. Calls you missed can't be there until the server rings (M4).*
+- [x] ~~What happened in a call, written down by the engine as it happens (`crates/mobile/src/log.rs`): who joined and left, screen shares starting and stopping, recordings, a transcript starting and stopping, and every finished transcript line from whichever Mac transcribes~~ *Checked with a scripted guest (`dev/guests.mjs` plus the page's `qcRoom`): a late joiner, a recording notice, a transcript claim with two lines (one in Russian), a made-up screen share. All of it was in the room's history after the call, in order.*
+- [x] ~~A call's page (tap a call in Calls): its date, length and people, what happened in it, the earlier calls in the same room, the room's history, and Call and Share~~
+- [x] ~~A room opens as a group chat (tap a room in Rooms; the small button on the row still calls at once), as Telegram and WhatsApp show one: oldest on top, a centred "Call started" and "Call finished" line around each call, what was said as chat bubbles (yours on the right, others on the left under their name, a face beside the last of a run, a small mark that it was transcribed), and joins, leaves, screen shares and recordings as small centred lines; Call and Share in the bar~~ *The first version was a grouped list of facts; redrawn as a chat on 2026-11-16. Checked with the scripted guest: six lines from three speakers, one of them the phone's own. There is nothing to type into yet: messages and files have no bubbles because Quipcall has neither (see M2). Recordings show as "started / stopped recording": the file stays on the recorder's Mac.*
+- [x] ~~Tabs in the order Calls, Rooms, Contacts, Settings; the app opens on Calls, or on Rooms while there are no calls yet~~
+- [x] ~~Invitations go through the system's share sheet (Messages, Telegram, WhatsApp, Mail…), not straight to Messages~~
+- [x] ~~The room chat's lines for screen shares, recordings and transcripts lead with their symbol, and "Call finished" ends with the symbols of what the call had; the chat opens at its newest end on the first open too (it did only after a call)~~
+- [x] ~~A server that can't be reached says "Can't reach Quipcall. Check your connection and try again." instead of the transport's own error~~ *Found when Invite failed in the Simulator: the app there was still pointed at a test server that had been stopped.*
+- [x] ~~Receive video with no copy: decoded H.264 `CVPixelBuffer`s go from the engine's thread into each tile's `AVSampleBufferVideoRenderer`~~ *Two web guests (`dev/guests.mjs`) at 640 × 480: "first video frame on screen … zero_copy=true" for both, speaking ring follows them, leaving and rejoining works.*
+- [x] ~~Send the camera as H.264 at the budget's size, two layers~~ *With the synthetic camera (the Simulator has none): LiveKit lists 540 × 960 at 800 kbps and 180 × 320 at 150 kbps; your own tile shows the same buffers.*
+- [ ] The real camera: front and back, upright (the capture connection turns frames, so nothing rotates on the CPU), 24 fps. *Built; needs an iPhone.*
+- [ ] Audio on an iPhone: microphone and speaker through the system's voice processing (echo cancellation, noise suppression, gain), loudspeaker and receiver. *Built blind: the Simulator's microphone is the Mac's, so test runs there open no audio device at all.*
+- [ ] Footprint on an iPhone. *Simulator: 34 MB on the list, 44 MB and ~8% CPU receiving two cameras. Sending the camera adds about 170 MB there, all of it given back when the camera goes off; a process sample shows VideoToolbox encoding, which in the Simulator is software. Measure on a phone before anything else is built on it; if it costs that much there too, find what holds it (run with `MallocStackLogging`).*
+- [ ] The first join after the first install stayed on "Joining…" once (no request reached LiveKit). *Not reproduced in four more joins, cold and warm; the engine's log now goes to a file with `-log`.*
+- [ ] Go/no-go on the Rust engine for phones, against LiveKit's Swift and Android SDKs. *Recommendation: go. One engine for three platforms, the phone already follows the desktop's recording and transcript notices, and the app is 18 MB. What it costs: we own the audio session, CallKit and the camera ourselves.*
+
+**Done when:** a call between an iPhone and the Mac app works over quipcall.com with audio and video both ways, the budget table has phone numbers in it, and we've said go or no-go.
+
+### M1 — Design
+
+- [x] ~~Round 1 of the prototype ([prototype/mobile.html](prototype/mobile.html)): Calls (rooms and people in one list), a room, contacts, a person, an incoming call, a call of two, a room call, a shared screen, the minimised pill, sign-in, settings~~ *Answered on 2026-11-16: the system's look instead of the drawn dark one, and separate tabs (Contacts, Calls, Rooms, Settings) instead of one mixed list. The built app is the reference for those now; the board still stands for the screens not built (a room's page, a person's, the incoming call, a call of two, the pill).*
+- [x] ~~Decide: whether a tap opens a room or calls it~~ *It opens the room's page; the small button on the row calls.*
+- [ ] Round 2, in the system's look: a room's page, a person's page, the incoming call, a call of two, the minimised call.
+
+**Done when:** every screen below is approved.
+
+### M2 — App shell
+
+- [ ] Sign in with an email link that opens the app (server: a native variant of the link exchange; universal links for quipcall.com). Until then: the Mac's code in the browser.
+- [ ] The list: last call and its length per room, who's in a room right now with Join (server: room presence, Stage 3's webhooks), search, long-press actions
+- [ ] A room's page (its calls and what happened in them are built): members, invitations and access (the Mac's Room access), Join while a call is on
+- [ ] Messages in a room, as bubbles in its chat with a field to type into. *Asked for twice; Quipcall has no messages anywhere yet. The room is meant to read like a Telegram or WhatsApp group, which means a real room chat: stored on the server, delivered to members who weren't in the call, on the Mac and the web too (to confirm before it's started: it is server work first). The cheaper cut, chat only during a call and kept by whoever was there, would not look like a group chat the next day.*
+- [ ] Files in a room. *The same question, plus where they're stored; the Mac's Files tab is an empty state today.*
+- [ ] Recordings in a room's history as something to play. *They stay on the recorder's Mac until uploading exists (Later).*
+- [ ] Create, rename and close rooms; quick calls; share sheets
+- [ ] Room links open the app: `quipcall://` (built; a link asks "Join This Call?" first, since any app or page can open one and joining turns the microphone on) and https://quipcall.com links
+- [ ] Call history on the phone; your name; offline and error states
+- [ ] Session lifecycle as on the Mac: expired sessions return to sign-in from anywhere (built for the list and for joining)
+
+**Done when:** everything the Mac's Home does with rooms can be done on the phone.
+
+### M3 — The call
+
+- [ ] Layouts: a call of two (they fill the screen, you in a corner you can drag), rows up to three people and a grid from four (built), pages past eight, a shared screen on top with pinch to zoom and landscape
+- [ ] The minimised pill inside the app; the system's picture in picture outside it
+- [ ] Audio routes: loudspeaker, receiver, Bluetooth and wired headsets, with the system's picker; the proximity sensor on audio calls
+- [ ] Interruptions: a phone call, Siri, an alarm; the app in the background (audio goes on, video stops both ways); the screen locked
+- [ ] Reconnecting when the network changes (Wi-Fi to mobile data and back)
+- [ ] Join muted or with the camera off. *Mute pressed while the call is still joining works: the engine publishes the microphone already muted (`set_mic_opens_muted`), so nothing is sent first. What's missing is the choice before joining.*
+- [ ] Flip the camera without republishing the track; turn the phone (your video, and other phones' turned video)
+- [ ] Recording and transcript notices (the events arrive already); captions and the transcript itself wait for the transcription round
+- [ ] Use less when it matters: Low Power Mode and a hot phone lower what's sent and received
+
+**Done when:** a 30-minute room call with six people stays inside the budget on an iPhone, through a network change and a trip to the background.
+
+### M4 — Contacts and personal calls
+
+- [ ] Server: contacts (add by email, invitations), presence over the WebSocket hub, the ringing protocol (Stages 3–5)
+- [ ] Ringing a phone that's asleep: VoIP push and CallKit, so a Quipcall call rings like a phone call, on the lock screen too. *Needs the Apple Developer Program.*
+- [ ] Calling from Contacts rings (today it sends the link to the contact's room first); a person's screen; missed calls in the Calls tab; the Mac and the web ring too, and the first to answer takes the call
+- [ ] Find people by phone number too (accounts have only an email today, so a contact without one can't be matched)
+
+**Done when:** two phones call each other from Contacts with both apps closed.
+
+### M5 — iOS alpha
+
+- [x] ~~The app builds for a real iPhone in release mode~~ *arm64, iOS 17 and later: 17.3 MB of stripped binary, about 17.6 MB on the phone (the budget is 20). Not signed or installed yet.*
+- [x] ~~What an upload is checked for: a privacy manifest (no tracking; the account's email and name; the three system calls that need a reason), the export-compliance answer (only exempt encryption), an icon with no transparency~~
+- [x] ~~The phone app is named Cubie, bundle `com.cubiecall.ios` (permanent once its App Store Connect record exists), with its own Keychain entry~~ *The first to carry the new name. Still Quipcall: the server it talks to (quipcall.com), the `quipcall://` links, the Mac app, the site, and the code's own names.*
+- [ ] The rest of the rename to Cubie (cubiecall.com): the Mac app, the site and its domain (keep quipcall.com redirecting, so old links work), mail, `cubie://` links beside `quipcall://`. *Its own task: an installed Mac app's bundle id, data folder and Keychain entries need a migration, and the names apps send each other in a call (`quipcall.transcript` and the like) stay.*
+- [ ] `make release-ios QUIPCALL_IOS_TEAM=<team>` archives, signs and uploads (`deploy/ios/release.sh`). *Written; not run: it needs the team, an App Store Connect key or login, and the app's record made by hand in App Store Connect.*
+- [ ] The first run on a real iPhone, before any tester's: audio both ways, the camera, the footprint (M0's open items)
+- [ ] TestFlight for people on the team (no review), then for friends outside it. *Outside testers go through Apple's beta review, and a reviewer has to be able to sign in: today that takes an invited email address and its inbox, so it needs a way in for them first.*
+- [ ] The icon's dark and tinted variants, crash logs
+- [ ] Battery: an hour's audio call, an hour's video call
+
+**Done when:** friends install it from TestFlight and call each other.
+
+### M6 — Android
+
+- [ ] Kotlin views over the same `crates/mobile` (UniFFI's Kotlin bindings), the engine's Android pieces (camera, video to a `Surface`, the session in the Keystore), calls through Telecom and FCM
+- [ ] The same budget, measured on a mid-range phone
+
+### Later (mobile)
+
+- [ ] Transcription on phones: captions and transcripts from a Mac in the call arrive already; a phone transcribing by itself is to discuss
+- [ ] Sharing the phone's screen (ReplayKit, a media projection)
+- [ ] iPad and landscape layouts
+
 ## Later
 
 - [ ] Windows desktop (Windows.Graphics.Capture, GPUI on DirectX 11)
@@ -218,4 +335,3 @@ Started early (2026-11-03), ahead of Stages 3–6, with open room links. Invite-
 - [ ] End-to-end encryption
 - [ ] Speaker separation for shared microphones
 - [ ] Peer-to-peer for 1:1 calls
-- [ ] Native mobile apps (reusing the Rust core through UniFFI)

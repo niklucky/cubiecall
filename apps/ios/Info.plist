@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The rest of the Info.plist is generated from the target's build settings. -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+	<!-- Export compliance: only the system's TLS and WebRTC's standard
+	     media encryption, which are exempt. Without this key every upload
+	     waits for the question to be answered by hand. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<!-- No storyboard: the launch screen is the app's background colour. -->
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>Launch</string>
+	</dict>
+	<!-- A call goes on while the app is in the background. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+	<!-- quipcall://join/<room>, as on the Mac. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.cubiecall.ios</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>quipcall</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Development builds talk to a server on this Mac over plain HTTP. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

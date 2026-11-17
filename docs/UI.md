@@ -125,6 +125,29 @@ One window (1040 × 680): the room's name and the call's time in the title bar, 
 - No widget library: the look is custom, and every dependency costs footprint. Shared pieces (avatars, buttons, tooltips, empty states) are in `ui.rs`.
 - Icons: [Lucide](https://lucide.dev) (ISC licence), embedded as SVG.
 
+## Phones
+
+The iPhone app (Cubie on the phone: the first to carry the new name, bundle `com.cubiecall.ios`; the Mac app, the site and the code's own names follow in one rename) looks like iOS, not like the Mac app: the system's lists, search fields, bars, buttons and colours, light or dark as the phone is set. Only faces (initials on a person's colour, the same colour as here) and the video tiles are drawn by us. Four tabs:
+
+- **Calls** (where the app opens, once there are any): the calls you were in on this phone, newest first, as the Phone app lists them: the room, who was there and for how long, when. A call nobody joined is red. Tap one for its page; swipe to delete; Edit to clear.
+- **Rooms**: your rooms, searchable; + makes one. Tap a room for its page; the small round button on the row calls at once; swipe or long-press to share the link.
+- **Contacts**: your address book, searchable by name, email or number. People with an account come first, under "On Cubie", with a call button; everyone else has **Invite**, which opens the system's share sheet (Messages, Telegram, WhatsApp, Mail…) with a link to a room for the two of you (it opens in a browser, no app needed). Until calls can ring, calling someone on Quipcall sends them that link first, then takes you into the call.
+- **Settings**: you, and Sign Out.
+
+**A room opens as a group chat**, the way Telegram and WhatsApp show one. The room's face and name are in the bar, with Share and Call. The history runs oldest to newest and opens at the newest end:
+
+- A day's name where a new day begins, and around each call two centred lines: "Call started · 21:44" and "Call finished · 21:45 · 33 sec" (or that nobody joined).
+- What was said, when someone's Mac transcribed the call, as chat bubbles: yours on the right in the tint colour, everyone else's on the left in grey, under their name in their own colour, with a face beside the last bubble of a run. Each has its time and a small captions mark: it was transcribed, not typed.
+- Who joined or left, who started or stopped sharing a screen or recording, and the transcript starting and stopping, as small centred grey lines between the bubbles; the share, recording and transcript lines lead with their symbol. The "Call finished" line ends with the same three symbols for whichever of them the call had, so a call can be sized up without reading it.
+
+There's nothing to type into yet: messages and files will be bubbles in the same chat once Quipcall has them, and a recording is only a line, since the file stays on the recorder's Mac. Bubbles are the one thing here iOS has no component for, so those two cells are ours, in the system's colours and type.
+
+**A call's page** (from the Calls tab) is a plain grouped list: its date, length and people, what happened in it, the earlier calls in the room under "Previous Calls", a way into the room's chat, and **Call** and **Share** on top.
+
+The call is full screen and dark, as the system's own call screens are: a tile per person (a row each up to three, two across from four, a shared screen on top), the room's name and the time, an invite button, and five round buttons (speaker, camera, microphone, flip, leave). White means on and worth noticing.
+
+Earlier drawings: [prototype/mobile.html](prototype/mobile.html) (round 1, in a dark hand-drawn look that was dropped) still shows the screens not built yet: a room's page, a person's, the incoming call, a call of two, the minimised call.
+
 ## Settings
 
 ⌘, or the gear next to your name on Home. Three tabs:

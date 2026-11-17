@@ -4,12 +4,18 @@
 //! WebRTC as native buffers (VideoToolbox encodes them without a CPU copy) and,
 //! unchanged, to the self-view sink (GPUI draws them directly).
 //!
+//! iOS: the same path, from the front or the back camera, turned upright by
+//! the capture connection (so nothing rotates frames on the CPU) and held to
+//! the phone's limits below.
+//!
 //! `QUIPCALL_FAKE_CAMERA=1` swaps the device for a synthetic 720p30 pattern
 //! that takes the same path, for headless tests and measurements.
 
 use std::sync::Arc;
 
 use anyhow::Context as _;
+#[cfg(target_os = "ios")]
+use livekit::options::VideoPreset;
 use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
 use livekit::prelude::*;
 use livekit::webrtc::prelude::{RtcVideoSource, VideoResolution};
@@ -17,8 +23,68 @@ use livekit::webrtc::video_source::native::NativeVideoSource;
 
 use crate::FrameSink;
 
+#[cfg(not(target_os = "ios"))]
 const WIDTH: u32 = 1280;
+#[cfg(not(target_os = "ios"))]
 const HEIGHT: u32 = 720;
+
+// A phone sends less: 540p upright at 24 fps, with one small layer under it.
+// The floor we start from; raise it when a call shows it's too little
+// (docs/PLAN.md, the mobile budget).
+#[cfg(target_os = "ios")]
+const WIDTH: u32 = 540;
+#[cfg(target_os = "ios")]
+const HEIGHT: u32 = 960;
+#[cfg(target_os = "ios")]
+const FPS: i32 = 24;
+
+/// Which camera a phone opens: the front one, until told otherwise.
+#[cfg(target_os = "ios")]
+static FRONT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Choose the front or the back camera for the next [`Camera::start`].
+#[cfg(target_os = "ios")]
+pub(crate) fn set_front(front: bool) {
+    FRONT.store(front, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[cfg(target_os = "ios")]
+pub(crate) fn front() -> bool {
+    FRONT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(not(target_os = "ios"))]
+fn publish_options() -> TrackPublishOptions {
+    TrackPublishOptions {
+        source: TrackSource::Camera,
+        // VideoToolbox takes the CVPixelBuffers as they are; simulcast
+        // gives 720p / 360p / 180p layers for the per-tile layer picker.
+        video_codec: VideoCodec::H264,
+        simulcast: true,
+        video_encoding: Some(VideoEncoding {
+            max_bitrate: 1_700_000,
+            max_framerate: 30.0,
+        }),
+        ..Default::default()
+    }
+}
+
+#[cfg(target_os = "ios")]
+fn publish_options() -> TrackPublishOptions {
+    TrackPublishOptions {
+        source: TrackSource::Camera,
+        video_codec: VideoCodec::H264,
+        simulcast: true,
+        video_encoding: Some(VideoEncoding {
+            max_bitrate: 800_000,
+            max_framerate: FPS as f64,
+        }),
+        // One layer under the full one, for small tiles and thin connections:
+        // a third of the size, 180 × 320.
+        simulcast_layers: Some(vec![VideoPreset::new(WIDTH / 3, HEIGHT / 3, 150_000, 15.0)]),
+        ..Default::default()
+    }
+}
 
 /// Whether the synthetic camera is in use (no device, no permission prompt).
 pub(crate) fn synthetic() -> bool {
@@ -51,21 +117,9 @@ impl Camera {
                 .await
                 .context("camera thread")??;
 
-        let options = TrackPublishOptions {
-            source: TrackSource::Camera,
-            // VideoToolbox takes the CVPixelBuffers as they are; simulcast
-            // gives 720p / 360p / 180p layers for the per-tile layer picker.
-            video_codec: VideoCodec::H264,
-            simulcast: true,
-            video_encoding: Some(VideoEncoding {
-                max_bitrate: 1_700_000,
-                max_framerate: 30.0,
-            }),
-            ..Default::default()
-        };
         let publication = room
             .local_participant()
-            .publish_track(LocalTrack::Video(track), options)
+            .publish_track(LocalTrack::Video(track), publish_options())
             .await
             .context("publish camera track")?;
         Ok(Self {
@@ -85,7 +139,7 @@ impl Camera {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 mod platform {
     use super::*;
 
@@ -101,7 +155,7 @@ mod platform {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
 mod platform {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::{Duration, Instant};
@@ -113,10 +167,11 @@ mod platform {
     use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
     use objc2::{AnyThread, DefinedClass, define_class, msg_send};
     use objc2_av_foundation::{
-        AVCaptureConnection, AVCaptureDevice, AVCaptureDeviceInput, AVCaptureOutput,
-        AVCaptureSession, AVCaptureSessionPreset1280x720, AVCaptureVideoDataOutput,
-        AVCaptureVideoDataOutputSampleBufferDelegate, AVMediaTypeVideo,
+        AVCaptureConnection, AVCaptureDeviceInput, AVCaptureOutput, AVCaptureSession,
+        AVCaptureVideoDataOutput, AVCaptureVideoDataOutputSampleBufferDelegate, AVMediaTypeVideo,
     };
+    #[cfg(not(target_os = "ios"))]
+    use objc2_av_foundation::{AVCaptureDevice, AVCaptureSessionPreset1280x720};
     use objc2_core_foundation::{CFRetained, CFString};
     use objc2_core_media::CMSampleBuffer;
     use objc2_core_video::{
@@ -240,8 +295,11 @@ mod platform {
             // delegate and queue are kept alive by `Capture`.
             unsafe {
                 let media = AVMediaTypeVideo.context("AVMediaTypeVideo")?;
+                #[cfg(not(target_os = "ios"))]
                 let device = AVCaptureDevice::defaultDeviceWithMediaType(media)
                     .context("no camera found")?;
+                #[cfg(target_os = "ios")]
+                let device = ios::device(media).context("no camera found")?;
                 tracing::info!(camera = %device.localizedName(), "opening camera");
                 let input = AVCaptureDeviceInput::deviceInputWithDevice_error(&device)
                     .map_err(|e| anyhow::anyhow!("open camera: {}", e.localizedDescription()))?;
@@ -268,14 +326,21 @@ mod platform {
 
                 let session = AVCaptureSession::new();
                 session.beginConfiguration();
+                #[cfg(not(target_os = "ios"))]
                 if session.canSetSessionPreset(AVCaptureSessionPreset1280x720) {
                     session.setSessionPreset(AVCaptureSessionPreset1280x720);
                 }
+                #[cfg(target_os = "ios")]
+                ios::set_preset(&session);
                 anyhow::ensure!(session.canAddInput(&input), "camera input rejected");
                 session.addInput(&input);
                 anyhow::ensure!(session.canAddOutput(&output), "camera output rejected");
                 session.addOutput(&output);
+                #[cfg(target_os = "ios")]
+                ios::upright(&output, media);
                 session.commitConfiguration();
+                #[cfg(target_os = "ios")]
+                ios::hold_frame_rate(&device);
                 session.startRunning();
                 anyhow::ensure!(session.isRunning(), "camera did not start");
 
@@ -296,6 +361,82 @@ mod platform {
         }
     }
 
+    /// What a phone's camera needs that a Mac's doesn't.
+    #[cfg(target_os = "ios")]
+    mod ios {
+        use objc2::msg_send;
+        use objc2::rc::Retained;
+        use objc2_av_foundation::{
+            AVCaptureConnection, AVCaptureDevice, AVCaptureDevicePosition,
+            AVCaptureDeviceTypeBuiltInWideAngleCamera, AVCaptureSession,
+            AVCaptureSessionPreset1280x720, AVCaptureSessionPresetiFrame960x540,
+            AVCaptureVideoDataOutput, AVMediaType,
+        };
+        use objc2_core_media::CMTime;
+
+        /// The wide camera on the side asked for ([`super::super::set_front`]).
+        pub(super) unsafe fn device(media: &AVMediaType) -> Option<Retained<AVCaptureDevice>> {
+            let position = if super::super::front() {
+                AVCaptureDevicePosition::Front
+            } else {
+                AVCaptureDevicePosition::Back
+            };
+            // SAFETY: AVFoundation constants and a plain class method.
+            unsafe {
+                AVCaptureDevice::defaultDeviceWithDeviceType_mediaType_position(
+                    AVCaptureDeviceTypeBuiltInWideAngleCamera,
+                    Some(media),
+                    position,
+                )
+                .or_else(|| AVCaptureDevice::defaultDeviceWithMediaType(media))
+            }
+        }
+
+        /// 960 × 540 from the sensor, or 720p where a camera has no such mode.
+        pub(super) unsafe fn set_preset(session: &AVCaptureSession) {
+            // SAFETY: a valid session, inside begin/commitConfiguration.
+            unsafe {
+                if session.canSetSessionPreset(AVCaptureSessionPresetiFrame960x540) {
+                    session.setSessionPreset(AVCaptureSessionPresetiFrame960x540);
+                } else if session.canSetSessionPreset(AVCaptureSessionPreset1280x720) {
+                    session.setSessionPreset(AVCaptureSessionPreset1280x720);
+                }
+            }
+        }
+
+        /// The sensor is mounted sideways: have the capture pipeline turn
+        /// frames upright (on the GPU), so buffers arrive as portrait and
+        /// neither WebRTC nor the viewer has to rotate anything.
+        pub(super) unsafe fn upright(output: &AVCaptureVideoDataOutput, media: &AVMediaType) {
+            // SAFETY: valid objects; both selectors exist from iOS 17.
+            unsafe {
+                let connection: Option<Retained<AVCaptureConnection>> =
+                    msg_send![output, connectionWithMediaType: media];
+                let Some(connection) = connection else { return };
+                let supported: bool =
+                    msg_send![&connection, isVideoRotationAngleSupported: 90.0f64];
+                if supported {
+                    let _: () = msg_send![&connection, setVideoRotationAngle: 90.0f64];
+                }
+            }
+        }
+
+        /// The sensor at [`super::super::FPS`], not its default 30: fewer
+        /// frames to capture, encode and send.
+        pub(super) unsafe fn hold_frame_rate(device: &AVCaptureDevice) {
+            // SAFETY: the device is open; configuration is locked around the change.
+            unsafe {
+                if device.lockForConfiguration().is_err() {
+                    return;
+                }
+                let frame = CMTime::new(1, super::super::FPS);
+                let _: () = msg_send![device, setActiveVideoMinFrameDuration: frame];
+                let _: () = msg_send![device, setActiveVideoMaxFrameDuration: frame];
+                device.unlockForConfiguration();
+            }
+        }
+    }
+
     /// A moving 720p30 test pattern, painted into pooled IOSurface buffers so
     /// it is encoded exactly like camera frames.
     struct SyntheticCapture {
@@ -313,7 +454,10 @@ mod platform {
                 .spawn({
                     let stop = stop.clone();
                     move || {
+                        #[cfg(not(target_os = "ios"))]
                         let interval = Duration::from_secs(1) / 30;
+                        #[cfg(target_os = "ios")]
+                        let interval = Duration::from_secs(1) / FPS as u32;
                         let mut next = Instant::now();
                         let mut n = 0;
                         while !stop.load(Ordering::Relaxed) {

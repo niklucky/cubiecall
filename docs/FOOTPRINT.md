@@ -47,6 +47,22 @@ Where the ~170 MB baseline goes (`footprint`): ~90 MB GPU memory owned by the wi
 
 **Bug found while measuring:** every video frame leaked an IOSurface (3.3 GB after a minute of sending). libwebrtc's Objective-C frame wrappers are autoreleased, and our threads (tokio workers, the synthetic camera) never drained an autorelease pool. Frame callbacks now run inside one. RSS barely showed it, which is how we found out RSS is the wrong metric.
 
+## 2026-11-16 — iOS, first numbers (Simulator only)
+
+Budget: [PLAN.md](PLAN.md#mobile-budget). iPhone 17 Pro Simulator (iOS 26.5) on the M5 Pro, release build, measured as the Simulator process's physical footprint with `dev/measure.sh` (find it with `pgrep -f "CoreSimulator/Devices/.*/Quipcall.app/Quipcall"`). No audio device: a Simulator run never opens the Mac's microphone. The automation runner was attached, which loads accessibility bundles into the app. Two web guests (`dev/guests.mjs`) send 640 × 480 H.264; the phone's camera is the synthetic one. These show the direction; a phone decodes and encodes in hardware and has its own memory accounting, so the budget's numbers have to come from a real iPhone.
+
+| Scenario | CPU (one core) | Footprint | Budget |
+|---|---|---|---|
+| On the room list, signed in | 0.1–0.2% | 33.9 MB | ≤ 30 MB, 0% |
+| In a call, receiving 2 cameras (each tile a system video renderer) | 6–10%, ~8% | 43.7 MB | ≤ 70 MB, ≤ 15% (call of two, both ways) |
+| The same, also sending 540 × 960 at 24 fps in two layers | 12–15%, ~13.5% | 215 MB | |
+| Camera off again | ~8% | 48.6 MB | |
+
+- **The app** is 18.3 MB: an 18.0 MB stripped arm64 binary (the engine, libwebrtc, the Swift on top), the icon and one image. Against the Mac's 53.6 MB: no GPUI, no noise model, no speech to text.
+- **Receiving costs about 10 MB** for two videos. There's no renderer of ours to hold GPU memory, which is where 90 MB of the Mac app's baseline goes.
+- **Sending costs 170 MB in the Simulator**, all of it returned when the camera goes off, so it isn't a leak. `vmmap` shows it as heap (small allocations, mostly compressed), and a process sample shows VideoToolbox compressing: in the Simulator that encoder is software, two sessions of it for the two layers. On the Mac, with the hardware encoder, the same path costs about 19 MB. Still to do on an iPhone before building further; if it's the same there, `MallocStackLogging` will say what holds it.
+- **Idle is 4 MB over** its 30 MB, with the automation runner attached; to measure again on a phone without it.
+
 ## 2026-11-15 — Minimal mode, cameras as bubbles
 
 Release build, sending the synthetic 720p camera, 5 `lk room join --publish-demo` H.264 publishers: six people, everyone's camera on. The pill is one window that no longer draws video (it's drawn again only when someone starts or stops speaking, mutes, or turns a camera on or off); each bubble is a window with one video in it, cut to its shape by the compositor. No microphone. Samples every 5 s, on a Mac in use at the time, so the CPU numbers are rough.

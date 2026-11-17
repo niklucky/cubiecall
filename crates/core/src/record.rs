@@ -244,7 +244,7 @@ fn write_frames(_: &Option<ScreenInput>, _: &mut Writer, _: Instant) -> anyhow::
 
 fn run(
     listener: Listener,
-    mut screen: Option<ScreenInput>,
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))] mut screen: Option<ScreenInput>,
     mut writer: Writer,
     voices: Option<Voices>,
     stop: &AtomicBool,
@@ -288,6 +288,8 @@ fn run(
         drop(std::mem::replace(&mut screen.capture, Box::new(())));
     }
     write_frames(&screen, &mut writer, start)?;
+    // (Off the Mac a screen input holds nothing to release.)
+    #[cfg_attr(not(target_os = "macos"), allow(clippy::drop_non_drop))]
     drop(screen);
     // What's still buffered was heard before you pressed Stop.
     while mixer.buffered() > 0 {

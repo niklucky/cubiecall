@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quipcall mobile · round 1</title>
+<style>
+:root{color-scheme:light dark}
+html,body{margin:0}
+body{font-family:var(--font-sans,-apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif);color:var(--foreground,#1d1d1f);-webkit-font-smoothing:antialiased}
+body.standalone{background:#0e0f12;color:#e8e9ec;--foreground:#e8e9ec;--muted-foreground:#8f95a0;--border:rgba(255,255,255,.12);--secondary:rgba(255,255,255,.08)}
+body.standalone #board{padding:32px 24px 64px}
+body:not(.standalone) .head h1{display:none}
+#board{max-width:1000px;margin:0 auto;padding:4px 0 24px;
+ --bg:#141519;--raised:#22242b;--raised2:#2c2f38;--stage:#0e0f12;--text:#f2f3f5;--dim:#9ba1ac;--faint:#676d78;
+ --accent:#4f8cff;--danger:#e5484d;--live:#3fd07a;--line:#24262d}
+.head h1{font-size:20px;margin:0 0 6px;font-weight:650;letter-spacing:-.01em}
+.lede{margin:0;font-size:13.5px;line-height:1.55;color:var(--muted-foreground,#8a8f98);max-width:78ch}
+h2{font-size:15px;margin:30px 0 2px;font-weight:650}
+.sub{margin:0 0 12px;font-size:13px;line-height:1.5;color:var(--muted-foreground,#8a8f98);max-width:80ch}
+.row{display:grid;grid-template-columns:repeat(auto-fill,minmax(212px,1fr));gap:18px 14px}
+figure{margin:0}
+figcaption{margin-top:8px;font-size:12.5px;line-height:1.45;color:var(--muted-foreground,#8a8f98)}
+figcaption b{color:var(--foreground,#1d1d1f);font-weight:600}
+
+/* A phone, drawn at 390 x 844 and shown at 54%. */
+.fit{width:212px;height:458px;position:relative}
+.phone{position:absolute;left:0;top:0;width:390px;height:844px;transform:scale(.5436);transform-origin:0 0;border-radius:54px;overflow:hidden;
+ background:var(--bg);color:var(--text);font:400 17px/1.25 -apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",system-ui,sans-serif;
+ box-shadow:0 0 0 2px #2a2c33,0 0 0 9px #050506,0 0 0 10px #2a2c33}
+.phone *{box-sizing:border-box}
+.sb{position:absolute;left:0;right:0;top:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:14px 34px 0;font:600 16px -apple-system,system-ui;z-index:5;pointer-events:none}
+.sb:after{content:"";position:absolute;left:50%;top:12px;width:120px;height:34px;margin-left:-60px;border-radius:20px;background:#000}
+.sb i{font-style:normal;font-size:13px;letter-spacing:1px;opacity:.9}
+.home{position:absolute;left:50%;bottom:8px;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:rgba(255,255,255,.55);z-index:9}
+.nav{padding:58px 20px 0;display:flex;align-items:center;justify-content:space-between;height:104px}
+.nav .t{font:600 17px -apple-system,system-ui;text-align:center;line-height:1.2}
+.nav .t small{display:block;font:400 13px -apple-system,system-ui;color:var(--dim)}
+.nav .t small.live{color:var(--live)}
+.big{font:700 34px -apple-system,system-ui;letter-spacing:-.02em;padding:2px 20px 8px}
+.ib{width:44px;height:44px;border-radius:22px;background:var(--raised);display:grid;place-items:center;color:var(--text);flex:none}
+.ib.clear{background:none;color:var(--accent)}
+.search{margin:2px 16px 8px;height:38px;border-radius:12px;background:var(--raised);display:flex;align-items:center;gap:8px;padding:0 12px;color:var(--faint);font-size:16px}
+svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg.f{fill:currentColor;stroke:none}
+.li{display:flex;align-items:center;gap:12px;padding:0 16px;height:76px;position:relative}
+.li:after{content:"";position:absolute;left:84px;right:0;bottom:0;height:1px;background:var(--line)}
+.av{width:56px;height:56px;border-radius:50%;flex:none;display:grid;place-items:center;font:600 21px -apple-system,system-ui;color:#fff;position:relative}
+.av.s{width:40px;height:40px;font-size:15px}.av.xs{width:26px;height:26px;font-size:10.5px;box-shadow:0 0 0 2px var(--bg)}
+.av.xl{width:128px;height:128px;font-size:48px}
+.av .on{position:absolute;right:1px;bottom:1px;width:14px;height:14px;border-radius:50%;background:var(--live);box-shadow:0 0 0 3px var(--bg)}
+.a1{background:linear-gradient(135deg,#d0654b,#a3402f)}.a2{background:linear-gradient(135deg,#4b8fd0,#2f4fa3)}
+.a3{background:linear-gradient(135deg,#7bc04a,#3f9a3a)}.a4{background:linear-gradient(135deg,#b06bd6,#7a3fb0)}
+.a5{background:linear-gradient(135deg,#d6a14b,#b0702f)}.a6{background:linear-gradient(135deg,#4bc7c0,#2f8f9a)}
+.mid{flex:1;min-width:0}
+.mid b{display:flex;align-items:center;gap:6px;font:600 17px -apple-system,system-ui;white-space:nowrap}
+.mid span{display:block;margin-top:3px;font-size:15px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mid span.live{color:var(--live)}.mid span.miss{color:var(--danger)}.mid span.acc{color:var(--accent)}
+.mid b svg{width:14px;height:14px;color:var(--faint)}
+.end{align-self:flex-start;padding-top:17px;font-size:14px;color:var(--faint);white-space:nowrap}
+.join{align-self:center;padding:0 16px;height:34px;border-radius:17px;background:var(--live);color:#06210f;font:650 15px -apple-system,system-ui;display:grid;place-items:center}
+.call-ic{align-self:center;color:var(--accent);padding:0}
+.tabs{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);display:flex;gap:2px;padding:5px;border-radius:34px;background:rgba(40,42,50,.82);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:0 0 0 1px rgba(255,255,255,.08),0 12px 30px rgba(0,0,0,.45);z-index:6}
+.tabs div{width:92px;height:54px;border-radius:28px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font:600 10.5px -apple-system,system-ui;color:var(--text)}
+.tabs div.sel{background:rgba(255,255,255,.12);color:var(--accent)}
+.chip{margin:14px auto 8px;width:max-content;padding:3px 10px;border-radius:11px;background:rgba(255,255,255,.07);font:600 12.5px -apple-system,system-ui;color:var(--dim)}
+.card{margin:6px 16px;padding:12px 14px;border-radius:18px;background:var(--raised);display:flex;align-items:center;gap:12px}
+.card .ic{width:40px;height:40px;border-radius:20px;background:rgba(79,140,255,.16);color:var(--accent);display:grid;place-items:center;flex:none}
+.card.miss .ic{background:rgba(229,72,77,.16);color:var(--danger)}
+.card b{display:block;font:600 16px -apple-system,system-ui}.card span{display:block;font-size:14px;color:var(--dim);margin-top:2px}
+.stack{display:flex;margin-left:auto}.stack .av{margin-left:-8px}
+.banner{margin:0 16px 4px;padding:10px 12px 10px 14px;border-radius:18px;background:rgba(63,208,122,.13);display:flex;align-items:center;gap:10px}
+.banner b{font:600 15px -apple-system,system-ui;color:var(--live);display:block}.banner span{font-size:13.5px;color:var(--dim)}
+.dock{position:absolute;left:16px;right:16px;bottom:34px;display:flex;gap:10px}
+.btn{flex:1;height:52px;border-radius:26px;background:var(--accent);color:#fff;font:650 17px -apple-system,system-ui;display:flex;align-items:center;justify-content:center;gap:8px}
+.btn.g{background:var(--raised);flex:none;width:52px}
+.field{margin:0 28px;height:52px;border-radius:14px;background:var(--raised);display:flex;align-items:center;padding:0 16px;color:var(--faint)}
+.center{text-align:center}
+.acts{display:flex;justify-content:center;gap:14px;margin:18px 0 10px}
+.act{width:104px;height:66px;border-radius:18px;background:var(--raised);color:var(--accent);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font:600 12.5px -apple-system,system-ui}
+.sect{margin:18px 16px 0;border-radius:18px;background:var(--raised);overflow:hidden}
+.sect div{height:50px;padding:0 16px;display:flex;align-items:center;justify-content:space-between;font-size:16.5px;border-bottom:1px solid rgba(255,255,255,.06)}
+.sect div:last-child{border:0}.sect em{font-style:normal;color:var(--dim)}
+.sw{width:50px;height:30px;border-radius:15px;background:#3a3d47;position:relative}.sw:after{content:"";position:absolute;left:2px;top:2px;width:26px;height:26px;border-radius:13px;background:#fff}
+.sw.on{background:var(--live)}.sw.on:after{left:22px}
+
+/* The call. */
+.stage{position:absolute;inset:0;background:var(--stage)}
+.vid{position:absolute;border-radius:22px;overflow:hidden}
+.v1{background:radial-gradient(60% 45% at 50% 38%,#e9b99a 0 34%,transparent 35%),radial-gradient(90% 60% at 50% 100%,#3d5a8a 0 60%,transparent 61%),linear-gradient(#27364f,#141a26)}
+.v2{background:radial-gradient(56% 42% at 50% 40%,#d9a584 0 34%,transparent 35%),radial-gradient(90% 60% at 50% 100%,#7a4a3a 0 60%,transparent 61%),linear-gradient(#3a2b27,#1b1513)}
+.v3{background:radial-gradient(56% 42% at 50% 40%,#f0c9a8 0 34%,transparent 35%),radial-gradient(90% 60% at 50% 100%,#3f7a55 0 60%,transparent 61%),linear-gradient(#22352a,#121a15)}
+.v4{background:var(--raised);display:grid;place-items:center}
+.share{background:#f4f5f7;color:#22252b;padding:18px;font:600 13px -apple-system,system-ui}
+.share i{display:block;height:9px;border-radius:5px;background:#cfd4dc;margin:9px 0}.share i.a{background:#4f8cff;width:45%}.share i.b{width:80%}.share i.c{width:62%}
+.vid.speak{box-shadow:inset 0 0 0 3px var(--live)}
+.tag{position:absolute;left:10px;bottom:10px;height:24px;padding:0 9px;border-radius:12px;background:rgba(0,0,0,.45);font:500 13px -apple-system,system-ui;display:flex;align-items:center;gap:5px;color:#fff}
+.tag svg{width:13px;height:13px;color:#ff6b61}
+.top{position:absolute;left:0;right:0;top:54px;display:flex;align-items:center;justify-content:space-between;padding:4px 16px;z-index:4}
+.top .t{text-align:center;font:600 17px -apple-system,system-ui;text-shadow:0 1px 6px rgba(0,0,0,.5)}.top .t small{display:block;font:400 13px ui-monospace,Menlo,monospace;color:rgba(255,255,255,.75)}
+.top .ib{background:rgba(255,255,255,.14);width:38px;height:38px}
+.rec{position:absolute;left:50%;top:106px;transform:translateX(-50%);padding:4px 10px;border-radius:12px;background:rgba(255,107,97,.18);color:#ff8a82;font:600 12.5px -apple-system,system-ui;z-index:4;white-space:nowrap}
+.ctl{position:absolute;left:0;right:0;bottom:38px;display:flex;justify-content:center;gap:14px;z-index:4}
+.cb{width:60px;height:60px;border-radius:30px;background:rgba(255,255,255,.14);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);color:#fff;display:grid;place-items:center;cursor:pointer;user-select:none}
+.cb.lit{background:#fff;color:#111}.cb.end{background:var(--danger)}.cb.ok{background:var(--live)}
+.cb svg{width:25px;height:25px}
+.cb.wide{width:74px;height:74px;border-radius:37px}
+.lbl{position:absolute;bottom:14px;font:500 12.5px -apple-system,system-ui;color:rgba(255,255,255,.8);width:120px;text-align:center}
+.pill{position:absolute;left:50%;bottom:104px;transform:translateX(-50%);height:60px;padding:0 8px 0 10px;border-radius:30px;background:#17181d;box-shadow:0 0 0 1px rgba(255,255,255,.09),0 14px 34px rgba(0,0,0,.55);display:flex;align-items:center;gap:8px;z-index:7}
+.pill .time{font:500 13px ui-monospace,Menlo,monospace;color:var(--dim);padding:0 4px}
+.pill .cb{width:42px;height:42px;background:rgba(255,255,255,.10)}.pill .cb svg{width:19px;height:19px}.pill .cb.end{background:var(--danger)}
+.ring{box-shadow:0 0 0 2.5px #17181d,0 0 0 5px var(--live)}
+.notes{margin:10px 0 0;padding-left:20px;font-size:13.5px;line-height:1.55;max-width:84ch}
+.notes li{margin:5px 0}.notes b{font-weight:600}
+</style>
+</head>
+<body>
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+ <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+ <symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+ <symbol id="phone" viewBox="0 0 24 24"><path d="M5 4h3l2 5-2.5 1.5a11 11 0 0 0 6 6L15 14l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></symbol>
+ <symbol id="down" viewBox="0 0 24 24"><path d="M3 13.5c5-4.6 13-4.6 18 0l-2.2 2.6-3.3-1.6v-2.3a9 9 0 0 0-7 0v2.3l-3.3 1.6z" fill="currentColor"/></symbol>
+ <symbol id="video" viewBox="0 0 24 24"><rect x="3" y="6.5" width="12" height="11" rx="2.5"/><path d="m15 10.5 6-3.5v10l-6-3.5z"/></symbol>
+ <symbol id="mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></symbol>
+ <symbol id="micoff" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M4 4l16 16"/></symbol>
+ <symbol id="spk" viewBox="0 0 24 24"><path d="M4 9.5h3l5-4v13l-5-4H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+ <symbol id="flip" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"/></symbol>
+ <symbol id="back" viewBox="0 0 24 24"><path d="m14.5 5-7 7 7 7"/></symbol>
+ <symbol id="chev" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></symbol>
+ <symbol id="lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></symbol>
+ <symbol id="link" viewBox="0 0 24 24"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3A4.5 4.5 0 0 0 13 4.600l-1.2 1.200M14 10a4.500 4.500 0 0 0-6.400 0l-3 3A4.500 4.500 0 0 0 11 19.400l1.200-1.200"/></symbol>
+ <symbol id="rooms" viewBox="0 0 24 24"><path d="M4 6.500A2.500 2.500 0 0 1 6.500 4h8A2.500 2.500 0 0 1 17 6.500v5A2.500 2.500 0 0 1 14.500 14H10l-4 3v-3.200A2.500 2.500 0 0 1 4 11.500z" fill="currentColor" stroke="none"/><path d="M19 9.500v5a2.500 2.500 0 0 1-2 2.400V20l-3.500-2.700" /></symbol>
+ <symbol id="people" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" fill="currentColor" stroke="none"/><path d="M4 21a8 8 0 0 1 16 0z" fill="currentColor" stroke="none"/></symbol>
+ <symbol id="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.200"/><path d="M12 2.800v2.400M12 18.800v2.400M2.800 12h2.400M18.800 12h2.400M5.500 5.500l1.700 1.700M16.800 16.800l1.700 1.700M18.500 5.500l-1.700 1.700M7.200 16.800l-1.700 1.700"/></symbol>
+ <symbol id="more" viewBox="0 0 24 24"><circle cx="5.500" cy="12" r="1.600" fill="currentColor"/><circle cx="12" cy="12" r="1.600" fill="currentColor"/><circle cx="18.500" cy="12" r="1.600" fill="currentColor"/></symbol>
+ <symbol id="add" viewBox="0 0 24 24"><circle cx="10" cy="8" r="4"/><path d="M3 20.500a7 7 0 0 1 12.500-4.300M19 14v6M16 17h6"/></symbol>
+</svg>
+
+<div id="board">
+<div class="head">
+ <h1>Quipcall mobile · round 1</h1>
+ <p class="lede">The iPhone app, drawn before it's built (Android follows the same screens). Telegram is the model: one fast list, a face on every row, nothing on screen that doesn't earn its place. Dark only, the desktop's colours. Tap the round call buttons to see their states.</p>
+ <p class="lede" style="margin-top:8px"><b>Since then (2026-11-16):</b> the app uses the system's own components and follows the phone's light or dark, and has four tabs (Contacts, Calls, Rooms, Settings) instead of this board's mixed list. See docs/UI.md. The screens not built yet still stand as drawn.</p>
+</div>
+
+<h2>1 · Calls: rooms and people in one list</h2>
+<p class="sub">Telegram's chat list, for calls. A room is a group; a person is a personal call. Whatever is live sits on top with a green <b>Join</b>. Everything else is ordered by the last call.</p>
+<div class="row">
+ <figure><div class="fit"><div class="phone">
+  <div class="sb"><span>9:41</span><i>●●● ᯤ ▮</i></div>
+  <div class="nav" style="justify-content:flex-end"><div class="ib"><svg><use href="#plus"/></svg></div></div>
+  <div class="big">Calls</div>
+  <div class="search"><svg style="width:18px;height:18px"><use href="#search"/></svg>Search</div>
+  <div class="li"><div class="av a2">TS</div><div class="mid"><b>Team standup</b><span class="live">● Live · Anna, Max and Lena</span></div><div class="join">Join</div></div>
+  <div class="li"><div class="av a1">AP<i class="on"></i></div><div class="mid"><b>Anna Petrova</b><span>Outgoing · 5 min</span></div><div class="end">14:02</div></div>
+  <div class="li"><div class="av a3">F</div><div class="mid"><b>Family <svg><use href="#lock"/></svg></b><span>Mom, Lena · 48 min</span></div><div class="end">Yesterday</div></div>
+  <div class="li"><div class="av a4">M</div><div class="mid"><b>Max</b><span class="miss">Missed call</span></div><div class="end">Fri</div></div>
+  <div class="li"><div class="av a5">DR</div><div class="mid"><b>Design review <svg><use href="#lock"/></svg></b><span>You, Anna and 3 more · 1 h 4 min</span></div><div class="end">Thu</div></div>
+  <div class="li"><div class="av a6">RB</div><div class="mid"><b>Rust book club</b><span>No calls yet</span></div><div class="end">3 Nov</div></div>
+  <div class="tabs"><div class="sel"><svg><use href="#rooms"/></svg>Calls</div><div><svg><use href="#people"/></svg>Contacts</div><div><svg><use href="#gear"/></svg>Settings</div></div>
+  <div class="home"></div>
+ </div></div><figcaption><b>Calls.</b> + makes a room or a quick call. Tap a row to open it; tap Join to go straight in. Long-press: copy link, share, mute, remove.</figcaption></figure>
+
+ <figure><div class="fit"><div class="phone">
+  <div class="sb"><span>9:41</span><i>●●● ᯤ ▮</i></div>
+  <div class="nav"><div class="ib clear"><svg><use href="#back"/></svg></div><div class="t">Team standup<small class="live">live · 4 members</small></div><div class="av s a2">TS</div></div>
+  <div class="banner"><div style="flex:1"><b>Call in progress · 12:04</b><span>Anna, Max and Lena</span></div><div class="join">Join</div></div>
+  <div class="chip">Today</div>
+  <div class="card"><div class="ic"><svg><use href="#video"/></svg></div><div><b>Call · 32 min</b><span>10:02 · started by Anna</span></div><div class="stack"><div class="av xs a1">A</div><div class="av xs a4">M</div><div class="av xs a3">L</div></div></div>
+  <div class="chip">Yesterday</div>
+  <div class="card"><div class="ic"><svg><use href="#video"/></svg></div><div><b>Call · 1 h 4 min</b><span>18:30 · started by you</span></div><div class="stack"><div class="av xs a1">A</div><div class="av xs a5">Y</div></div></div>
+  <div class="card miss"><div class="ic"><svg><use href="#phone"/></svg></div><div><b>Missed call</b><span>11:15 · Max, Lena</span></div></div>
+  <div class="dock"><div class="btn g"><svg><use href="#link"/></svg></div><div class="btn"><svg class="f"><use href="#down"/></svg>Join call</div></div>
+  <div class="home"></div>
+ </div></div><figcaption><b>A room.</b> Its calls as a chat: who, when, how long. One button at the bottom: Call (or Join). The face top right opens members, the link and invitations. Transcripts land here later, as messages under their call.</figcaption></figure>
+
+ <figure><div class="fit"><div class="phone">
+  <div class="sb"><span>9:41</span><i>●●● ᯤ ▮</i></div>
+  <div class="nav" style="justify-content:flex-end"><div class="ib"><svg><use href="#add"/></svg></div></div>
+  <div class="big">Contacts</div>
+  <div class="search"><svg style="width:18px;height:18px"><use href="#search"/></svg>Search</div>
+  <div class="li"><div class="av a1">AP<i class="on"></i></div><div class="mid"><b>Anna Petrova</b><span class="acc">online</span></div><div class="call-ic"><svg><use href="#phone"/></svg></div></div>
+  <div class="li"><div class="av a3">L<i class="on"></i></div><div class="mid"><b>Lena</b><span class="live">in a call · Team standup</span></div><div class="call-ic"><svg><use href="#phone"/></svg></div></div>
+  <div class="li"><div class="av a4">M</div><div class="mid"><b>Max</b><span>last seen 2 hours ago</span></div><div class="call-ic"><svg><use href="#phone"/></svg></div></div>
+  <div class="li"><div class="av a5">Mo</div><div class="mid"><b>Mom</b><span>last seen yesterday</span></div><div class="call-ic"><svg><use href="#phone"/></svg></div></div>
+  <div class="li"><div class="av a6">SK</div><div class="mid"><b>Sasha K.</b><span>invited · not joined yet</span></div></div>
+  <div class="tabs"><div><svg><use href="#rooms"/></svg>Calls</div><div class="sel"><svg><use href="#people"/></svg>Contacts</div><div><svg><use href="#gear"/></svg>Settings</div></div>
+  <div class="home"></div>
+ </div></div><figcaption><b>Contacts.</b> People you can ring, online first. The handset calls at once; the row opens the person. Top right adds someone by email or sends an invitation.</figcaption></figure>
+
+ <figure><div class="fit"><div class="phone">
+  <div class="sb"><span>9:41</span><i>●●● ᯤ ▮</i></div>
+  <div class="nav"><div class="ib clear"><svg><use href="#back"/></svg></div><div></div><div class="ib clear"><svg><use href="#more"/></svg></div></div>
+  <div class="center"><div class="av xl a1" style="margin:4px auto 12px">AP</div><div style="font:700 26px -apple-system,system-ui">Anna Petrova</div><div style="color:var(--accent);margin-top:4px;font-size:15px">online</div></div>
+  <div class="acts"><div class="act"><svg><use href="#phone"/></svg>Audio</div><div class="act"><svg><use href="#video"/></svg>Video</div></div>
+  <div class="chip">Sunday</div>
+  <div class="card"><div class="ic"><svg><use href="#phone"/></svg></div><div><b>Outgoing · 5 min</b><span>14:02</span></div></div>
+  <div class="chip">Friday</div>
+  <div class="card miss"><div class="ic"><svg><use href="#phone"/></svg></div><div><b>Missed call</b><span>19:40</span></div></div>
+  <div class="card"><div class="ic"><svg><use href="#video"/></svg></div><div><b>Incoming · 22 min</b><span>12:10</span></div></div>
+  <div class="home"></div>
+ </div></div><figcaption><b>A person.</b> Two buttons, then your calls with them. A personal call rings their phone and their Mac; the first to answer takes it.</figcaption></figure>
+</div>
+
+<h2>2 · The call</h2>
+<p class="sub">Full screen, video edge to edge, five buttons. A white button is on and worth noticing (the speaker is loud, you're muted); grey is the quiet state. Minimise it and the call rides on the app as the desktop's pill.</p>
+<div class="row">
+ <figure><div class="fit"><div class="phone">
+  <div class="stage" style="background:radial-gradient(90% 60% at 50% 20%,#3a2a3d 0,transparent 70%),linear-gradient(#1c1d26,#0e0f12)"></div>
+  <div class="sb"><span>9:41</span><i>●●● ᯤ ▮</i></div>
+  <div class="center" style="position:absolute;left:0;right:0;top:150px"><div class="av xl a1" style="margin:0 auto 18px;box-shadow:0 0 0 6px rgba(255,255,255,.12)">AP</div><div style="font:700 30px -apple-system,system-ui">Anna Petrova</div><div style="margin-top:6px;color:rgba(255,255,255,.75)">Quipcall video…</div></div>
+  <div class="ctl" style="gap:110px;bottom:74px"><div class="cb end wide"><svg class="f"><use href="#down"/></svg></div><div class="cb ok wide"><svg class="f"><use href="#video"/></svg></div></div>
+  <div class="lbl" style="left:55px;bottom:44px">Decline</div><div class="lbl" style="right:55px;bottom:44px">Accept</div>
+  <div class="home"></div>
+ </div></div><figcaption><b>Someone calls.</b> In the app, this. On the lock screen and over other apps it's the system's own call screen (CallKit), so it rings like a phone call and shows in Recents.</figcaption></figure>
+
+ <figure><div class="fit"><div class="phone">
+  <div class="stage v1"></div>
+  <div class="sb"><span>9:41</span><i>●●● ᯤ ▮</i></div>
+  <div class="top"><div class="ib"><svg><use href="#chev"/></svg></div><div class="t">Anna Petrova<small>04:12</small></div><div style="width:38px"></div></div>
+  <div class="vid v2" style="right:14px;top:112px;width:104px;height:150px;box-shadow:0 8px 24px rgba(0,0,0,.5)"></div>
+  <div class="ctl"><div class="cb lit" data-t><svg><use href="#spk"/></svg></div><div class="cb lit" data-t><svg><use href="#video"/></svg></div><div class="cb" data-t><svg><use href="#mic"/></svg></div><div class="cb" data-t><svg><use href="#flip"/></svg></div><div class="cb end"><svg class="f"><use href="#down"/></svg></div></div>
+  <div class="home"></div>
+ </div></div><figcaption><b>A call of two.</b> They fill the screen; you sit in a corner you can drag to any other. Tap the picture to hide the buttons. The chevron minimises.</figcaption></figure>
+
+ <figure><div class="fit"><div class="phone">
+  <div class="stage"></div>
+  <div class="sb"><span>9:41</span><i>●●● ᯤ ▮</i></div>
+  <div class="top"><div class="ib"><svg><use href="#chev"/></svg></div><div class="t">Team standup<small>12:04 · 4</small></div><div class="ib"><svg><use href="#add"/></svg></div></div>
+  <div class="vid v1 speak" style="left:8px;top:104px;width:184px;height:300px"><div class="tag">Anna</div></div>
+  <div class="vid v3" style="left:198px;top:104px;width:184px;height:300px"><div class="tag">Lena</div></div>
+  <div class="vid v4" style="left:8px;top:410px;width:184px;height:300px"><div class="av a4" style="width:84px;height:84px;font-size:30px">M</div><div class="tag"><svg><use href="#micoff"/></svg>Max</div></div>
+  <div class="vid v2" style="left:198px;top:410px;width:184px;height:300px"><div class="tag">You</div></div>
+  <div class="ctl"><div class="cb lit" data-t><svg><use href="#spk"/></svg></div><div class="cb lit" data-t><svg><use href="#video"/></svg></div><div class="cb" data-t><svg><use href="#mic"/></svg></div><div class="cb"><svg><use href="#more"/></svg></div><div class="cb end"><svg class="f"><use href="#down"/></svg></div></div>
+  <div class="home"></div>
+ </div></div><figcaption><b>A room call.</b> Up to three people get a row each, then two across; past eight, pages. A green ring says who speaks. ⋯ holds flip camera, people, and the invitation link.</figcaption></figure>
+
+ <figure><div class="fit"><div class="phone">
+  <div class="stage"></div>
+  <div class="sb"><span>9:41</span><i>●●● ᯤ ▮</i></div>
+  <div class="top"><div class="ib"><svg><use href="#chev"/></svg></div><div class="t">Team standup<small>18:40 · 4</small></div><div class="ib"><svg><use href="#add"/></svg></div></div>
+  <div class="rec">● Anna is recording</div>
+  <div class="vid share" style="left:8px;top:140px;width:374px;height:380px">Q4 roadmap<i class="a"></i><i class="b"></i><i class="c"></i><i class="b"></i><i class="a" style="width:30%"></i><i class="c"></i><i class="b"></i><div class="tag" style="background:rgba(0,0,0,.6)">Anna's screen</div></div>
+  <div class="vid v1 speak" style="left:8px;top:528px;width:120px;height:180px"><div class="tag">Anna</div></div>
+  <div class="vid v3" style="left:135px;top:528px;width:120px;height:180px"><div class="tag">Lena</div></div>
+  <div class="vid v2" style="left:262px;top:528px;width:120px;height:180px"><div class="tag">You</div></div>
+  <div class="ctl"><div class="cb lit" data-t><svg><use href="#spk"/></svg></div><div class="cb lit" data-t><svg><use href="#video"/></svg></div><div class="cb lit" data-t><svg><use href="#micoff"/></svg></div><div class="cb"><svg><use href="#more"/></svg></div><div class="cb end"><svg class="f"><use href="#down"/></svg></div></div>
+  <div class="home"></div>
+ </div></div><figcaption><b>Someone shares.</b> The screen takes the top; pinch to zoom, turn the phone to fill. Faces line up below. A recording or a transcript running on someone's Mac shows as one line under the title.</figcaption></figure>
+
+ <figure><div class="fit"><div class="phone">
+  <div class="sb"><span>9:41</span><i>●●● ᯤ ▮</i></div>
+  <div class="nav" style="justify-content:flex-end"><div class="ib"><svg><use href="#plus"/></svg></div></div>
+  <div class="big">Calls</div>
+  <div class="search"><svg style="width:18px;height:18px"><use href="#search"/></svg>Search</div>
+  <div class="li"><div class="av a2">TS</div><div class="mid"><b>Team standup</b><span class="live">● You're in this call</span></div><div class="end">12:31</div></div>
+  <div class="li"><div class="av a1">AP<i class="on"></i></div><div class="mid"><b>Anna Petrova</b><span>Outgoing · 5 min</span></div><div class="end">14:02</div></div>
+  <div class="li"><div class="av a3">F</div><div class="mid"><b>Family <svg><use href="#lock"/></svg></b><span>Mom, Lena · 48 min</span></div><div class="end">Yesterday</div></div>
+  <div class="li"><div class="av a4">M</div><div class="mid"><b>Max</b><span class="miss">Missed call</span></div><div class="end">Fri</div></div>
+  <div class="pill"><div class="av s a1 ring">A</div><div class="av s a3">L</div><div class="av s a4">M</div><span class="time">12:31</span><div class="cb" data-t><svg><use href="#mic"/></svg></div><div class="cb end"><svg class="f"><use href="#down"/></svg></div></div>
+  <div class="tabs"><div class="sel"><svg><use href="#rooms"/></svg>Calls</div><div><svg><use href="#people"/></svg>Contacts</div><div><svg><use href="#gear"/></svg>Settings</div></div>
+  <div class="home"></div>
+ </div></div><figcaption><b>Minimised.</b> The desktop's pill, on the phone: who's there, who speaks, mute and leave. Tap it to go back. Outside the app, video continues as the system's picture in picture.</figcaption></figure>
+</div>
+
+<h2>3 · Getting in, and settings</h2>
+<div class="row">
+ <figure><div class="fit"><div class="phone">
+  <div class="sb"><span>9:41</span><i>●●● ᯤ ▮</i></div>
+  <div class="center" style="padding-top:190px"><div style="width:112px;height:112px;margin:0 auto 14px;border-radius:28px;background:linear-gradient(135deg,#fdfbe8,#cfdcff 45%,#fde0d0);display:grid;place-items:center"><div style="width:50px;height:38px;border-radius:12px;background:#0b0b0d;display:flex;align-items:center;justify-content:center;gap:9px"><i style="width:7px;height:17px;border-radius:4px;background:#fdfbe8"></i><i style="width:7px;height:17px;border-radius:4px;background:#fdfbe8"></i></div></div>
+  <div style="font:700 34px -apple-system,system-ui">Quipcall</div><div style="color:var(--dim);margin:8px 0 34px">Small, fast calls.</div></div>
+  <div class="field">you@example.com</div>
+  <div class="btn" style="margin:14px 28px 0;flex:none">Continue</div>
+  <div class="center" style="color:var(--faint);font-size:13.500px;margin-top:18px;padding:0 40px">We email you a link. Tap it and you're in.<br>Invitation only, for now.</div>
+  <div class="home"></div>
+ </div></div><figcaption><b>Sign in.</b> Your email, then a link that opens the app. No password, no code to copy. (Today's build still signs in the Mac way, with a code typed in the browser.)</figcaption></figure>
+
+ <figure><div class="fit"><div class="phone">
+  <div class="sb"><span>9:41</span><i>●●● ᯤ ▮</i></div>
+  <div class="nav"></div>
+  <div class="big">Settings</div>
+  <div class="li" style="height:84px"><div class="av a5" style="width:64px;height:64px">N</div><div class="mid"><b style="font-size:20px">Nikita</b><span>nikita@example.com</span></div></div>
+  <div class="sect"><div>Join with the camera off<i class="sw on"></i></div><div>Join muted<i class="sw"></i></div><div>Loudspeaker for video calls<i class="sw on"></i></div></div>
+  <div class="sect"><div>Video on mobile data<em>Smaller</em></div><div>Notifications<em>Calls and rooms</em></div></div>
+  <div class="sect"><div style="color:var(--danger)">Sign out</div></div>
+  <div class="center" style="color:var(--faint);font-size:13px;margin-top:14px">Quipcall 0.1.0 · 31 MB in memory now</div>
+  <div class="tabs"><div><svg><use href="#rooms"/></svg>Calls</div><div><svg><use href="#people"/></svg>Contacts</div><div class="sel"><svg><use href="#gear"/></svg>Settings</div></div>
+  <div class="home"></div>
+ </div></div><figcaption><b>Settings.</b> A handful of switches, no pages of them. The footer shows what the app costs right now: the budget, where we can all see it.</figcaption></figure>
+</div>
+
+<h2>To decide</h2>
+<ul class="notes">
+ <li><b>One list or two?</b> Drawn: rooms and people together under "Calls", as Telegram mixes groups and people. The other way is a Rooms tab with rooms only, and people only under Contacts.</li>
+ <li><b>A room opens, or calls?</b> Drawn: a tap opens the room (its calls, later its transcripts) and Join is a second tap, except on a live room's green button. The built spike calls on the first tap.</li>
+ <li><b>Personal calls need two things we don't have yet:</b> contacts and ringing on the server (plan Stages 3–5), and an Apple Developer account for call notifications (VoIP push) and TestFlight.</li>
+</ul>
+</div>
+<script>
+if (window.top === window.self) document.body.classList.add('standalone');
+// Call buttons toggle between quiet and lit, as in the app.
+document.querySelectorAll('[data-t]').forEach(b => b.addEventListener('click', () => b.classList.toggle('lit')));
+</script>
+</body>
+</html>

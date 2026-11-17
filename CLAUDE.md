@@ -6,6 +6,7 @@ Read README.md first. Plan: docs/PLAN.md. Decisions: docs/ARCHITECTURE.md.
 - **Footprint first.** Keep binaries small and CPU and memory low. Don't add a dependency without a reason.
 - **UI is minimal and custom.** It's built on GPUI with no widget library. Less on screen is better (docs/UI.md).
 - `crates/core` contains no UI code. Media logic goes there.
+- Phones: `apps/ios` (Swift, UIKit, no packages) uses the system's components and colours (no custom controls or fixed colours outside the call's video tiles, faces and the room chat's bubbles) and is views only; what it shows comes from `crates/mobile`, which wraps `crates/core` without its `denoise` and `transcribe` features. The mobile budget in PLAN.md is a floor: raise a limit only when a real call hits it.
 
 ## Conventions
 - In PLAN.md, finished tasks are marked `[x] ~~task~~` and finished stages `## ~~Stage N~~ ✅`. Update it as work lands.
@@ -32,6 +33,19 @@ Read README.md first. Plan: docs/PLAN.md. Decisions: docs/ARCHITECTURE.md.
 - Transcription: `QUIPCALL_MODELS_DIR=<dir>` points at models already downloaded (named as in `crates/stt/src/catalog.rs`), so tests don't fetch 740 MB. `QUIPCALL_STT_MODELS=<dir> cargo test -p quipcall-stt -- --ignored` runs two `say` voices through the real model.
 - Noise suppression: `QUIPCALL_DENOISE=webrtc` (WebRTC's filter) or `=off` instead of DeepFilterNet, and `QUIPCALL_DENOISE_LIMIT=15/30` (dB while talking / in pauses, or `none`) for a stronger model, for A/B. `python3 dev/denoise-eval.py` runs real voices and noise through a call's audio processing and scores every chain; listen in `target/denoise-eval/out/`.
 - Measure memory with `dev/measure.sh <pid>`, which reports the physical footprint, not RSS. RSS once hid a 3 GB IOSurface leak.
+
+## Testing the iOS app
+- `make ios-sim` builds for the Simulator (Rust core, Swift bindings, then Xcode). Don't pass `CODE_SIGNING_ALLOWED=NO`: an unsigned build has no Keychain, and signing in fails with "A required entitlement isn't present".
+- Launch arguments: `-server "$QUIPCALL_API" -web "$QUIPCALL_PUBLIC_URL"` point it at the isolated stack (the Simulator shares the Mac's localhost); `-room <id>` joins at launch. Debug builds only: `-session <token>` (mint one with `curl`: `/api/auth/desktop/start`, approve it with a signed-in browser cookie, then `/poll`) and `-log <file>` for the engine's log.
+- In the Simulator the app sets `QUIPCALL_NO_MIC` and `QUIPCALL_FAKE_CAMERA` itself: its microphone is the Mac's real one, and it has no camera. Never pass `-mic YES` without asking.
+- Signing in for real: the app opens Safari and shows a code (also copied) to type on the page. Leave the Simulator's Safari signed in to the account the user should get (open the magic link from the isolated outbox in it), or the page offers a guest identity instead. Without the page: `curl` `/api/auth/desktop/approve` with the id from the isolated database's `desktop_logins` and the code from the screen.
+- In a Svelte attribute `{8}` is an expression: write a regex quantifier as `pattern={'[a-f0-9]{8}'}`, or the rule silently becomes `[a-f0-9]8` and the field rejects everything.
+- The app left in the user's Device panel keeps talking to the server it was launched with. If that's your isolated stack, leave the stack running when you hand back (and say so), or the user's next tap fails with "Can't reach Quipcall". To bring a stopped stack back with its rooms and sessions, start the three processes again on the same `QUIPCALL_TEST_DIR` rather than sourcing `dev/isolated-env.sh` afresh (it makes a new, empty one).
+- Its process is a Mac process: `dev/measure.sh $(pgrep -f "CoreSimulator/Devices/.*/Cubie.app/Cubie")`. Measure release builds.
+- The Simulator has six sample contacts (Kate Bell, kate-bell@mac.com, and others). Give one an account on the isolated server (an admin's `/api/auth/invites`, then the magic link from the outbox) to see "On Cubie". It can't send texts, so Invite falls back to the share sheet. The system's contacts prompt has a second page: press "Share All 6 Contacts" by its coordinates.
+- People to talk to: `node dev/guests.mjs join "$QUIPCALL_PUBLIC_URL/?room=<public room id>" Anna Max`.
+- To fill a call's history, script a guest's page over DevTools (`http://127.0.0.1:9411/json` for the first guest, `window.qcRoom` in development): `qcRoom.localParticipant.setAttributes({"quipcall.recording":"audio"})`, a `"quipcall.transcribing"` claim (`"<model>@<unix ms>"`) and then `publishData` of `{"type":"lines","lines":[…]}` on the topic `quipcall.transcript`, and a canvas `captureStream()` track published with `source: "screen_share"` for a share that captures no screen.
+- After changing `crates/mobile`'s public items, `dev/ios-core.sh` rewrites `apps/ios/Cubie/Generated/quipcall_mobile.swift`; names that are Swift keywords (`private`, `public`) come out in backticks, so avoid them.
 
 ## macOS gotchas
 - Ask for mic and camera access with AVCaptureDevice before WebRTC touches them. A prompt raised by WebRTC itself blocks its audio thread and freezes the call.

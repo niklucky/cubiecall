@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/protocol", "crates/core", "crates/stt", "apps/server", "apps/desktop"]
+members = ["crates/protocol", "crates/core", "crates/stt", "crates/mobile", "crates/mobile/bindgen", "apps/server", "apps/desktop"]
 exclude = ["vendor"]
 
 [workspace.package]

@@ -85,6 +85,11 @@ fn router(state: AppState) -> Router {
         .route("/api/join", post(rooms::join))
         .route("/api/media/check", get(rooms::media_check))
         .layer(DefaultBodyLimit::max(8192))
+        // An address book's worth of hashes needs more room than the rest.
+        .route(
+            "/api/contacts/match",
+            post(auth::match_contacts).layer(DefaultBodyLimit::max(auth::CONTACT_LOOKUP_MAX * 70)),
+        )
         .layer(middleware::from_fn_with_state(state.clone(), guard))
         .with_state(state)
 }

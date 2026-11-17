@@ -153,10 +153,17 @@ impl ScreenShare {
             let source = source.context("choose a screen or window to share")?;
             crate::screen_mac::start(source, preset, video, preview, on_fail).await?
         };
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
         let capture: Box<dyn Send> = {
             let _ = (source, preview);
             Box::new(generic::start(video, preset, events, on_fail)?)
+        };
+        // A phone shares its screen through the system (ReplayKit, a media
+        // projection), not from inside the app: not built yet.
+        #[cfg(any(target_os = "ios", target_os = "android"))]
+        let capture: Box<dyn Send> = {
+            let _ = (source, preview, video, events, on_fail);
+            phone()?
         };
 
         let publication = room
@@ -179,7 +186,12 @@ impl ScreenShare {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn phone() -> anyhow::Result<Box<dyn Send>> {
+    anyhow::bail!("sharing a phone's screen isn't built yet")
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
 mod generic {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};

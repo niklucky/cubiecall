@@ -259,9 +259,20 @@ async fn rate_connection(
     limit: i64,
     period: i64,
 ) -> Result<()> {
+    spend(db, key, 1, limit, period).await
+}
+/// Count `amount` against `key`'s `limit` for this `period`: a request that
+/// asks many things at once (a contact lookup) is counted by what it asks.
+async fn spend(
+    db: &mut SqliteConnection,
+    key: &str,
+    amount: i64,
+    limit: i64,
+    period: i64,
+) -> Result<()> {
     let window = now() / period;
-    let count: i64 = sqlx::query_scalar("INSERT INTO rate_limits(key,window,count,expires) VALUES (?,?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN window=excluded.window THEN count+1 ELSE 1 END, window=excluded.window, expires=excluded.expires RETURNING count")
-        .bind(key).bind(window).bind(now()+period).fetch_one(db).await?;
+    let count: i64 = sqlx::query_scalar("INSERT INTO rate_limits(key,window,count,expires) VALUES (?,?,?,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN window=excluded.window THEN count+excluded.count ELSE excluded.count END, window=excluded.window, expires=excluded.expires RETURNING count")
+        .bind(key).bind(window).bind(amount).bind(now()+period).fetch_one(db).await?;
     if count > limit {
         return Err(AppError::new(
             StatusCode::TOO_MANY_REQUESTS,
@@ -295,6 +306,58 @@ pub async fn invite_account(
     Ok(Json(
         json!({"url":format!("{}/#accountInvite={token}",s.config.public_url), "email":email}),
     ))
+}
+#[derive(Deserialize)]
+pub struct ContactLookup {
+    /// SHA-256 (hex) of each lowercased email address: the phone's address
+    /// book never arrives in the clear, and none of it is stored.
+    pub hashes: Vec<String>,
+}
+/// The most address-book entries one request may ask about.
+pub const CONTACT_LOOKUP_MAX: usize = 1000;
+/// The most addresses one account may ask about in a day.
+const CONTACT_HASHES_A_DAY: i64 = 10_000;
+/// Which of a signed-in person's contacts have an account: their name, by
+/// the hash that was asked about. Accounts only (no guests), a limited
+/// number of times an hour, so the list of accounts can't be walked.
+pub async fn match_contacts(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Json(req): Json<ContactLookup>,
+) -> Result<Json<Value>> {
+    let p = user(&s, &h).await?;
+    if req.hashes.len() > CONTACT_LOOKUP_MAX {
+        return Err(AppError::bad("Too many contacts in one request"));
+    }
+    rate(&s, &format!("contacts:{}", p.id), 20, 3600).await?;
+    // And by how much is asked: a guessed address that hits gets a name
+    // back, so an account may try only so many a day (a big address book,
+    // twice over).
+    spend(
+        &mut *s.db.acquire().await?,
+        &format!("contact-hashes:{}", p.id),
+        req.hashes.len() as i64,
+        CONTACT_HASHES_A_DAY,
+        86_400,
+    )
+    .await?;
+    let wanted: std::collections::HashSet<&str> = req.hashes.iter().map(String::as_str).collect();
+    let users: Vec<(String, String)> = sqlx::query_as(
+        "SELECT email,name FROM principals WHERE kind='user' AND email IS NOT NULL AND id!=?",
+    )
+    .bind(&p.id)
+    .fetch_all(&s.db)
+    .await?;
+    let matches: Vec<Value> = users
+        .into_iter()
+        .filter_map(|(email, name)| {
+            let hash = hash(&email);
+            wanted
+                .contains(hash.as_str())
+                .then(|| json!({"hash":hash,"name":name}))
+        })
+        .collect();
+    Ok(Json(json!({"matches":matches})))
 }
 #[derive(Deserialize)]
 pub struct LinkRequest {

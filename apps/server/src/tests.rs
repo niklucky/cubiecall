@@ -544,6 +544,81 @@ async fn membership_email_invites_and_desktop_proof() {
     );
 }
 #[tokio::test]
+async fn contact_lookup_names_accounts_by_hash_only_for_users() {
+    let t = Test::new().await;
+    let admin = t.admin().await;
+    // Anna gets an account; Boris never signs up.
+    let (status, v, _) = t
+        .req(
+            "POST",
+            "/api/auth/invites",
+            &admin,
+            json!({"email":"anna@example.com"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let invite = v["url"]
+        .as_str()
+        .unwrap()
+        .split("#accountInvite=")
+        .nth(1)
+        .unwrap()
+        .to_owned();
+    let magic = t.magic("anna@example.com", Some(&invite)).await;
+    let (status, v, _) = t
+        .req("POST", "/api/auth/verify", "", json!({"token":magic}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+
+    let hashes = json!({"hashes":[
+        auth::hash("anna@example.com"),
+        auth::hash("boris@example.com"),
+        auth::hash("admin@example.com"),
+    ]});
+    let (status, v, _) = t
+        .req("POST", "/api/contacts/match", &admin, hashes.clone())
+        .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    // Anna, by her hash; not Boris, and not the asker.
+    let matches = v["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 1, "{v}");
+    assert_eq!(matches[0]["hash"], auth::hash("anna@example.com"));
+    assert!(matches[0].get("email").is_none());
+
+    // Guests and strangers learn nothing.
+    let (guest, _) = t.guest("Guest").await;
+    let (status, _, _) = t
+        .req("POST", "/api/contacts/match", &guest, hashes.clone())
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _, _) = t.req("POST", "/api/contacts/match", "", hashes).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // No more than a thousand at a time, and a whole address book fits.
+    let many = |n: usize| json!({"hashes": (0..n).map(|i| auth::hash(&i.to_string())).collect::<Vec<_>>()});
+    let (status, _, _) = t
+        .req("POST", "/api/contacts/match", &admin, many(1000))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = t
+        .req("POST", "/api/contacts/match", &admin, many(1001))
+        .await;
+    assert_ne!(status, StatusCode::OK);
+
+    // Ten thousand addresses a day, however they're split up: 1,003 so far.
+    for _ in 0..8 {
+        let (status, _, _) = t
+            .req("POST", "/api/contacts/match", &admin, many(1000))
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let (status, _, _) = t
+        .req("POST", "/api/contacts/match", &admin, many(1000))
+        .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
 async fn csrf_and_email_rate_limits() {
     let t = Test::new().await;
     for headers in [
