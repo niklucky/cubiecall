@@ -12,7 +12,7 @@ Set `CUBIE_HOST=user@host` to deploy somewhere else.
 
 ## First deployment under the Cubie name
 
-1. Point `cubiecall.com`, `cubycall.com`, `quipcall.com` and their three `www` names to the VPS. Certbot needs to reach the HTTP challenge for every name.
+1. Point `cubiecall.com`, `cubycall.com` and `quipcall.com` to the VPS. Certbot must reach the HTTP challenge on all three domains. The installer also requests certificates for their resolving `www` names. To enable a missing `www` alias later, add its DNS record and rerun the deployment.
 2. Verify `cubiecall.com` in Resend before setting `CUBIE_MAIL_FROM="Cubie <login@cubiecall.com>"` in the local auth configuration. The installer can also reuse the existing verified sender address and credentials.
 3. Take an online SQLite backup of `/var/lib/quipcall/quipcall.db`. Publish the Cubie Mac archives with `make release-mac` so the new download page works as soon as the site switches.
 4. Run `make deploy` in a maintenance window. The installer obtains the certificate, validates nginx, stops the old services, copies the stopped database with its journals, starts the Cubie services, and switches nginx after both services pass their checks. Before nginx switches, a failed cutover restores the original services and database. Once nginx can route writes to Cubie, retries keep the Cubie database. If the deployment is interrupted, rerun it to finish the switch and resume queued email and cleanup jobs. This first switch disconnects active calls. The installer retains the existing LiveKit keys and old Mac download archives. On upgraded hosts, keep `/var/www/quipcall-acme`. The Cubie ACME webroot points there for renewals.

@@ -85,7 +85,7 @@ mkdir -p "$ROOT/bin" "$ROOT/download"
 # need to be traversable both after a fresh install and after prepublishing zips.
 chmod 755 "$ROOT" "$ROOT/download"
 
-# The old site keeps serving its HTTPS app until all six names have a
+# The old site keeps serving its HTTPS app until the new names have a
 # certificate. Both ACME sites must see the same challenge files meanwhile.
 if [ -d /var/www/quipcall-acme ] && [ ! -e /var/www/cubie-acme ]; then
     ln -s /var/www/quipcall-acme /var/www/cubie-acme
@@ -132,8 +132,19 @@ if [ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
     activate_site "$bootstrap" bootstrap
 fi
 
-certbot certonly --cert-name "$DOMAIN" --webroot -w /var/www/cubie-acme \
-    -d "$DOMAIN" -d "www.$DOMAIN" -d cubycall.com -d www.cubycall.com -d quipcall.com -d www.quipcall.com \
+# All three public domains must validate. Add their www aliases as DNS
+# becomes available, and retain any already covered by the current certificate.
+set -- -d "$DOMAIN" -d cubycall.com -d quipcall.com
+cert="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+for host in "www.$DOMAIN" www.cubycall.com www.quipcall.com; do
+    if getent ahosts "$host" >/dev/null ||
+        { [ -s "$cert" ] && openssl x509 -in "$cert" -noout -ext subjectAltName | tr ', ' '\n' | grep -Fxq "DNS:$host"; }; then
+        set -- "$@" -d "$host"
+    else
+        echo "Deferring TLS for $host until its DNS record exists."
+    fi
+done
+certbot certonly --cert-name "$DOMAIN" --webroot -w /var/www/cubie-acme "$@" \
     --key-type ecdsa --keep-until-expiring --expand --non-interactive --agree-tos
 
 # LiveKit restarts drop every call in progress, so only when something changed.

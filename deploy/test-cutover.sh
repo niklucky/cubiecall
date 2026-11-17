@@ -53,8 +53,18 @@ SH
 chmod +x /mock/bin/mv
 cat >/mock/bin/certbot <<'SH'
 #!/bin/sh
-test ! -e /mock/fail-certbot
+test ! -e /mock/fail-certbot || exit 1
+args=" $* "
+for host in cubiecall.com cubycall.com quipcall.com www.cubiecall.com www.quipcall.com; do
+    case "$args" in *" -d $host "*) ;; *) exit 1 ;; esac
+done
+case "$args" in *" -d www.cubycall.com "*) exit 1 ;; esac
 SH
+cat >/mock/bin/getent <<'SH'
+#!/bin/sh
+case "$*" in 'ahosts www.cubycall.com') exit 2 ;; 'ahosts www.'*) exit 0 ;; *) exec /usr/bin/getent "$@" ;; esac
+SH
+chmod +x /mock/bin/getent
 chmod +x /mock/bin/certbot
 for name in nginx sleep journalctl; do ln -s /bin/true "/mock/bin/$name"; done
 chmod +x /mock/bin/systemctl /mock/bin/curl /opt/cubie/bin/livekit-server
