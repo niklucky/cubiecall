@@ -256,6 +256,7 @@ final class CallViewController: UIViewController {
             guard let tile = tiles[key] else { continue }
             tile.frame = frame
             tile.isHidden = frame.isEmpty
+            tile.feed(in: model.call)
             // Ask for no more video than the tile shows.
             tile.pickQuality(in: model.call, scale: view.window?.screen.scale ?? 3)
         }
@@ -316,8 +317,10 @@ private final class Tile: UIView {
     private let label = UILabel()
     private let labelBack = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
     private let mutedIcon = UIImageView(image: UIImage(systemName: "mic.slash.fill"))
-    /// The track showing, if any.
+    /// The track this tile is for, if any, and the one it's being fed: none
+    /// while the tile is off screen (past the ones that fit).
     private var track: String?
+    private var fed: String?
     private var previewing = false
     private var quality: Quality?
     var isScreen = false {
@@ -368,18 +371,27 @@ private final class Tile: UIView {
     /// Show `track` here, or stop (nil): a tile without video asks for none.
     func show(track: String?, in call: Call?) {
         guard track != self.track else { return }
-        if let old = self.track {
+        self.track = track
+        feed(in: call)
+    }
+
+    /// Feed the tile its video while it's on screen, and not while it's
+    /// hidden: frames nobody sees aren't worth converting.
+    func feed(in call: Call?) {
+        let wanted = isHidden ? nil : track
+        guard wanted != fed else { return }
+        if let old = fed {
             call?.detachVideo(track: old)
         }
-        self.track = track
+        fed = wanted
         quality = nil
-        if let track {
-            call?.attachVideo(track: track, renderer: video.renderer)
+        if let wanted {
+            call?.attachVideo(track: wanted, renderer: video.renderer)
         } else {
             video.clear()
         }
-        video.isHidden = track == nil
-        avatar.isHidden = track != nil
+        video.isHidden = wanted == nil
+        avatar.isHidden = wanted != nil
     }
 
     /// Your own camera, as others see it; mirrored for the front one, the
@@ -396,7 +408,7 @@ private final class Tile: UIView {
 
     /// The smallest layer of a camera that still fills this tile.
     func pickQuality(in call: Call?, scale: CGFloat) {
-        guard let track, !isScreen else { return }
+        guard let track = fed, !isScreen else { return }
         let pixels = bounds.width * scale
         let wanted: Quality = pixels >= 700 ? .high : pixels >= 300 ? .medium : .low
         guard wanted != quality else { return }

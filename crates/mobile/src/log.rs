@@ -145,7 +145,16 @@ impl Log {
             None => text,
         };
         match same {
-            Some(at) => self.moments[at].text = text.to_owned(),
+            // The line as it stands now: its words, and whose and when too
+            // (a correction can change those).
+            Some(at) => {
+                let who = self.name(speaker);
+                let moment = &mut self.moments[at];
+                moment.text = text.to_owned();
+                moment.who = who;
+                moment.mine = speaker == self.you;
+                moment.at = at_ms / 1000;
+            }
             None if self.lines < MAX_LINES => {
                 self.lines += 1;
                 self.moments.push(Moment {
@@ -252,5 +261,18 @@ mod tests {
             said,
             [("Anna", "Hello there", false), ("Nikita", "Hi Anna", true)]
         );
+    }
+
+    #[test]
+    fn a_corrected_line_is_whose_and_when_the_correction_says() {
+        let mut log = Log::begin("me-1".into(), "Nikita".into());
+        log.joined("anna-1", "Anna");
+        log.said("anna-1:1", "anna-1", 10_000, "Hello");
+        log.said("anna-1:1", "me-1", 9_000, "Hello Anna");
+        let (_, moments) = log.finish("room", "");
+        assert_eq!(moments.len(), 1);
+        let line = &moments[0];
+        assert_eq!((line.who.as_str(), line.mine, line.at), ("Nikita", true, 9));
+        assert_eq!(line.text, "Hello Anna");
     }
 }
