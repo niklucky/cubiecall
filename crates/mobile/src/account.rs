@@ -242,7 +242,12 @@ impl Client {
                 .ok_or_else(|| anyhow::anyhow!("The server's sign-in answer makes no sense"))
         };
         let (id, secret, code) = (field("id")?, field("secret")?, field("code")?);
-        let url = format!("{}/?desktop={id}", self.web.trim_end_matches('/'));
+        // `device=phone` only changes the page's words ("your phone", not
+        // "your Mac").
+        let url = format!(
+            "{}/?desktop={id}&device=phone",
+            self.web.trim_end_matches('/')
+        );
         self.state.lock().pending = Some(Pending { id, secret });
         Ok(SignIn { url, code })
     }
