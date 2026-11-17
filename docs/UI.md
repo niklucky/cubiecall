@@ -42,7 +42,7 @@ The browser starts with microphone and camera off. Guests can enter their name, 
 
 After accepting an invitation, the address becomes the ordinary room link so the same browser can return. Unclaimed invitations survive reload and sign-in in the current history entry. Consumed or expired invitations, removed access, full 1-to-1 calls and unavailable/private rooms have distinct recovery screens. Member invitations ask for the invited account before claiming access. The layout adapts to small screens and keeps the room name above the preview.
 
-**Open in the Mac app** uses `cubie://open/<room>` with the Mac’s current identity, as `cubie://join/<room>` does. Missing or expired credentials open browser approval; switching an existing identity is an explicit action under Account. A private invitation is still claimed in the browser first, so if it belongs to a different identity, switch the Mac account deliberately before joining. Session tokens never appear in the link.
+**Open in the Mac app** uses `quipcall://open/<room>` so the browser can launch both generations of the app with the Mac’s current identity, as `cubie://join/<room>` does. Missing or expired credentials open browser approval; switching an existing identity is an explicit action under Account. A private invitation is still claimed in the browser first, so if it belongs to a different identity, switch the Mac account deliberately before joining. Session tokens never appear in the link.
 
 ## Room access
 

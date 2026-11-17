@@ -123,7 +123,7 @@
         openMac: id => {
           openedMac = true;
           // Only the room address is sent; credentials use browser approval.
-          location.href = `cubie://open/${encodeURIComponent(id)}`;
+          location.href = `quipcall://open/${encodeURIComponent(id)}`;
         },
         join: onjoin,
       });
@@ -134,7 +134,7 @@
 </script>
 
 {#if done}
-  <section class="result"><div class="success-mark">✓</div><h1>You’re ready</h1><p>Return to {phone ? 'the app' : 'Cubie'} on your {device}. You’ll continue as <strong>{name}</strong>.</p>{#if phone}<button class="primary" onclick={() => { location.href = 'cubie://signed-in'; }}>Open the app</button>{:else}<button onclick={onhome}>Back to your rooms</button>{/if}</section>
+  <section class="result"><div class="success-mark">✓</div><h1>You’re ready</h1><p>Return to {phone ? 'the app' : 'Cubie'} on your {device}. You’ll continue as <strong>{name}</strong>.</p>{#if phone}<button class="primary" onclick={() => { location.href = 'quipcall://signed-in'; }}>Open the app</button>{:else}<button onclick={onhome}>Back to your rooms</button>{/if}</section>
 {:else if loading && !entry}
   <section class="result" aria-live="polite"><span class="eyebrow">GETTING READY</span><h1>Checking your link…</h1><p>One moment while we check room access.</p></section>
 {:else if denied}

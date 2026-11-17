@@ -164,7 +164,7 @@
         {/if}
       {/if}
       <input aria-label="Room link" readonly value={`${roomOrigin}/?room=${detail.room.id}`} onclick={(e) => e.currentTarget.select()} />
-      <a href={`cubie://open/${detail.room.id}`}>Open in the Mac app</a>
+      <a href={`quipcall://open/${detail.room.id}`}>Open in the Mac app</a>
       {#if detail.room.owner === me?.id}
         <form onsubmit={(e) => { e.preventDefault(); void run(renameRoom); }}>
           <input aria-label="Edit room name" bind:value={editedRoomName} maxlength="64" required disabled={busy} />

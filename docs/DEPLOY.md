@@ -15,17 +15,17 @@ Set `CUBIE_HOST=user@host` to deploy somewhere else.
 1. Point `cubiecall.com`, `cubycall.com`, `quipcall.com` and their three `www` names to the VPS. Certbot needs to reach the HTTP challenge for every name.
 2. Verify `cubiecall.com` in Resend before setting `CUBIE_MAIL_FROM="Cubie <login@cubiecall.com>"` in the local auth configuration. The installer can also reuse the existing verified sender address and credentials.
 3. Take an online SQLite backup of `/var/lib/quipcall/quipcall.db`. Publish the Cubie Mac archives with `make release-mac` so the new download page works as soon as the site switches.
-4. Run `make deploy` in a maintenance window. The installer obtains the certificate, validates nginx, stops the old services, moves the database with its journals, and starts the Cubie services. This first switch disconnects active calls. The installer retains the existing LiveKit keys and old Mac download archives.
+4. Run `make deploy` in a maintenance window. The installer obtains the certificate, validates nginx, stops the old services, copies the stopped database with its journals, starts the Cubie services, and switches nginx after both services pass their checks. A failed cutover restores the original services and database. This first switch disconnects active calls. The installer retains the existing LiveKit keys and old Mac download archives. On upgraded hosts, keep `/var/www/quipcall-acme`. The Cubie ACME webroot points there for renewals.
 5. Check a new invite on `cubiecall.com` and an existing room link on each alias. A fresh visitor lands on the canonical site with the original path, query and fragment. A browser with a session on `quipcall.com` can keep using its original link and guest membership there. Browser cookies are scoped to each host. Both apex aliases serve the API and authenticated LiveKit signaling directly for native clients.
 
-The Mac and iPhone apps register both `cubie://` and `quipcall://`. The Mac reuses an existing Keychain session, writes the Cubie entry at the next sign-in, and moves managed history and downloaded models to `~/Library/Application Support/Cubie`. Previously recorded files stay at their saved paths. The phone uses the same Keychain and history keys across the production aliases.
+Browser handoffs use `quipcall://` to open installed apps from either release. The Mac and iPhone apps register both `cubie://` and `quipcall://`. The Mac reuses an existing Keychain session, writes the Cubie entry at the next sign-in, and moves managed history and downloaded models to `~/Library/Application Support/Cubie`. Previously recorded files stay at their saved paths. The phone uses the same Keychain and history keys across the production aliases.
 
 ## What runs where
 
 | | |
 |---|---|
 | `https://cubiecall.com/` | web client (`/opt/cubie/web`, static) |
-| `/api/` | `cubie-server` on `127.0.0.1:4600` |
+| `/api/` | `cubie-server` on `127.0.0.1:4601` |
 | `/rtc` | LiveKit signalling (WebSocket) on `127.0.0.1:7880` |
 | `/download/` | Mac app, install script, instructions page (`/opt/cubie/download`) |
 | UDP `7882` | LiveKit media, all participants on one port |

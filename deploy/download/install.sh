@@ -23,8 +23,22 @@ if [ -e "$dest/Cubie.app" ] && [ "$(bundle_id "$dest/Cubie.app")" != com.quipcal
     exit 1
 fi
 
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+# Stage beside the destination so both the replacement and rollback are renames.
+tmp=$(mktemp -d "$dest/.cubie-install.XXXXXX")
+cleanup() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    if [ -d "$tmp/previous.app" ] && [ ! -e "$dest/Cubie.app" ]; then
+        mv "$tmp/previous.app" "$dest/Cubie.app" || {
+            echo "Previous installation saved at $tmp/previous.app" >&2
+            exit 1
+        }
+    fi
+    rm -rf "$tmp"
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 echo "Downloading Cubie…"
 curl -fL --progress-bar "$URL" -o "$tmp/Cubie.zip"
 ditto -x -k "$tmp/Cubie.zip" "$tmp"
@@ -45,8 +59,10 @@ if [ -d "$dest/Cubie.app" ] && pgrep -xq Cubie; then
 	pkill -x Cubie || true
 	sleep 1
 fi
-rm -rf "$dest/Cubie.app"
-mv "$tmp/Cubie.app" "$dest/"
+if [ -d "$dest/Cubie.app" ]; then
+    mv "$dest/Cubie.app" "$tmp/previous.app"
+fi
+mv "$tmp/Cubie.app" "$dest/Cubie.app"
 if [ "$legacy_id" = com.quipcall.desktop ]; then
     rm -rf "$legacy"
 fi

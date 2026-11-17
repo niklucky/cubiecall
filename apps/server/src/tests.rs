@@ -619,6 +619,39 @@ async fn contact_lookup_names_accounts_by_hash_only_for_users() {
 }
 
 #[tokio::test]
+async fn email_signin_returns_to_the_requesting_browser_origin() {
+    let t = Test::new().await;
+    let mut state = t.state.clone();
+    Arc::make_mut(&mut state.config).public_url = "https://cubiecall.com".into();
+    let app = router(state.clone());
+    for origin in ["https://quipcall.com", "https://cubiecall.com"] {
+        let req = Request::post("/api/auth/request")
+            .header("x-cubie", "1")
+            .header("origin", origin)
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"email":"admin@example.com"}"#))
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(req).await.unwrap().status(),
+            StatusCode::OK
+        );
+        assert_eq!(auth::deliver_pending(&state).await.unwrap(), 1);
+        let message = std::fs::read_to_string(
+            t.dir
+                .path()
+                .join("mail")
+                .join(format!("{}.txt", auth::hash("admin@example.com"))),
+        )
+        .unwrap();
+        assert!(
+            message
+                .lines()
+                .any(|line| line.starts_with(&format!("{origin}/#magic=")))
+        );
+    }
+}
+
+#[tokio::test]
 async fn csrf_and_email_rate_limits() {
     let t = Test::new().await;
     for headers in [
