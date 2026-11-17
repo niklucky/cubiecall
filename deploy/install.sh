@@ -60,6 +60,24 @@ eventually() {
 	done
 }
 
+# Recover a definitely unpublished attempt before any network or setup step
+# can fail again. Once the old vhost has been removed in the publishing phase,
+# a client may have written to Cubie and retries must keep its database.
+services="$ROOT/.legacy-services"
+phase=$(cat "$STATE/.from-quipcall" 2>/dev/null || true)
+restore_services() {
+    systemctl disable --now cubie-server cubie-livekit || true
+    if [ -f "$STATE/.from-quipcall" ]; then rm -rf "$STATE"; fi
+    while read -r action unit; do systemctl "$action" "$unit"; done < "$services"
+    rm -f "$services" "$ROOT/.cutover-pending"
+    echo "Restored the previous services." >&2
+}
+if [ -f "$services" ] && { [ "$phase" = unpublished ] || [ ! -e "$STATE" ] ||
+    { [ "$phase" = publishing ] && [ -L "$OLD_SITE" ]; }; }; then
+    restore_services
+    phase=
+fi
+
 id cubie >/dev/null 2>&1 ||
 	useradd --system --home-dir $ROOT --no-create-home --shell /usr/sbin/nologin cubie
 mkdir -p "$ROOT/bin" "$ROOT/download"
@@ -77,7 +95,6 @@ mkdir -p /var/www/cubie-acme
 # The legacy directory is the rollback copy. A marker in the new directory
 # distinguishes a previous copy made by this installer from an unrelated DB.
 upgrade=
-phase=$(cat "$STATE/.from-quipcall" 2>/dev/null || true)
 if [ -d "$OLD_STATE" ]; then
     if [ -e "$STATE" ]; then
         case "$phase" in
@@ -159,7 +176,6 @@ if [ -n "$upgrade" ]; then
     # the healthy candidate. Its API uses a separate loopback port, so the
     # old site cannot send writes to a candidate we might discard.
     touch "$ROOT/.cutover-pending"
-    services="$ROOT/.legacy-services"
     if [ ! -f "$services" ]; then
         : > "$services.new"
         for unit in quipcall-livekit quipcall-server; do
@@ -175,11 +191,7 @@ if [ -n "$upgrade" ]; then
         if [ "$status" -ne 0 ]; then
             # Once a reload may have published the new DB, retry forward.
             if [ "$phase" != publishing ] || [ -L "$OLD_SITE" ]; then
-                systemctl disable --now cubie-server cubie-livekit || true
-                if [ -f "$STATE/.from-quipcall" ]; then rm -rf "$STATE"; fi
-                while read -r action unit; do systemctl "$action" "$unit"; done < "$services"
-                rm -f "$services" "$ROOT/.cutover-pending"
-                echo "Cubie cutover failed. Restored the previous services." >&2
+                restore_services
             fi
         fi
         rm -rf "$candidate"

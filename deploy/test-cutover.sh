@@ -51,7 +51,12 @@ if [ "$2" = /var/lib/cubie/.from-quipcall ] && [ -e /mock/kill-at-publishing ]; 
 fi
 SH
 chmod +x /mock/bin/mv
-for name in nginx certbot sleep journalctl; do ln -s /bin/true "/mock/bin/$name"; done
+cat >/mock/bin/certbot <<'SH'
+#!/bin/sh
+test ! -e /mock/fail-certbot
+SH
+chmod +x /mock/bin/certbot
+for name in nginx sleep journalctl; do ln -s /bin/true "/mock/bin/$name"; done
 chmod +x /mock/bin/systemctl /mock/bin/curl /opt/cubie/bin/livekit-server
 export PATH=/mock/bin:$PATH
 python3 - <<'PY'
@@ -84,14 +89,16 @@ for failure in api nginx; do
     rm "/mock/fail-$failure"
 done
 
-touch /mock/kill-at-publishing
-must_fail
-rm /mock/kill-at-publishing
-test "$(cat /var/lib/cubie/.from-quipcall)" = publishing
-touch /mock/fail-nginx
-must_fail
-legacy_active
-rm /mock/fail-nginx
+for failure in certbot nginx; do
+    touch /mock/kill-at-publishing
+    must_fail
+    rm /mock/kill-at-publishing
+    test "$(cat /var/lib/cubie/.from-quipcall)" = publishing
+    touch "/mock/fail-$failure"
+    must_fail
+    legacy_active
+    rm "/mock/fail-$failure"
+done
 
 install_app
 test ! -e /etc/nginx/sites-enabled/quipcall.com.conf

@@ -48,18 +48,21 @@ if [ -d "$dest/Cubie.app" ] && pgrep -xq Cubie; then
 	sleep 1
 fi
 if [ -d "$dest/Cubie.app" ]; then
-    /usr/bin/osascript -l JavaScript - "$dest/Cubie.app" "$tmp/Cubie.app" <<'JS'
+    if ! /usr/bin/osascript -l JavaScript - "$dest/Cubie.app" "$tmp/Cubie.app" <<'JS'
 ObjC.import('Foundation');
 function run(paths) {
     const url = path => $.NSURL.fileURLWithPath(path);
-    const error = Ref();
     // NSFileManagerItemReplacementUsingNewMetadataOnly preserves the signed bundle.
     const replaced = $.NSFileManager.defaultManager.replaceItemAtURLWithItemAtURLBackupItemNameOptionsResultingItemURLError(
-        url(paths[0]), url(paths[1]), $(), 1, Ref(), error
+        url(paths[0]), url(paths[1]), $(), 1, Ref(), Ref()
     );
-    if (!replaced) throw Error(ObjC.unwrap(error[0].localizedDescription));
+    if (!replaced) throw Error('Bundle replacement failed');
 }
 JS
+    then
+        echo "Could not replace $dest/Cubie.app. The previous installation is available at that path." >&2
+        exit 1
+    fi
 else
     mv "$tmp/Cubie.app" "$dest/Cubie.app"
 fi
