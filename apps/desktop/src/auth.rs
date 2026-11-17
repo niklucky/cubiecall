@@ -23,22 +23,45 @@ fn key_account(server: &str) -> String {
         crate::store::data_override().unwrap_or_default().display()
     )
 }
+#[cfg(target_os = "macos")]
+fn restore_session(
+    read: impl Fn(&str) -> Result<Vec<u8>, i32>,
+    add_current: impl FnOnce(&[u8]) -> Result<(), i32>,
+) -> Option<String> {
+    const ITEM_NOT_FOUND: i32 = -25300; // errSecItemNotFound
+    const DUPLICATE_ITEM: i32 = -25299; // errSecDuplicateItem
+    match read(SESSION_SERVICE) {
+        Ok(bytes) => return String::from_utf8(bytes).ok(),
+        Err(ITEM_NOT_FOUND) => {}
+        Err(_) => return None,
+    }
+    let previous = String::from_utf8(read(PREVIOUS_SERVICE).ok()?).ok()?;
+    // Copy after the user grants access. Keep the original for Quipcall and
+    // add without overwriting a session another Cubie instance just saved.
+    match add_current(previous.as_bytes()) {
+        Ok(()) => Some(previous),
+        Err(DUPLICATE_ITEM) => String::from_utf8(read(SESSION_SERVICE).ok()?).ok(),
+        Err(status) => {
+            tracing::warn!(status, "Could not migrate the saved Quipcall session");
+            Some(previous)
+        }
+    }
+}
 pub fn load(server: &str) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
-        use security_framework::passwords::get_generic_password;
-        let account = key_account(server);
-        // An existing session keeps its Keychain ACL until the next sign-in.
-        // A locked or denied item must never select another credential.
-        const ITEM_NOT_FOUND: i32 = -25300; // errSecItemNotFound
-        let bytes = match get_generic_password(SESSION_SERVICE, &account) {
-            Ok(bytes) => bytes,
-            Err(e) if e.code() == ITEM_NOT_FOUND => {
-                get_generic_password(PREVIOUS_SERVICE, &account).ok()?
-            }
-            Err(_) => return None,
+        use security_framework::{
+            os::macos::keychain::SecKeychain, passwords::get_generic_password,
         };
-        String::from_utf8(bytes).ok()
+        let account = key_account(server);
+        restore_session(
+            |service| get_generic_password(service, &account).map_err(|e| e.code()),
+            |token| {
+                SecKeychain::default()
+                    .and_then(|kc| kc.add_generic_password(SESSION_SERVICE, &account, token))
+                    .map_err(|e| e.code())
+            },
+        )
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -577,6 +600,72 @@ mod tests {
         io::{Read, Write},
         net::TcpListener,
     };
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn approved_legacy_session_is_imported_on_first_launch_only() {
+        use std::cell::{Cell, RefCell};
+        let current = RefCell::new(None::<Vec<u8>>);
+        let legacy_reads = Cell::new(0);
+        for _ in 0..2 {
+            let restored = restore_session(
+                |service| {
+                    if service == SESSION_SERVICE {
+                        return current.borrow().clone().ok_or(-25300);
+                    }
+                    assert_eq!(service, PREVIOUS_SERVICE);
+                    legacy_reads.set(legacy_reads.get() + 1);
+                    Ok(b"old-session".to_vec())
+                },
+                |token| {
+                    assert!(current.replace(Some(token.to_vec())).is_none());
+                    Ok(())
+                },
+            );
+            assert_eq!(restored.as_deref(), Some("old-session"));
+        }
+        assert_eq!(legacy_reads.get(), 1);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn denied_keychain_read_does_not_import_a_session() {
+        for denied_service in [SESSION_SERVICE, PREVIOUS_SERVICE] {
+            let restored = restore_session(
+                |service| {
+                    if service == denied_service {
+                        Err(-25293)
+                    } else {
+                        assert_eq!(service, SESSION_SERVICE);
+                        Err(-25300)
+                    }
+                },
+                |_| panic!("access was denied"),
+            );
+            assert!(restored.is_none());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn migration_uses_concurrent_sign_in_and_tolerates_a_failed_write() {
+        use std::cell::Cell;
+        for (error, expected) in [(-25299, "new"), (-25293, "old")] {
+            let added = Cell::new(false);
+            let restored = restore_session(
+                |service| match service {
+                    PREVIOUS_SERVICE => Ok(b"old".to_vec()),
+                    SESSION_SERVICE if added.get() => Ok(b"new".to_vec()),
+                    _ => Err(-25300),
+                },
+                |_| {
+                    added.set(true);
+                    Err(error)
+                },
+            );
+            assert_eq!(restored.as_deref(), Some(expected));
+        }
+    }
 
     #[test]
     fn unbinding_identity_clears_private_room_cache() {
