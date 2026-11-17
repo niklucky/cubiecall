@@ -371,31 +371,46 @@ pub async fn request_link(
 ) -> Result<Json<Value>> {
     let email = email(&req.email)?;
     let requester = client_ip(&h);
-    sqlx::query("INSERT INTO mail_requests(email,requester,invite,created) VALUES (?,?,?,?)")
-        .bind(email)
-        .bind(requester)
-        .bind(req.invite.as_deref().map(hash))
-        .bind(now())
-        .execute(&s.db)
-        .await?;
+    let origin = h.get(header::ORIGIN).and_then(|v| v.to_str().ok());
+    sqlx::query(
+        "INSERT INTO mail_requests(email,requester,invite,created,origin) VALUES (?,?,?,?,?)",
+    )
+    .bind(email)
+    .bind(requester)
+    .bind(req.invite.as_deref().map(hash))
+    .bind(now())
+    .bind(origin.filter(|origin| s.config.trusts_origin(origin)))
+    .execute(&s.db)
+    .await?;
     s.mail_ready.notify_one();
     // Delivery, eligibility and suppression never affect the public response.
     Ok(Json(json!({"ok":true})))
 }
 
+#[derive(FromRow)]
+struct QueuedMail {
+    id: i64,
+    email: String,
+    requester: String,
+    invite: Option<String>,
+    attempts: i64,
+    origin: Option<String>,
+}
+
 /// One bounded worker drains the durable queue; never hold an HTTP request open
 /// for delivery or expose a provider failure to an account-enumeration probe.
 pub async fn deliver_pending(s: &AppState) -> Result<usize> {
-    let requests: Vec<(i64, String, String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT id,email,requester,invite,attempts FROM mail_requests WHERE created>? AND available<=? ORDER BY id LIMIT 100",
+    let requests: Vec<QueuedMail> = sqlx::query_as(
+        "SELECT id,email,requester,invite,attempts,origin FROM mail_requests WHERE created>? AND available<=? ORDER BY id LIMIT 100",
     )
     .bind(now() - 900)
     .bind(now())
     .fetch_all(&s.db)
     .await?;
     let count = requests.len();
-    for (id, email, requester, invite, attempts) in requests {
-        if let Err(e) = deliver_link(s, &email, &requester, invite, attempts).await {
+    for mail in requests {
+        let (id, attempts) = (mail.id, mail.attempts);
+        if let Err(e) = deliver_link(s, &mail).await {
             tracing::warn!(
                 request = id,
                 attempt = attempts + 1,
@@ -449,13 +464,11 @@ pub async fn mail_worker(s: AppState) {
         }
     }
 }
-async fn deliver_link(
-    s: &AppState,
-    email: &str,
-    requester: &str,
-    invite: Option<String>,
-    attempts: i64,
-) -> Result<()> {
+async fn deliver_link(s: &AppState, mail: &QueuedMail) -> Result<()> {
+    let email = mail.email.as_str();
+    let requester = &mail.requester;
+    let invite = mail.invite.as_deref();
+    let attempts = mail.attempts;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM identities WHERE provider='email' AND subject=?)",
     )
@@ -465,7 +478,7 @@ async fn deliver_link(
     let allowed: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM account_invites WHERE hash=? AND email=? AND expires>?)",
     )
-    .bind(&invite)
+    .bind(invite)
     .bind(email)
     .bind(now())
     .fetch_one(&s.db)
@@ -502,7 +515,14 @@ async fn deliver_link(
         .bind(now() + 15 * 60)
         .execute(&s.db)
         .await?;
-    let url = format!("{}/#magic={token}", s.config.public_url);
+    // Verification must set the host-only cookie on the waiting tab's origin.
+    let origin = mail
+        .origin
+        .as_deref()
+        .filter(|origin| s.config.trusts_origin(origin))
+        .unwrap_or(&s.config.public_url);
+    // This landing path also works when the legacy tab has no cookie yet.
+    let url = format!("{origin}/signin#magic={token}");
     if let Err(e) = send(s, email, &url).await {
         // A timeout can happen after provider acceptance. Keep this token
         // valid, and count the attempt, so a late email works and ambiguous
@@ -527,11 +547,11 @@ async fn send(s: &AppState, email: &str, url: &str) -> anyhow::Result<()> {
             options.mode(0o600);
         }
         let mut file = options.open(dir.join(format!("{}.txt", hash(email))))?;
-        writeln!(file, "Sign in to Quipcall (expires in 15 minutes):\n{url}")?;
+        writeln!(file, "Sign in to Cubie (expires in 15 minutes):\n{url}")?;
         return Ok(());
     }
     s.http.post("https://api.resend.com/emails").bearer_auth(s.config.resend_api_key.as_deref().unwrap_or_default())
-        .json(&json!({"from":s.config.mail_from,"to":[email],"subject":"Sign in to Quipcall","text":format!("Sign in to Quipcall:\n{url}\n\nThis link expires in 15 minutes and can only be used once. If you did not request it, ignore this email.")}))
+        .json(&json!({"from":s.config.mail_from,"to":[email],"subject":"Sign in to Cubie","text":format!("Sign in to Cubie:\n{url}\n\nThis link expires in 15 minutes and can only be used once. If you did not request it, ignore this email.")}))
         .send().await?.error_for_status()?;
     Ok(())
 }
@@ -635,7 +655,7 @@ pub async fn desktop_approve(
         // Commit failed guesses too; a challenge gets five attempts total.
         tx.commit().await?;
         return Err(AppError::bad(
-            "Check the code shown in Quipcall on your Mac, or restart sign-in",
+            "Check the code shown in Cubie on your Mac, or restart sign-in",
         ));
     }
     sqlx::query("UPDATE desktop_logins SET principal=? WHERE id=?")

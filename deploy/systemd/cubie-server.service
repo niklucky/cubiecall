@@ -1,0 +1,29 @@
+[Unit]
+Description=Cubie API server
+After=network-online.target cubie-livekit.service
+Wants=network-online.target
+
+[Service]
+User=cubie
+Group=cubie
+EnvironmentFile=/opt/cubie/secrets.env
+Environment=CUBIE_WORKER_HOLD=/opt/cubie/.cutover-pending
+Environment=CUBIE_BIND=127.0.0.1:4601
+Environment=LIVEKIT_PUBLIC_URL=wss://cubiecall.com
+Environment=LIVEKIT_API_URL=http://127.0.0.1:7880
+Environment=CUBIE_PUBLIC_URL=https://cubiecall.com
+Environment=CUBIE_DATABASE_URL=sqlite:///var/lib/cubie/cubie.db
+StateDirectory=cubie
+StateDirectoryMode=0700
+UMask=0077
+Environment=RUST_LOG=cubie_server=info
+ExecStart=/opt/cubie/bin/cubie-server
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

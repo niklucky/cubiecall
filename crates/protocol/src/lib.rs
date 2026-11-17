@@ -29,7 +29,7 @@ pub fn is_valid_room_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-/// The LiveKit data topic for transcripts, between apps in a call.
+/// The deployed LiveKit transcript topic, shared with earlier client releases.
 pub const TRANSCRIPT_TOPIC: &str = "quipcall.transcript";
 /// How long after a Mac stops transcribing (its `quipcall.transcribing`
 /// claim goes) apps still take its lines: the last words, transcribed after

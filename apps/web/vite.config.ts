@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 5173,
-    // QUIPCALL_API lets a second dev stack (e.g. for automated tests) run alongside.
-    proxy: { '/api': process.env.QUIPCALL_API ?? 'http://127.0.0.1:8080' },
+    // CUBIE_API lets a second dev stack (e.g. for automated tests) run alongside.
+    proxy: { '/api': process.env.CUBIE_API ?? 'http://127.0.0.1:8080' },
   },
 });

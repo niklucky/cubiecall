@@ -1,30 +1,40 @@
 # Deploy
 
-Alpha runs on one VPS (`root@testron.dev`, Debian 13, shared with other projects) at **https://quipcall.com**.
+The alpha uses one VPS (`root@testron.dev`, Debian 13, shared with other projects). Its canonical origin is **https://cubiecall.com**.
 
 ```sh
 make deploy        # server + web client + VPS config
-make release-mac   # build the Mac app and publish it at https://quipcall.com/download/
+make release-mac   # build the Mac app and publish it at https://cubiecall.com/download/
 make mac-app       # build only → target/mac/
 ```
 
-Set `QUIPCALL_HOST=user@host` to deploy somewhere else.
+Set `CUBIE_HOST=user@host` to deploy somewhere else.
+
+## First deployment under the Cubie name
+
+1. Point `cubiecall.com`, `cubycall.com` and `quipcall.com` to the VPS. Certbot must reach the HTTP challenge on all three domains. The installer also requests certificates for their resolving `www` names. To enable a missing `www` alias later, add its DNS record and rerun the deployment.
+2. Verify `cubiecall.com` in Resend before setting `CUBIE_MAIL_FROM="Cubie <login@cubiecall.com>"` in the local auth configuration. The installer can also reuse the existing verified sender address and credentials.
+3. Take an online SQLite backup of `/var/lib/quipcall/quipcall.db`. Publish the Cubie Mac archives with `make release-mac` so the new download page works as soon as the site switches.
+4. Run `make deploy` in a maintenance window. The installer obtains the certificate, validates nginx, stops the old services, copies the stopped database with its journals, starts the Cubie services, and switches nginx after both services pass their checks. Before nginx switches, a failed cutover restores the original services and database. Once nginx can route writes to Cubie, retries keep the Cubie database. If the deployment is interrupted, rerun it to finish the switch and resume queued email and cleanup jobs. This first switch disconnects active calls. The installer retains the existing LiveKit keys and old Mac download archives. On upgraded hosts, keep `/var/www/quipcall-acme`. The Cubie ACME webroot points there for renewals.
+5. Check a new invite on `cubiecall.com` and an existing room link on each alias. A fresh visitor lands on the canonical site with the original path, query and fragment. A browser with a session on `quipcall.com` can keep using its original link and guest membership there. Browser cookies are scoped to each host. Both apex aliases serve the API and authenticated LiveKit signaling directly for native clients.
+
+Browser handoffs use `quipcall://` to open installed apps from either release. The Mac and iPhone apps register both `cubie://` and `quipcall://`. The Mac copies an existing Quipcall session into its own Keychain entry the first time macOS grants access. Choosing **Allow** once is sufficient for this migration. The Mac app also moves managed history and downloaded models to `~/Library/Application Support/Cubie`. Previously recorded files stay at their saved paths. The phone uses the same Keychain and history keys across the production aliases. Email sign-in returns to the browser origin that requested it, including a legacy tab without a session cookie.
 
 ## What runs where
 
 | | |
 |---|---|
-| `https://quipcall.com/` | web client (`/opt/quipcall/web`, static) |
-| `/api/` | `quipcall-server` on `127.0.0.1:4600` |
+| `https://cubiecall.com/` | web client (`/opt/cubie/web`, static) |
+| `/api/` | `cubie-server` on `127.0.0.1:4601` |
 | `/rtc` | LiveKit signalling (WebSocket) on `127.0.0.1:7880` |
-| `/download/` | Mac app, install script, instructions page (`/opt/quipcall/download`) |
+| `/download/` | Mac app, install script, instructions page (`/opt/cubie/download`) |
 | UDP `7882` | LiveKit media, all participants on one port |
 | TCP `7881` | LiveKit media over TCP, for networks that block UDP |
 
-- nginx terminates TLS: site `/etc/nginx/sites-available/quipcall.com.conf` (source: `deploy/nginx/`). `www` redirects to the bare domain.
-- Let's Encrypt certificate via certbot's webroot (`/var/www/quipcall-acme`), renewed by `certbot.timer`. A deploy hook already on the box reloads nginx after renewals.
-- systemd units `quipcall-livekit` and `quipcall-server`, both running as the `quipcall` user.
-- `/opt/quipcall/secrets.env` (root, 0600) holds the LiveKit API key and secret. `install.sh` generates it on the first deploy and it never leaves the box. It also holds the auth settings below. Rotate LiveKit keys in place; do not delete the email configuration.
+- nginx terminates TLS: site `/etc/nginx/sites-available/cubiecall.com.conf` (source: `deploy/nginx/`). `www` redirects to the bare domain.
+- Let's Encrypt certificate via certbot's webroot (`/var/www/cubie-acme`), renewed by `certbot.timer`. A deploy hook already on the box reloads nginx after renewals.
+- systemd units `cubie-livekit` and `cubie-server`, both running as the `cubie` user.
+- `/opt/cubie/secrets.env` (root, 0600) holds the LiveKit API key and secret. `install.sh` generates it on the first deploy and it never leaves the box. It also holds the auth settings below. Rotate LiveKit keys in place; do not delete the email configuration.
 - No host firewall. LiveKit binds only to `eth0` (public IPv4 + IPv6), not to the Docker bridges.
 
 ## How `make deploy` works
@@ -32,50 +42,50 @@ Set `QUIPCALL_HOST=user@host` to deploy somewhere else.
 `deploy/deploy.sh` builds locally and runs `deploy/install.sh` on the box:
 
 1. The server, cross-compiled to a static Linux binary with `cargo zigbuild` (`x86_64-unknown-linux-musl`; Zig compiles bundled SQLite and TLS C code), and the web client (`pnpm build`). Install `zig` and `cargo-zigbuild` on the build Mac first.
-2. One tarball over SSH to `/opt/quipcall/incoming`, removed afterwards.
+2. One tarball over SSH to a private temporary directory under `/opt/cubie-incoming.*`, removed afterwards.
 3. `install.sh` (idempotent): user and directories, LiveKit at the pinned version, keys, configs, units, web files, nginx site, then health checks (`/api/health` through nginx, LiveKit on 7880).
 
 Guard rails, because the box is shared:
 - LiveKit restarts only when its binary, config or unit changed. A restart drops every call in progress. The API server always restarts; that takes milliseconds and keeps calls alive.
 - If `nginx -t` rejects the new site, the previous one is restored, so other sites keep working and future reloads don't fail.
-- Only quipcall files are touched: the site file, two units, `/opt/quipcall`, `/var/lib/quipcall`, `/var/www/quipcall-acme`.
+- Subsequent deploys update the Cubie site, two systemd units, and the application, database and ACME directories listed above.
 
 ## Mac app
 
 The Quby icon is bundled from `apps/desktop/assets/$ICON.icns` into `Contents/Resources` before signing and selected by `CFBundleIconFile`; `ICON` in `deploy/mac/package.sh` is `QubyTransparent` (the cube on transparency) or `Quby` (the earlier black tile). Artwork sources, transparent exports, and regeneration instructions are in [assets/branding](../assets/branding/README.md). The web favicon files ship from `apps/web/public` through the normal Vite build.
 
-`deploy/mac/package.sh` builds one app per architecture (Apple Silicon and Intel), signs them and zips them. Two slices in one binary would be about 115 MB, well over the 60 MB bundle budget. Release builds have `https://quipcall.com` baked in (`QUIPCALL_SERVER` at build time), and `MACOSX_DEPLOYMENT_TARGET=12.3`, the release ScreenCaptureKit appeared in. Below 10.14.4 the linker would also point the Swift overlay `libswiftCoreMedia` at `@rpath`, and the Intel app wouldn't launch. The script refuses to package a binary that links anything outside macOS.
+`deploy/mac/package.sh` builds one app per architecture (Apple Silicon and Intel), signs them and zips them. Two slices in one binary would be about 115 MB, well over the 60 MB bundle budget. Release builds have `https://cubiecall.com` baked in (`CUBIE_SERVER` at build time), and `MACOSX_DEPLOYMENT_TARGET=12.3`, the release ScreenCaptureKit appeared in. Below 10.14.4 the linker would also point the Swift overlay `libswiftCoreMedia` at `@rpath`, and the Intel app wouldn't launch. The script refuses to package a binary that links anything outside macOS.
 
-Friends install with `curl -fsSL https://quipcall.com/download/install.sh | sh`, which picks the right architecture. A file downloaded with curl isn't quarantined, so Gatekeeper doesn't block the unnotarized app. Downloading the zip in a browser works too, but needs System Settings → Privacy & Security → Open Anyway once.
+Friends install with `curl -fsSL https://cubiecall.com/download/install.sh | sh`, which picks the right architecture. A file downloaded with curl isn't quarantined, so Gatekeeper doesn't block the unnotarized app. Downloading the zip in a browser works too, but needs System Settings → Privacy & Security → Open Anyway once.
 
-macOS remembers the app's permissions (microphone, camera, Screen Recording) by its signature. Ad-hoc signatures tied them to one exact build, so every update lost them, while System Settings went on showing the old build as allowed. Releases are now signed with a self-signed certificate that stays the same across builds. `deploy/mac/signing.sh` makes it on the first `make mac-app`, in `~/Library/Keychains/quipcall-signing.keychain-db` (no password, not in the keychain search list). **Back that file up**: a new certificate means everyone grants permissions once more. The first release signed this way also needs that once, coming from ad-hoc. The certificate isn't a Developer ID, so a zip downloaded in a browser still needs one manual "Open"; notarization would fix that (Stage 7).
+macOS ties microphone, camera and Screen Recording permissions to the signed app identity. Cubie keeps the shipping bundle ID `com.quipcall.desktop` and reuses the existing certificate in `~/Library/Keychains/quipcall-signing.keychain-db`. **Back up that keychain** and restore it on a replacement build Mac. On a fresh setup without a previous identity, `deploy/mac/signing.sh` creates `cubie-signing.keychain-db`. A different certificate requires users to grant permissions again. Browser downloads of this self-signed release still require one manual “Open”.
 
-For a release from uncommitted work, set `QUIPCALL_BUILD` to a positive integer greater than the currently published build (check `/download/version.txt`). Otherwise the build number defaults to the Git commit count.
+For a release from uncommitted work, set `CUBIE_BUILD` to a positive integer greater than the currently published build (check `/download/version.txt`). Otherwise the build number defaults to the Git commit count.
 
-The app logs to `~/Library/Logs/Quipcall/quipcall.log` when started from Finder (the previous run is kept as `quipcall.previous.log`).
+The app logs to `~/Library/Logs/Cubie/cubie.log` when started from Finder (the previous run is kept as `cubie.previous.log`).
 
 ## Logs and status
 
 ```sh
-ssh root@testron.dev journalctl -u quipcall-server -u quipcall-livekit -f
-ssh root@testron.dev systemctl status quipcall-livekit quipcall-server
+ssh root@testron.dev journalctl -u cubie-server -u cubie-livekit -f
+ssh root@testron.dev systemctl status cubie-livekit cubie-server
 ```
 
 ## Invite-only authentication
 
-Keep local credentials in ignored `deploy/auth.env.local` (mode 0600), using [deploy/auth.env.example](../deploy/auth.env.example) as the template. `make deploy` securely includes that file when present (or use `QUIPCALL_AUTH_ENV=/path/to/file`). The installer merges these settings into `/opt/quipcall/secrets.env`:
+Keep local credentials in ignored `deploy/auth.env.local` (mode 0600), using [deploy/auth.env.example](../deploy/auth.env.example) as the template. `make deploy` securely includes that file when present (or use `CUBIE_AUTH_ENV=/path/to/file`). The installer merges these settings into `/opt/cubie/secrets.env`:
 
 - `RESEND_API_KEY`: a Resend key with permission to send emails.
-- `QUIPCALL_MAIL_FROM`: sender on a domain verified in Resend. Disable email click tracking for sign-in messages.
-- `QUIPCALL_BOOTSTRAP_EMAIL`: your email. Verify it through the normal magic-link flow to create the first admin account; only admins issue account registration invitations.
+- `CUBIE_MAIL_FROM`: sender on a domain verified in Resend. Disable email click tracking for sign-in messages.
+- `CUBIE_BOOTSTRAP_EMAIL`: your email. Verify it through the normal magic-link flow to create the first admin account; only admins issue account registration invitations.
 
 The installer requires Python 3, validates these settings before replacing the running application, and writes the merged secrets atomically with mode 0600. It initializes missing LiveKit keys even if secrets.env already contains only auth settings; existing key pairs are preserved. On later deploys the local auth file is optional if the server already has these settings. Credentials are never logged. No deployment is needed to run tests.
 
-The systemd unit sets the public origin to `https://quipcall.com`, creates a private state directory, and stores SQLite at `/var/lib/quipcall/quipcall.db`. Back this database up using SQLite's online backup command (or stop the API before copying it). It contains accounts, sessions, invitations, rooms and memberships. Restarting the API preserves access. Migrations run at startup. The API checks readiness by opening and migrating the database before binding its port.
+The systemd unit sets the public origin to `https://cubiecall.com`, creates a private state directory, and stores SQLite at `/var/lib/cubie/cubie.db`. Back this database up using SQLite's online backup command (or stop the API before copying it). It contains accounts, sessions, invitations, rooms and memberships. Restarting the API preserves access. Migrations run at startup. The API checks readiness by opening and migrating the database before binding its port.
 
 Sign in on the web, then use **Invite a new account** to make a single-use, email-bound registration link. Share the link yourself. It expires after seven days. The recipient enters the invited email and verifies it through Resend. Existing accounts only need an email sign-in link. Magic links expire after 15 minutes and are consumed only by an explicit confirmation POST, so email-link scanners don't consume them. Credential hashes, rather than bearer credentials, are stored in SQLite.
 
-Browser sessions use HttpOnly, Secure, SameSite=Lax cookies on production. Native sessions use macOS Keychain, scoped to the server and (for tests) `QUIPCALL_DATA_DIR`. Desktop sign-in opens the browser and requires typing the eight-character code shown by that Mac. The code is absent from the URL, stored hashed on the server, and limited to five approval attempts. Pending sign-in can be cancelled immediately. HTTP 401 clears the exact failed native credential; an admission failure returns Home and starts sign-in for that room. Stale responses cannot clear a newer session. The app exchanges a separate private polling secret for a session; no session credential is passed through a custom URL scheme. User sessions last 30 days and guest sessions one year, with renewal on active use. Authenticated use renews the deadline once less than half remains, and browser cookies follow that deadline; expired or revoked credentials are never renewed. A room membership persists independently of session expiry; a guest who loses their credential needs a fresh invitation. Apple and other OAuth providers are deferred; the `identities` table already separates provider identity from the internal account ID.
+Browser sessions use HttpOnly, Secure, SameSite=Lax cookies on production. Native sessions use macOS Keychain, scoped to the server and (for tests) `CUBIE_DATA_DIR`. Desktop sign-in opens the browser and requires typing the eight-character code shown by that Mac. The code is absent from the URL, stored hashed on the server, and limited to five approval attempts. Pending sign-in can be cancelled immediately. HTTP 401 clears the exact failed native credential; an admission failure returns Home and starts sign-in for that room. Stale responses cannot clear a newer session. The app exchanges a separate private polling secret for a session; no session credential is passed through a custom URL scheme. User sessions last 30 days and guest sessions one year, with renewal on active use. Authenticated use renews the deadline once less than half remains, and browser cookies follow that deadline; expired or revoked credentials are never renewed. A room membership persists independently of session expiry; a guest who loses their credential needs a fresh invitation. Apple and other OAuth providers are deferred; the `identities` table already separates provider identity from the internal account ID.
 
 ## Calls and access
 
@@ -98,22 +108,22 @@ For an isolated second stack, source `dev/isolated-env.sh` **once** from the rep
 
 ```sh
 source dev/isolated-env.sh
-livekit-server --config "$QUIPCALL_LIVEKIT_CONFIG" > "$QUIPCALL_TEST_DIR/livekit.log" 2>&1 &
-cargo run -p quipcall-server > "$QUIPCALL_TEST_DIR/server.log" 2>&1 &
-(cd apps/web && pnpm dev --port 5273 --strictPort) > "$QUIPCALL_TEST_DIR/web.log" 2>&1 &
+livekit-server --config "$CUBIE_LIVEKIT_CONFIG" > "$CUBIE_TEST_DIR/livekit.log" 2>&1 &
+cargo run -p cubie-server > "$CUBIE_TEST_DIR/server.log" 2>&1 &
+(cd apps/web && pnpm dev --port 5273 --strictPort) > "$CUBIE_TEST_DIR/web.log" 2>&1 &
 # Native clients also need the web origin for browser approval:
-MACOSX_DEPLOYMENT_TARGET=12.3 cargo run -p quipcall-desktop -- --server "$QUIPCALL_API" --web "$QUIPCALL_PUBLIC_URL"
+MACOSX_DEPLOYMENT_TARGET=12.3 cargo run -p cubie-desktop -- --server "$CUBIE_API" --web "$CUBIE_PUBLIC_URL"
 ```
 
-The helper creates fresh SQLite/outbox/native state under `$QUIPCALL_TEST_DIR`, uses server 8180, Vite 5273 with a matching allowed Origin, and LiveKit 7980/7981/7982. Do not use ordinary `make dev` for this stack: its included dev.env points at the user's shared development state. Keep track of your own process IDs when stopping the stack. Authenticate with `admin@example.test` via the isolated outbox, create a public room, then use that room ID for a headless participant. `?room=<id>&autojoin=1&mic=0` works only in local Vite development mode and still obeys server authorization; production always shows the joining screen. Use Chrome's fake-media flags from CLAUDE.md.
+The helper creates fresh SQLite/outbox/native state under `$CUBIE_TEST_DIR`, uses server 8180, Vite 5273 with a matching allowed Origin, and LiveKit 7980/7981/7982. Do not use ordinary `make dev` for this stack: its included dev.env points at the user's shared development state. Keep track of your own process IDs when stopping the stack. Authenticate with `admin@example.test` via the isolated outbox, create a public room, then use that room ID for a headless participant. `?room=<id>&autojoin=1&mic=0` works only in local Vite development mode and still obeys server authorization; production always shows the joining screen. Use Chrome's fake-media flags from CLAUDE.md.
 
 To test token revocation end to end, put a local nginx auth-request gateway in front of LiveKit and use its URL as `LIVEKIT_PUBLIC_URL`. The minimal development stack connects directly to LiveKit and therefore does not enforce the signaling gate; it still enforces API admission.
 
-Verification: `cargo test -p quipcall-server` covers signup gating, email confirmation/reuse/expiry, session revocation, role enforcement, simultaneous invite/direct-slot claims, private access persistence/removal, cached-token authorization, desktop proof and CSRF/rate limits. `make check` checks Rust and Svelte; `pnpm build` in `apps/web` checks the production bundle.
+Verification: `cargo test -p cubie-server` covers signup gating, email confirmation/reuse/expiry, session revocation, role enforcement, simultaneous invite/direct-slot claims, private access persistence/removal, cached-token authorization, desktop proof and CSRF/rate limits. `make check` checks Rust and Svelte; `pnpm build` in `apps/web` checks the production bundle.
 
-Native room checks: `cargo test -p quipcall-desktop rooms::tests` covers creation responses, retaining issued links when refresh fails, and revocation/disconnection partial failure. With the `snapshot` feature, `room-new`, `room-create-private`, `room-create-public`, `room-manage`, `room-guest`, `room-member`, `room-refresh`, `room-remove`, `room-retry-remove`, `room-revoke` and `room-close` exercise the native controls against an isolated API. `QUIPCALL_TEST_SESSION_FILE` supplies a fixture credential only on localhost; `QUIPCALL_ROOM_TEST_STATE` exports the result for assertions. These hooks are absent from release packages. Always use an isolated `QUIPCALL_DATA_DIR`, `QUIPCALL_NO_MIC=1`, `QUIPCALL_FAKE_CAMERA=1` and `QUIPCALL_FAKE_SCREEN=1`.
+Native room checks: `cargo test -p cubie-desktop rooms::tests` covers creation responses, retaining issued links when refresh fails, and revocation/disconnection partial failure. With the `snapshot` feature, `room-new`, `room-create-private`, `room-create-public`, `room-manage`, `room-guest`, `room-member`, `room-refresh`, `room-remove`, `room-retry-remove`, `room-revoke` and `room-close` exercise the native controls against an isolated API. `CUBIE_TEST_SESSION_FILE` supplies a fixture credential only on localhost; `CUBIE_ROOM_TEST_STATE` exports the result for assertions. These hooks are absent from release packages. Always use an isolated `CUBIE_DATA_DIR`, `CUBIE_NO_MIC=1`, `CUBIE_FAKE_CAMERA=1` and `CUBIE_FAKE_SCREEN=1`.
 
-Join preflight: `POST /api/entry` accepts exactly one of `room` or `invite`. It returns only permitted room metadata and an access state, never consumes invitations or reserves a direct-call slot, and never mints a media token. Ship its server change with the web join page. Both `quipcall://open/` and `quipcall://join/` use the Mac’s current identity. Browser approval is requested only when the Mac lacks a valid session or the user explicitly switches accounts. Admission supplies the room’s display name for unsaved links. `pnpm test` in `apps/web` (Node 22.18+ or 24+) checks media request cancellation, device changes, cleanup and permission denial. API tests check preflight privacy and unchanged admission rules.
+Join preflight: `POST /api/entry` accepts exactly one of `room` or `invite`. It returns only permitted room metadata and an access state, never consumes invitations or reserves a direct-call slot, and never mints a media token. Ship its server change with the web join page. Both `cubie://open/` and `cubie://join/` use the Mac’s current identity. Browser approval is requested only when the Mac lacks a valid session or the user explicitly switches accounts. Admission supplies the room’s display name for unsaved links. `pnpm test` in `apps/web` (Node 22.18+ or 24+) checks media request cancellation, device changes, cleanup and permission denial. API tests check preflight privacy and unchanged admission rules.
 
 Desktop sign-in polling uses a separate IP allowance from email/approval requests, plus a per-challenge quota after verifying the private proof. The app backs off on transient network errors and HTTP 408/429/5xx within its original sign-in deadline. Cached room lists are bound to the principal and cleared before a new account refresh, including when that refresh fails. Browser join continuations are cancelled when navigating away, so late identity/redemption responses cannot trigger another join or approval.
 
@@ -127,7 +137,7 @@ Migration 0004 adds provisional desktop sessions and idle cleanup scheduling. Ap
 
 Guest creation is capped separately at 30 new identities/hour and 100/day per IP. Existing sessions are reused without consuming that quota. Auth cleanup removes expired credentials and unreferenced guest identities in batches, retaining durable membership/revocation and pending approval references. It runs separately from LiveKit room cleanup. Migration 0005 indexes guest-reference lookups so pruning does not scan entire child tables for each guest. Mac browser approval does not preflight or redeem the destination room; admission is checked by the Mac after identity approval.
 
-**iPhone app.** `make release-ios QUIPCALL_IOS_TEAM=<team id>` (`deploy/ios/release.sh`) archives the app for a real iPhone, lets Xcode sign it for that team and uploads it to App Store Connect, where TestFlight picks it up; `--no-upload` stops at the `.ipa`. It signs in as the account in Xcode's settings, or with an App Store Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, the key in `~/.appstoreconnect/private_keys/`). The app's record has to exist in App Store Connect first, made by hand with the same bundle id (`com.quipcall.ios` unless `QUIPCALL_IOS_BUNDLE` says otherwise). Every upload needs a build number above the last; the script uses the time. The app talks to quipcall.com; its Contacts tab needs the server below deployed.
+**iPhone app.** `make release-ios CUBIE_IOS_TEAM=<team id>` (`deploy/ios/release.sh`) archives the app for a real iPhone, lets Xcode sign it for that team and uploads it to App Store Connect, where TestFlight picks it up; `--no-upload` stops at the `.ipa`. It signs in as the account in Xcode's settings, or with an App Store Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, the key in `~/.appstoreconnect/private_keys/`). The app's record has to exist in App Store Connect first, made by hand with the same bundle id (`com.cubie.ios` unless `CUBIE_IOS_BUNDLE` says otherwise). Every upload needs a build number above the last; the script uses the time. The app talks to cubiecall.com; its Contacts tab needs the server below deployed.
 
 `POST /api/contacts/match` (for the phone's Contacts tab) takes up to 1,000 SHA-256 hashes of lowercased email addresses and returns the hash and display name of each that belongs to another account. Signed-in accounts only (guests get 403), 20 requests an hour and 10,000 addresses a day per account (a hit gives a name back, so guessing is rationed); nothing from the request is stored or logged. The route has its own body limit (70 KB); every other route keeps 8 KB. It needs no migration; older apps never call it.
 

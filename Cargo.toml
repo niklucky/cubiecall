@@ -9,9 +9,9 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
-quipcall-protocol = { path = "crates/protocol" }
-quipcall-core = { path = "crates/core" }
-quipcall-stt = { path = "crates/stt" }
+cubie-protocol = { path = "crates/protocol" }
+cubie-core = { path = "crates/core" }
+cubie-stt = { path = "crates/stt" }
 
 [profile.dev.package."*"]
 # Dependencies (libwebrtc glue, GPUI, yuv conversion) are painfully slow unoptimized.

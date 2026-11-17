@@ -11,22 +11,57 @@ pub struct Principal {
     pub name: String,
     pub kind: String,
 }
+#[cfg(target_os = "macos")]
+const SESSION_SERVICE: &str = "com.cubiecall.session";
+#[cfg(target_os = "macos")]
+const PREVIOUS_SERVICE: &str = "com.quipcall.session";
+#[cfg(target_os = "macos")]
 fn key_account(server: &str) -> String {
     format!(
         "{}:{}",
-        server.trim_end_matches('/'),
-        std::env::var("QUIPCALL_DATA_DIR").unwrap_or_default()
+        cubie_core::http::storage_origin(server.trim_end_matches('/')),
+        crate::store::data_override().unwrap_or_default().display()
     )
+}
+#[cfg(target_os = "macos")]
+fn restore_session(
+    read: impl Fn(&str) -> Result<Vec<u8>, i32>,
+    add_current: impl FnOnce(&[u8]) -> Result<(), i32>,
+) -> Option<String> {
+    const ITEM_NOT_FOUND: i32 = -25300; // errSecItemNotFound
+    const DUPLICATE_ITEM: i32 = -25299; // errSecDuplicateItem
+    match read(SESSION_SERVICE) {
+        Ok(bytes) => return String::from_utf8(bytes).ok(),
+        Err(ITEM_NOT_FOUND) => {}
+        Err(_) => return None,
+    }
+    let previous = String::from_utf8(read(PREVIOUS_SERVICE).ok()?).ok()?;
+    // Copy after the user grants access. Keep the original for Quipcall and
+    // add without overwriting a session another Cubie instance just saved.
+    match add_current(previous.as_bytes()) {
+        Ok(()) => Some(previous),
+        Err(DUPLICATE_ITEM) => String::from_utf8(read(SESSION_SERVICE).ok()?).ok(),
+        Err(status) => {
+            tracing::warn!(status, "Could not migrate the saved Quipcall session");
+            Some(previous)
+        }
+    }
 }
 pub fn load(server: &str) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
-        security_framework::passwords::get_generic_password(
-            "com.quipcall.session",
-            &key_account(server),
+        use security_framework::{
+            os::macos::keychain::SecKeychain, passwords::get_generic_password,
+        };
+        let account = key_account(server);
+        restore_session(
+            |service| get_generic_password(service, &account).map_err(|e| e.code()),
+            |token| {
+                SecKeychain::default()
+                    .and_then(|kc| kc.add_generic_password(SESSION_SERVICE, &account, token))
+                    .map_err(|e| e.code())
+            },
         )
-        .ok()
-        .and_then(|v| String::from_utf8(v).ok())
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -37,11 +72,13 @@ pub fn load(server: &str) -> Option<String> {
 fn save(server: &str, token: &str) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
     {
+        let account = key_account(server);
         security_framework::passwords::set_generic_password(
-            "com.quipcall.session",
-            &key_account(server),
+            SESSION_SERVICE,
+            &account,
             token.as_bytes(),
         )?;
+        let _ = security_framework::passwords::delete_generic_password(PREVIOUS_SERVICE, &account);
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -54,13 +91,13 @@ fn save(server: &str, token: &str) -> anyhow::Result<()> {
 fn clear(server: &str) {
     #[cfg(target_os = "macos")]
     {
-        let _ = security_framework::passwords::delete_generic_password(
-            "com.quipcall.session",
-            &key_account(server),
-        );
+        let account = key_account(server);
+        for service in [SESSION_SERVICE, PREVIOUS_SERVICE] {
+            let _ = security_framework::passwords::delete_generic_password(service, &account);
+        }
     }
 }
-pub(crate) use quipcall_core::http::{RequestError, request};
+pub(crate) use cubie_core::http::{RequestError, request};
 
 /// A completion can only modify the operation generation that started it.
 pub struct Generation<T> {
@@ -141,7 +178,7 @@ async fn load_account(
     server: &str,
     session: Option<&str>,
 ) -> anyhow::Result<(Principal, Vec<SavedRoom>)> {
-    let (principal, rooms) = quipcall_core::http::join(
+    let (principal, rooms) = cubie_core::http::join(
         request(server, session, "/auth/me", None, "GET"),
         request(server, session, "/rooms", None, "GET"),
     )
@@ -283,7 +320,7 @@ impl Shell {
                     )
                     .await;
                     let value = match value {
-                        Err(e) if quipcall_core::http::transient(&e) => {
+                        Err(e) if cubie_core::http::transient(&e) => {
                             delay = (delay * 2).min(std::time::Duration::from_secs(30));
                             continue;
                         }
@@ -563,6 +600,72 @@ mod tests {
         io::{Read, Write},
         net::TcpListener,
     };
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn approved_legacy_session_is_imported_on_first_launch_only() {
+        use std::cell::{Cell, RefCell};
+        let current = RefCell::new(None::<Vec<u8>>);
+        let legacy_reads = Cell::new(0);
+        for _ in 0..2 {
+            let restored = restore_session(
+                |service| {
+                    if service == SESSION_SERVICE {
+                        return current.borrow().clone().ok_or(-25300);
+                    }
+                    assert_eq!(service, PREVIOUS_SERVICE);
+                    legacy_reads.set(legacy_reads.get() + 1);
+                    Ok(b"old-session".to_vec())
+                },
+                |token| {
+                    assert!(current.replace(Some(token.to_vec())).is_none());
+                    Ok(())
+                },
+            );
+            assert_eq!(restored.as_deref(), Some("old-session"));
+        }
+        assert_eq!(legacy_reads.get(), 1);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn denied_keychain_read_does_not_import_a_session() {
+        for denied_service in [SESSION_SERVICE, PREVIOUS_SERVICE] {
+            let restored = restore_session(
+                |service| {
+                    if service == denied_service {
+                        Err(-25293)
+                    } else {
+                        assert_eq!(service, SESSION_SERVICE);
+                        Err(-25300)
+                    }
+                },
+                |_| panic!("access was denied"),
+            );
+            assert!(restored.is_none());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn migration_uses_concurrent_sign_in_and_tolerates_a_failed_write() {
+        use std::cell::Cell;
+        for (error, expected) in [(-25299, "new"), (-25293, "old")] {
+            let added = Cell::new(false);
+            let restored = restore_session(
+                |service| match service {
+                    PREVIOUS_SERVICE => Ok(b"old".to_vec()),
+                    SESSION_SERVICE if added.get() => Ok(b"new".to_vec()),
+                    _ => Err(-25300),
+                },
+                |_| {
+                    added.set(true);
+                    Err(error)
+                },
+            );
+            assert_eq!(restored.as_deref(), Some(expected));
+        }
+    }
 
     #[test]
     fn unbinding_identity_clears_private_room_cache() {

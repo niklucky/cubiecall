@@ -99,9 +99,15 @@ async fn guard(State(s): State<AppState>, req: Request, next: Next) -> Response 
         axum::http::Method::GET | axum::http::Method::HEAD
     ) {
         let h = req.headers();
-        if h.get("x-quipcall").and_then(|v| v.to_str().ok()) != Some("1")
-            || h.get(header::ORIGIN)
-                .is_some_and(|v| v.to_str().ok() != Some(&s.config.public_url))
+        // Older installed clients send the original custom header.
+        let marked = ["x-cubie", "x-quipcall"]
+            .iter()
+            .any(|key| h.get(*key).and_then(|value| value.to_str().ok()) == Some("1"));
+        if !marked
+            || h.get(header::ORIGIN).is_some_and(|v| {
+                !v.to_str()
+                    .is_ok_and(|origin| s.config.trusts_origin(origin))
+            })
         {
             return AppError::forbidden("Untrusted request origin").into_response();
         }
@@ -160,13 +166,24 @@ fn start_cleanup(state: AppState) -> [tokio::task::JoinHandle<()>; 2] {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| "quipcall_server=info".into()),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| "cubie_server=info".into()),
         )
         .init();
     let state = AppState::new(Config::from_env()?).await?;
-    tokio::spawn(auth::mail_worker(state.clone()));
-    let _cleanup = start_cleanup(state.clone());
     let listener = tokio::net::TcpListener::bind(&state.config.bind).await?;
+    let workers = state.clone();
+    tokio::spawn(async move {
+        // During the first cutover this DB is an unpublished copy. Sending
+        // mail or cleaning live rooms now would leak effects across rollback.
+        if let Some(path) = std::env::var_os("CUBIE_WORKER_HOLD") {
+            let path = std::path::Path::new(&path);
+            while path.try_exists().unwrap_or(true) {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+        let _cleanup = start_cleanup(workers.clone());
+        auth::mail_worker(workers).await;
+    });
     tracing::info!("listening on {}", listener.local_addr()?);
     axum::serve(listener, router(state)).await?;
     Ok(())
@@ -210,7 +227,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         (
             self.status,
-            Json(quipcall_protocol::ApiError {
+            Json(cubie_protocol::ApiError {
                 error: self.message,
             }),
         )

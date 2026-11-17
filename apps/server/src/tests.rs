@@ -131,7 +131,7 @@ impl Test {
             .header("x-real-ip", ip)
             .method(method)
             .uri(path)
-            .header("x-quipcall", "1")
+            .header("x-cubie", "1")
             .header("content-type", "application/json");
         if !token.is_empty() {
             req = req.header("authorization", format!("Bearer {token}"));
@@ -619,11 +619,45 @@ async fn contact_lookup_names_accounts_by_hash_only_for_users() {
 }
 
 #[tokio::test]
+async fn email_signin_returns_to_the_requesting_browser_origin() {
+    let t = Test::new().await;
+    let mut state = t.state.clone();
+    Arc::make_mut(&mut state.config).public_url = "https://cubiecall.com".into();
+    let app = router(state.clone());
+    for origin in ["https://quipcall.com", "https://cubiecall.com"] {
+        let req = Request::post("/api/auth/request")
+            .header("x-cubie", "1")
+            .header("origin", origin)
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"email":"admin@example.com"}"#))
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(req).await.unwrap().status(),
+            StatusCode::OK
+        );
+        assert_eq!(auth::deliver_pending(&state).await.unwrap(), 1);
+        let message = std::fs::read_to_string(
+            t.dir
+                .path()
+                .join("mail")
+                .join(format!("{}.txt", auth::hash("admin@example.com"))),
+        )
+        .unwrap();
+        assert!(
+            message
+                .lines()
+                .any(|line| line.starts_with(&format!("{origin}/signin#magic=")))
+        );
+    }
+}
+
+#[tokio::test]
 async fn csrf_and_email_rate_limits() {
     let t = Test::new().await;
     for headers in [
         vec![],
-        vec![("x-quipcall", "1"), ("origin", "https://evil.example")],
+        vec![("x-cubie", "1"), ("origin", "https://evil.example")],
+        vec![("x-quipcall", "1"), ("origin", "https://quipcall.com")],
     ] {
         let mut req = Request::builder()
             .method("POST")
@@ -639,6 +673,32 @@ async fn csrf_and_email_rate_limits() {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    }
+    let mut production = t.state.clone();
+    Arc::make_mut(&mut production.config).public_url = "https://cubiecall.com".into();
+    let production = router(production);
+    for (header, origin, expected) in [
+        ("x-cubie", "https://cubiecall.com", StatusCode::OK),
+        ("x-quipcall", "https://quipcall.com", StatusCode::OK),
+        ("x-cubie", "https://quipcall.com", StatusCode::OK),
+        (
+            "x-cubie",
+            "https://quipcall.com.evil.example",
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/auth/guest")
+            .header(header, "1")
+            .header("origin", origin)
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"name":"Guest"}"#))
+            .unwrap();
+        assert_eq!(
+            production.clone().oneshot(req).await.unwrap().status(),
+            expected
+        );
     }
     for _ in 0..3 {
         assert_eq!(
@@ -2282,7 +2342,7 @@ async fn active_sessions_renew_without_reviving_expired_or_logged_out_credential
             Request::builder()
                 .method("POST")
                 .uri("/api/auth/logout")
-                .header("x-quipcall", "1")
+                .header("x-cubie", "1")
                 .header("cookie", format!("qc_session={token}"))
                 .body(Body::empty())
                 .unwrap(),

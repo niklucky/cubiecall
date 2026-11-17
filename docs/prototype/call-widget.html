@@ -287,7 +287,7 @@ const rnd = (() => { let a = 7; return () => { a = (a * 16807) % 2147483647; ret
 let code = '';
 for (let i = 0; i < 15; i++) { let segs = ''; for (let j = 0; j < 1 + Math.floor(rnd() * 4); j++) segs += `<i style="width:${20 + Math.round(rnd() * 100)}px;background:${['#c792ea', '#82aaff', '#c3e88d', '#f78c6c', '#89ddff', '#9aa3b2'][Math.floor(rnd() * 6)]}"></i>`; code += `<div class="cl" style="padding-left:${46 + [0, 16, 32][Math.floor(rnd() * 3)]}px">${i % 6 === 2 ? '' : segs}</div>`; }
 desk.innerHTML = `<div class="menubar"><b>Code</b><span>File</span><span>Edit</span><span>View</span><span class="r">Sat 7 Nov 11:14</span></div>
-  <div class="ed"><div class="ed-top"><span class="lights"><i></i><i></i><i></i></span>call.rs — quipcall</div><div style="padding-top:10px">${code}</div></div>
+  <div class="ed"><div class="ed-top"><span class="lights"><i></i><i></i><i></i></span>call.rs — cubie</div><div style="padding-top:10px">${code}</div></div>
   <div class="sharewin" id="leewin" style="display:none">${mock(true)}<span class="tag">${ic('share', 11)}Lee's screen</span></div>
   <div class="toast" id="toast"></div>
   <div class="w live" id="live" style="--rowy:452px"></div>`;

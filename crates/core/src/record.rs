@@ -121,7 +121,7 @@ impl Recorder {
         let stop = Arc::new(AtomicBool::new(false));
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let thread = std::thread::Builder::new()
-            .name("quipcall-record".into())
+            .name("cubie-record".into())
             .spawn({
                 let (path, stop) = (path.clone(), stop.clone());
                 move || {
@@ -418,7 +418,7 @@ impl VoiceThread {
     fn start(voices: Voices) -> anyhow::Result<Self> {
         let (frames, from_mix) = std::sync::mpsc::sync_channel(VOICES_QUEUE);
         let thread = std::thread::Builder::new()
-            .name("quipcall-voices".into())
+            .name("cubie-voices".into())
             .spawn(move || {
                 // The writers stay on this thread (they aren't Send).
                 let mut files = VoiceFiles::new(voices);
@@ -710,7 +710,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn a_late_voice_lines_up_without_holding_up_the_mix() {
-        let dir = std::env::temp_dir().join(format!("quipcall-voices-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("cubie-voices-{}", std::process::id()));
         let anna = Speaker::Remote("anna".into());
         let mut thread = VoiceThread::start(voices_in(&dir, |_| "Anna".to_owned())).unwrap();
         let begun = Instant::now();
@@ -737,7 +737,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn voices_whose_names_differ_only_in_case_get_a_file_each() {
-        let dir = std::env::temp_dir().join(format!("quipcall-names-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("cubie-names-{}", std::process::id()));
         let mut files = VoiceFiles::new(voices_in(&dir, |speaker| match speaker {
             Speaker::Local => "Anna".to_owned(),
             Speaker::Remote(_) => "anna".to_owned(),
@@ -768,7 +768,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn a_recording_ends_with_the_call_not_when_it_is_finished() {
-        let dir = std::env::temp_dir().join(format!("quipcall-end-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("cubie-end-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let hub = Arc::new(crate::audio_tap::Hub::default());
         let path = dir.join("call.m4a");

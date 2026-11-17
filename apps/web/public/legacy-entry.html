@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Cubie</title>
+  <meta name="referrer" content="no-referrer">
+  <script>
+    // Links issued before the cutover put the token in a fragment, which
+    // nginx cannot inspect. Verify it on the original browser cookie's host.
+    const fragment = location.hash;
+    const destination = new URLSearchParams(fragment.slice(1)).has('magic')
+      ? '/signin'
+      : 'https://cubiecall.com/';
+    location.replace(destination + fragment);
+  </script>
+  <noscript><meta http-equiv="refresh" content="0;url=https://cubiecall.com/"></noscript>
+</head>
+<body><a href="https://cubiecall.com/">Open Cubie</a></body>
+</html>

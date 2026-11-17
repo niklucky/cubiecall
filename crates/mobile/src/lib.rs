@@ -1,7 +1,7 @@
-//! Cubie (the phone app of Quipcall): everything under the screens.
+//! The Cubie phone app: everything under the screens.
 //!
 //! The iOS app (Swift) and, later, the Android app (Kotlin) are views only.
-//! Accounts, rooms and the call itself live here, on top of `quipcall-core`,
+//! Accounts, rooms and the call itself live here, on top of `cubie-core`,
 //! the engine the desktop app runs. UniFFI writes the Swift and Kotlin side of
 //! this crate's public items (`dev/ios-core.sh`).
 //!
@@ -51,11 +51,11 @@ impl std::error::Error for AppError {}
 
 impl From<anyhow::Error> for AppError {
     fn from(error: anyhow::Error) -> Self {
-        let answered = error.downcast_ref::<quipcall_core::http::RequestError>();
+        let answered = error.downcast_ref::<cubie_core::http::RequestError>();
         let signed_out = answered.is_some_and(|e| e.status == 401);
         // The server never answered (no network, or it's down): say that,
         // not the transport's own words.
-        let message = if answered.is_none() && quipcall_core::http::transient(&error) {
+        let message = if answered.is_none() && cubie_core::http::transient(&error) {
             tracing::warn!("request failed: {error:#}");
             "Can't reach Cubie. Check your connection and try again.".to_owned()
         } else {
@@ -70,11 +70,11 @@ impl From<anyhow::Error> for AppError {
 }
 
 /// Logs go to stderr (Xcode's console, `simctl launch --console`), at the
-/// level in `QUIPCALL_LOG` (`info` when unset).
+/// level in `CUBIE_LOG` (`info` when unset).
 fn init_logging() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        let filter = tracing_subscriber::EnvFilter::try_from_env("QUIPCALL_LOG")
+        let filter = tracing_subscriber::EnvFilter::try_from_env("CUBIE_LOG")
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
         let _ = tracing_subscriber::fmt()
             .with_env_filter(filter)
@@ -94,7 +94,7 @@ mod tests {
         let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let server = format!("http://{}", socket.local_addr().unwrap());
         drop(socket);
-        let request = quipcall_core::http::request(&server, None, "/rooms", None, "GET");
+        let request = cubie_core::http::request(&server, None, "/rooms", None, "GET");
         let error = AppError::from(block::on(request).unwrap_err());
         assert!(matches!(&error, AppError::Failed { .. }));
         assert_eq!(
@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn what_the_server_says_is_passed_on() {
-        let refused = quipcall_core::http::RequestError {
+        let refused = cubie_core::http::RequestError {
             status: 403,
             message: "Only the owner can do that".into(),
         };
@@ -113,7 +113,7 @@ mod tests {
             AppError::from(anyhow::Error::from(refused)).to_string(),
             "Only the owner can do that"
         );
-        let expired = quipcall_core::http::RequestError {
+        let expired = cubie_core::http::RequestError {
             status: 401,
             message: "Sign in to continue".into(),
         };

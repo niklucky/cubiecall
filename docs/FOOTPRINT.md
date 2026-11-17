@@ -1,12 +1,12 @@
 # Footprint measurements
 
-Budget: see [PLAN.md](PLAN.md#footprint-budget). Always measure **release** builds (`cargo build --release -p quipcall-desktop`).
+Budget: see [PLAN.md](PLAN.md#footprint-budget). Always measure **release** builds (`cargo build --release -p cubie-desktop`).
 
 Measure memory as the **physical footprint** (`dev/measure.sh <pid>`, or `footprint <pid>`), not `ps` RSS. The footprint is what Activity Monitor shows and includes GPU and IOSurface memory; RSS mostly misses it. The first two entries below used RSS, so their memory numbers are too low.
 
 ## 2026-11-03 — Stage 1, first data point (preliminary)
 
-Setup: Apple M5 Pro, macOS 27.0, release build. 1100×720 window. Receiving one 720p30 VP8 camera stream (headless Chrome, fake device). `QUIPCALL_NO_MIC=1`, so no audio device. Plain GPUI UI (no gpui-component yet). Remote video goes I420 → full-range NV12 on the CPU.
+Setup: Apple M5 Pro, macOS 27.0, release build. 1100×720 window. Receiving one 720p30 VP8 camera stream (headless Chrome, fake device). `CUBIE_NO_MIC=1`, so no audio device. Plain GPUI UI (no gpui-component yet). Remote video goes I420 → full-range NV12 on the CPU.
 
 | Metric | Measured | Budget |
 |---|---|---|
@@ -33,7 +33,7 @@ Takeaways:
 
 ## 2026-11-03 — Stage 1, full pipeline (physical footprint)
 
-Same machine, release build, 1100×720 window, mic on in every row. The desktop camera is the synthetic one (`QUIPCALL_FAKE_CAMERA=1`), which goes through the real publish path (IOSurface `CVPixelBuffer` → VideoToolbox H.264, 3 simulcast layers). Samples every 5 s for 30 s with `dev/measure.sh`.
+Same machine, release build, 1100×720 window, mic on in every row. The desktop camera is the synthetic one (`CUBIE_FAKE_CAMERA=1`), which goes through the real publish path (IOSurface `CVPixelBuffer` → VideoToolbox H.264, 3 simulcast layers). Samples every 5 s for 30 s with `dev/measure.sh`.
 
 | Scenario | CPU (one core) | Footprint | Budget |
 |---|---|---|---|
@@ -49,7 +49,7 @@ Where the ~170 MB baseline goes (`footprint`): ~90 MB GPU memory owned by the wi
 
 ## 2026-11-16 — iOS, first numbers (Simulator only)
 
-Budget: [PLAN.md](PLAN.md#mobile-budget). iPhone 17 Pro Simulator (iOS 26.5) on the M5 Pro, release build, measured as the Simulator process's physical footprint with `dev/measure.sh` (find it with `pgrep -f "CoreSimulator/Devices/.*/Quipcall.app/Quipcall"`). No audio device: a Simulator run never opens the Mac's microphone. The automation runner was attached, which loads accessibility bundles into the app. Two web guests (`dev/guests.mjs`) send 640 × 480 H.264; the phone's camera is the synthetic one. These show the direction; a phone decodes and encodes in hardware and has its own memory accounting, so the budget's numbers have to come from a real iPhone.
+Budget: [PLAN.md](PLAN.md#mobile-budget). iPhone 17 Pro Simulator (iOS 26.5) on the M5 Pro, release build, measured as the Simulator process's physical footprint with `dev/measure.sh` (find it with `pgrep -f "CoreSimulator/Devices/.*/Cubie.app/Cubie"`). No audio device: a Simulator run never opens the Mac's microphone. The automation runner was attached, which loads accessibility bundles into the app. Two web guests (`dev/guests.mjs`) send 640 × 480 H.264; the phone's camera is the synthetic one. These show the direction; a phone decodes and encodes in hardware and has its own memory accounting, so the budget's numbers have to come from a real iPhone.
 
 | Scenario | CPU (one core) | Footprint | Budget |
 |---|---|---|---|
@@ -76,7 +76,7 @@ A bubble costs about 9 MB (its Metal drawable and frames); CPU didn't measurably
 
 ## 2026-11-07 — Stage 2, minimal mode as one capsule
 
-Release build, sending the synthetic 720p camera, 9 `lk load-test` H.264 publishers: 10 faces at 44 px in one capsule window, each on the lowest layer and drawn as ~15 bands cut to a circle. No microphone (`QUIPCALL_NO_MIC`): a fresh unsigned build would have raised the permission prompt. Samples every 5 s.
+Release build, sending the synthetic 720p camera, 9 `lk load-test` H.264 publishers: 10 faces at 44 px in one capsule window, each on the lowest layer and drawn as ~15 bands cut to a circle. No microphone (`CUBIE_NO_MIC`): a fresh unsigned build would have raised the permission prompt. Samples every 5 s.
 
 | Scenario | CPU (one core) | Footprint |
 |---|---|---|
@@ -97,7 +97,7 @@ Small windows are cheap in memory (the 10-tile grid window was ~199 MB). CPU is 
 
 ## 2026-11-03 — Stage 2, screen share (ScreenCaptureKit)
 
-Release build, sharing one of Quipcall's own windows (1100×721 pt) to a headless Chrome receiver, while also receiving its 720p camera. ScreenCaptureKit delivers IOSurface NV12 frames that go straight to the encoder.
+Release build, sharing one of Cubie's own windows (1100×721 pt) to a headless Chrome receiver, while also receiving its 720p camera. ScreenCaptureKit delivers IOSurface NV12 frames that go straight to the encoder.
 
 | Preset | Codec | Sent | CPU (one core) | Footprint |
 |---|---|---|---|---|
@@ -114,7 +114,7 @@ Ideas to try if we need headroom:
 
 ## 2026-11-04 — Stage 2, your own share preview
 
-Release build, alone in a room, `QUIPCALL_NO_MIC=1`, sharing the synthetic 1920×1200 screen (`QUIPCALL_FAKE_SCREEN`) at 30 fps · motion in minimal mode. The preview draws the capture's own IOSurfaces and repaints at most 15 times a second. "No preview" is the same build with the preview sink left out. Samples every 5 s for 30 s.
+Release build, alone in a room, `CUBIE_NO_MIC=1`, sharing the synthetic 1920×1200 screen (`CUBIE_FAKE_SCREEN`) at 30 fps · motion in minimal mode. The preview draws the capture's own IOSurfaces and repaints at most 15 times a second. "No preview" is the same build with the preview sink left out. Samples every 5 s for 30 s.
 
 | Scenario | CPU (one core) | Footprint |
 |---|---|---|
@@ -175,7 +175,7 @@ The hook itself still needs a real call: while it runs, the log shows `noise sup
 
 *Scored with the first version of the bench; round 4 re-scores it after review.*
 
-A real call found our voice "slightly worse than Telemost, as if we try too hard; mostly volume drops". The test bench (`python3 dev/denoise-eval.py`) now uses real voices (LibriVox: English and Russian, male and female) and 12 noise recordings. It builds 22 scenes: noises, a quiet and a loud speaker, a bark in a pause, two people talking at once, and the other side's voice echoing from laptop speakers. It runs every scene through WebRTC's audio processing set up as in a call, with the filter in its hook (`quipcall_test_apm_create` in the webrtc-sys patch), so gain control and echo cancellation are in the measurement.
+A real call found our voice "slightly worse than Telemost, as if we try too hard; mostly volume drops". The test bench (`python3 dev/denoise-eval.py`) now uses real voices (LibriVox: English and Russian, male and female) and 12 noise recordings. It builds 22 scenes: noises, a quiet and a loud speaker, a bark in a pause, two people talking at once, and the other side's voice echoing from laptop speakers. It runs every scene through WebRTC's audio processing set up as in a call, with the filter in its hook (`cubie_test_apm_create` in the webrtc-sys patch), so gain control and echo cancellation are in the measurement.
 
 What caused the drops: **DeepFilterNet takes a quiet voice for noise.** Through the model alone (18 dB limit, no gain control), voice level change and PESQ by speaking level:
 

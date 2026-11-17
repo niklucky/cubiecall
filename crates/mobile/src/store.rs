@@ -108,7 +108,7 @@ impl Store {
     /// The store for `server` under `dir`: test and real servers each have
     /// their own.
     pub(crate) fn open(dir: &str, server: &str) -> Self {
-        let name: String = server
+        let name: String = cubie_core::http::storage_origin(server)
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
             .collect();
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn calls_and_lines_survive_a_restart() {
-        let dir = std::env::temp_dir().join(format!("quipcall-store-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("cubie-store-{}", std::process::id()));
         let dir = dir.to_str().unwrap();
         let store = Store::open(dir, "http://127.0.0.1:8180");
         store.wipe();
@@ -288,7 +288,7 @@ mod tests {
         assert!(again.moments(1000).is_empty());
         assert_eq!(again.line("contact-1").as_deref(), Some("room-1"));
         // Another server's store is another file.
-        assert!(Store::open(dir, "https://quipcall.com").calls().is_empty());
+        assert!(Store::open(dir, "https://cubiecall.com").calls().is_empty());
 
         again.wipe();
         assert!(Store::open(dir, "http://127.0.0.1:8180").calls().is_empty());
@@ -297,8 +297,49 @@ mod tests {
     }
 
     #[test]
+    fn production_aliases_reopen_pre_rename_history() {
+        let dir = std::env::temp_dir().join(format!("cubie-alias-{}", std::process::id()));
+        let dir = dir.to_str().unwrap();
+        let key = "store-https---quipcall-com";
+        let moment = Moment {
+            at: 1,
+            kind: MomentKind::Joined,
+            who: "Anna".into(),
+            mine: false,
+            text: String::new(),
+            key: String::new(),
+        };
+        // The filenames were derived from the old default server URL.
+        write(
+            &Path::new(dir).join(format!("{key}.json")),
+            serde_json::to_vec(&serde_json::json!({"calls": [call(1000)]})).unwrap(),
+        )
+        .unwrap();
+        write(
+            &Path::new(dir).join(format!("{key}.calls/1000.json")),
+            serde_json::to_vec(&[&moment]).unwrap(),
+        )
+        .unwrap();
+        for server in [
+            "https://cubiecall.com",
+            "https://cubycall.com/",
+            "https://quipcall.com",
+        ] {
+            let store = Store::open(dir, server);
+            assert_eq!(store.calls(), [call(1000)]);
+            assert_eq!(store.moments(1000), std::slice::from_ref(&moment));
+        }
+        assert!(
+            Store::open(dir, "https://cubiecall.com.example")
+                .calls()
+                .is_empty()
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn another_account_starts_with_nothing() {
-        let dir = std::env::temp_dir().join(format!("quipcall-owner-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("cubie-owner-{}", std::process::id()));
         let dir = dir.to_str().unwrap();
         let store = Store::open(dir, "http://127.0.0.1:8180");
         store.wipe();

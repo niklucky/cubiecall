@@ -130,7 +130,7 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(PROJECT_DIR)/Core/libquipcall_mobile.a",
+				"$(PROJECT_DIR)/Core/libcubie_mobile.a",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -217,7 +217,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
-					"-lquipcall_mobile",
+					"-lcubie_mobile",
 					"-lc++",
 					"-liconv",
 					"-framework",
@@ -287,7 +287,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
-					"-lquipcall_mobile",
+					"-lcubie_mobile",
 					"-lc++",
 					"-liconv",
 					"-framework",

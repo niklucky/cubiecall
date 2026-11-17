@@ -10,7 +10,7 @@
 //!
 //! Needs the Screen Recording permission (see [`crate::permissions`]).
 //!
-//! `QUIPCALL_FAKE_SCREEN=1` (or `=WIDTHxHEIGHT`, default 1920x1200) shares a
+//! `CUBIE_FAKE_SCREEN=1` (or `=WIDTHxHEIGHT`, default 1920x1200) shares a
 //! moving test pattern instead, for headless tests: nothing on screen is
 //! captured and no permission is needed.
 
@@ -460,7 +460,7 @@ fn send(
 define_class!(
     // SAFETY: NSObject has no subclassing requirements; we don't implement Drop.
     #[unsafe(super(NSObject))]
-    #[name = "QuipcallScreenOutput"]
+    #[name = "CubieScreenOutput"]
     #[ivars = Handler]
     struct Output;
 
@@ -491,7 +491,7 @@ type OnStop = Mutex<Option<Box<dyn FnOnce() + Send>>>;
 define_class!(
     // SAFETY: as above.
     #[unsafe(super(NSObject))]
-    #[name = "QuipcallScreenStreamDelegate"]
+    #[name = "CubieScreenStreamDelegate"]
     #[ivars = OnStop]
     struct StopDelegate;
 
@@ -668,7 +668,7 @@ fn setup(
     // SAFETY: as above.
     let delegate: Retained<StopDelegate> = unsafe { msg_send![super(delegate), init] };
 
-    let queue = DispatchQueue::new("quipcall.screen", DispatchQueueAttr::SERIAL);
+    let queue = DispatchQueue::new("cubie.screen", DispatchQueueAttr::SERIAL);
     // SAFETY: valid filter, configuration and delegate; the output and queue
     // are kept alive by `Capture`.
     let stream = unsafe {
@@ -733,9 +733,11 @@ fn spawn_keepalive(target: Target, started: Instant, last: Arc<LastFrame>, stop:
 
 // ---- synthetic source (tests) ---------------------------------------------
 
-/// The size of the synthetic screen, if `QUIPCALL_FAKE_SCREEN` asks for one.
+/// The size of the synthetic screen, if `CUBIE_FAKE_SCREEN` asks for one.
 fn synthetic_size() -> Option<(u32, u32)> {
-    let value = std::env::var("QUIPCALL_FAKE_SCREEN").ok()?;
+    let value = std::env::var("CUBIE_FAKE_SCREEN")
+        .or_else(|_| std::env::var("QUIPCALL_FAKE_SCREEN"))
+        .ok()?;
     let size = value
         .split_once('x')
         .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
@@ -761,7 +763,7 @@ impl Synthetic {
             width,
             height,
             fps = preset.fps,
-            "sharing the synthetic screen (QUIPCALL_FAKE_SCREEN)"
+            "sharing the synthetic screen (CUBIE_FAKE_SCREEN)"
         );
         let pool = PixelBufferPool::new(width, height).context("pixel buffer pool")?;
         let started = Instant::now();

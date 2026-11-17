@@ -379,7 +379,7 @@ impl RoomAccess {
     }
     #[cfg(feature = "snapshot")]
     fn export_test_state(&self) {
-        let Ok(path) = std::env::var("QUIPCALL_ROOM_TEST_STATE") else {
+        let Ok(path) = std::env::var("CUBIE_ROOM_TEST_STATE") else {
             return;
         };
         let value = json!({"room":self.id,"kind":self.kind,"closed":self.closed,"link":self.link,"error":self.error,"notice":self.notice,
@@ -948,7 +948,7 @@ mod tests {
                         .to_lowercase()
                         .contains("authorization: bearer test-session\r\n")
                 );
-                assert!(headers.to_lowercase().contains("x-quipcall: 1\r\n"));
+                assert!(headers.to_lowercase().contains("x-cubie: 1\r\n"));
                 let length = headers
                     .lines()
                     .find_map(|line| {

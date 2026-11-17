@@ -1,13 +1,13 @@
 [Unit]
-Description=Quipcall LiveKit SFU
+Description=Cubie LiveKit SFU
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=quipcall
-Group=quipcall
-EnvironmentFile=/opt/quipcall/secrets.env
-ExecStart=/opt/quipcall/bin/livekit-server --config /opt/quipcall/livekit.yaml
+User=cubie
+Group=cubie
+EnvironmentFile=/opt/cubie/secrets.env
+ExecStart=/opt/cubie/bin/livekit-server --config /opt/cubie/livekit.yaml
 Restart=on-failure
 RestartSec=2
 LimitNOFILE=65536

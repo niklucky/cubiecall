@@ -57,14 +57,14 @@ pub struct Args {
 }
 
 /// The server release builds talk to, baked in at build time:
-/// `QUIPCALL_SERVER=https://quipcall.com cargo build --release` (see deploy/).
-const SERVER: &str = match option_env!("QUIPCALL_SERVER") {
+/// `CUBIE_SERVER=https://cubiecall.com cargo build --release` (see deploy/).
+const SERVER: &str = match option_env!("CUBIE_SERVER") {
     Some(url) => url,
     None => "http://127.0.0.1:8080",
 };
 
 /// Where call links point. Deployed, the web client shares the server's origin.
-const WEB: &str = match (option_env!("QUIPCALL_WEB"), option_env!("QUIPCALL_SERVER")) {
+const WEB: &str = match (option_env!("CUBIE_WEB"), option_env!("CUBIE_SERVER")) {
     (Some(url), _) | (None, Some(url)) => url,
     (None, None) => "http://127.0.0.1:5173",
 };
@@ -102,8 +102,8 @@ fn parse_args() -> Args {
     }
     args.session = auth::load(&args.server);
     #[cfg(feature = "snapshot")]
-    if let Ok(path) = std::env::var("QUIPCALL_TEST_SESSION_FILE") {
-        let url = quipcall_core::http::Url::parse(&args.server).expect("test server URL");
+    if let Ok(path) = std::env::var("CUBIE_TEST_SESSION_FILE") {
+        let url = cubie_core::http::Url::parse(&args.server).expect("test server URL");
         assert!(
             matches!(url.host_str(), Some("127.0.0.1" | "localhost")),
             "test sessions are local only"
@@ -130,18 +130,22 @@ fn default_name() -> String {
     std::env::var("USER").unwrap_or_else(|_| "desktop".into())
 }
 
-/// The room in a call link: `quipcall://join/<room>`.
+/// The room in a call link: `cubie://join/<room>`.
 fn room_from_link(url: &str) -> Option<String> {
-    let room = url
-        .strip_prefix("quipcall://join/")
-        .or_else(|| url.strip_prefix("quipcall://open/"))?;
+    let (scheme, path) = url.split_once("://")?;
+    if !matches!(scheme, "cubie" | "quipcall") {
+        return None;
+    }
+    let room = path
+        .strip_prefix("join/")
+        .or_else(|| path.strip_prefix("open/"))?;
     let room = room.split(['/', '?', '#']).next()?;
-    quipcall_protocol::is_valid_room_id(room).then(|| room.to_owned())
+    cubie_protocol::is_valid_room_id(room).then(|| room.to_owned())
 }
 
 fn usage() -> ! {
     eprintln!(
-        "usage: quipcall-desktop [--server URL] [--web URL] [--name NAME] [--room ROOM] [--camera] [--regular]"
+        "usage: cubie-desktop [--server URL] [--web URL] [--name NAME] [--room ROOM] [--camera] [--regular]"
     );
     std::process::exit(2);
 }
@@ -375,11 +379,11 @@ impl Shell {
     }
 }
 
-/// Logs go to the terminal, or to ~/Library/Logs/Quipcall/quipcall.log when
+/// Logs go to the terminal, or to ~/Library/Logs/Cubie/cubie.log when
 /// started from Finder. Each launch starts a fresh file; the last one is kept.
 fn init_logging() {
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "quipcall_desktop=debug,quipcall_core=debug,livekit=info,warn".into());
+        .unwrap_or_else(|_| "cubie_desktop=debug,cubie_core=debug,livekit=info,warn".into());
     // DeepFilterNet warns of "clipping" on every frame above full scale, from
     // the audio thread. Our input gain puts loud voices there on purpose, and
     // the model works in floating point, so nothing clips. A separate filter,
@@ -412,10 +416,10 @@ fn init_logging() {
 }
 
 fn log_file() -> Option<std::fs::File> {
-    let dir = std::path::PathBuf::from(std::env::var_os("HOME")?).join("Library/Logs/Quipcall");
+    let dir = std::path::PathBuf::from(std::env::var_os("HOME")?).join("Library/Logs/Cubie");
     std::fs::create_dir_all(&dir).ok()?;
-    let path = dir.join("quipcall.log");
-    let _ = std::fs::rename(&path, dir.join("quipcall.previous.log"));
+    let path = dir.join("cubie.log");
+    let _ = std::fs::rename(&path, dir.join("cubie.previous.log"));
     std::fs::File::create(path).ok()
 }
 
@@ -443,14 +447,14 @@ fn main() {
     init_logging();
     let args = parse_args();
     tracing::info!(
-        "quipcall {} ({}), server {}",
+        "cubie {} ({}), server {}",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::ARCH,
         args.server
     );
 
     let app = gpui_platform::application().with_assets(assets::Assets);
-    // Call links (`quipcall://join/<room>`) arrive here, before or after launch.
+    // Call links (`cubie://join/<room>`) arrive here, before or after launch.
     let (links_tx, links) = async_channel::unbounded::<String>();
     app.on_open_urls(move |urls| {
         for url in urls {
@@ -602,18 +606,20 @@ mod tests {
     fn call_links() {
         let room = |url| room_from_link(url);
         assert_eq!(
-            room("quipcall://join/quick-1a2b3c4d").as_deref(),
+            room("cubie://join/quick-1a2b3c4d").as_deref(),
             Some("quick-1a2b3c4d")
         );
         assert_eq!(
-            room("quipcall://join/room-1-ab12/").as_deref(),
+            room("cubie://join/room-1-ab12/").as_deref(),
             Some("room-1-ab12")
         );
-        assert_eq!(room("quipcall://join/spike?x=1").as_deref(), Some("spike"));
+        assert_eq!(room("cubie://join/spike?x=1").as_deref(), Some("spike"));
+        assert_eq!(room("cubie://open/spike").as_deref(), Some("spike"));
+        assert_eq!(room("quipcall://join/spike").as_deref(), Some("spike"));
         assert_eq!(room("quipcall://open/spike").as_deref(), Some("spike"));
-        assert_eq!(room("quipcall://open/"), None);
-        assert_eq!(room("quipcall://join/"), None);
-        assert_eq!(room("quipcall://join/a%20b"), None);
-        assert_eq!(room("https://quipcall.com/?room=spike"), None);
+        assert_eq!(room("cubie://open/"), None);
+        assert_eq!(room("cubie://join/"), None);
+        assert_eq!(room("cubie://join/a%20b"), None);
+        assert_eq!(room("https://cubiecall.com/?room=spike"), None);
     }
 }

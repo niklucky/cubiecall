@@ -1,15 +1,15 @@
-# Quipcall
+# Cubie
 
 Small, fast video and audio calls: a native Rust desktop app (macOS first, built with GPUI), an iPhone app on the same engine, and a Svelte web client, on a self-hosted LiveKit server.
 
-Invite-only alpha at https://quipcall.com. Get the Mac app at https://quipcall.com/download/.
+The invite-only alpha uses https://cubiecall.com. The domains `cubycall.com` and `quipcall.com` are aliases. Get the Mac app at https://cubiecall.com/download/.
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `apps/desktop` | Mac app (GPUI). Home, a floating capsule of faces, a call window and a share picker |
-| `apps/ios` | iPhone app, named Cubie (Swift, UIKit): sign-in, rooms, calls. Early: see the mobile stages in PLAN.md |
+| `apps/ios` | iPhone app (Swift, UIKit): sign-in, rooms, calls. Early: see the mobile stages in PLAN.md |
 | `apps/server` | Axum + SQLite: accounts, invitations, room access and LiveKit tokens |
 | `apps/web` | Svelte 5 web client |
 | `crates/core` | Media and call logic, no UI code (LiveKit SDK, capture, video, recording) |
@@ -30,11 +30,11 @@ make desktop           # sign in through the browser; credentials stay in Keycha
 make check             # clippy + svelte-check
 ```
 
-The iPhone app needs `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`. `make ios-sim` builds it for the Simulator; or run `make ios-core` once and open `apps/ios/Cubie.xcodeproj` (set your team under Signing to run on a phone). It talks to quipcall.com unless launched with `-server <api> -web <site>`.
+The iPhone app needs `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`. `make ios-sim` builds it for the Simulator; or run `make ios-core` once and open `apps/ios/Cubie.xcodeproj` (set your team under Signing to run on a phone). It talks to cubiecall.com unless launched with `-server <api> -web <site>`.
 
 For local sign-in use `admin@example.test`; open the magic link from `dev/data/mail` (no email is sent). Create rooms while signed in. Auth/deployment details: [DEPLOY.md](docs/DEPLOY.md).
 
-To add a low-level LiveKit test participant (bypasses application auth): `lk room join --url ws://127.0.0.1:7880 --api-key quipcall-dev --api-secret quipcall-dev-secret-0123456789abcdef --identity bot --publish-demo spike`
+To add a low-level LiveKit test participant (bypasses application auth): `lk room join --url ws://127.0.0.1:7880 --api-key cubie-dev --api-secret cubie-dev-secret-0123456789abcdef --identity bot --publish-demo spike`
 
 ## Ship
 
@@ -49,4 +49,4 @@ To add a low-level LiveKit test participant (bypasses application auth): `lk roo
 - [UI.md](docs/UI.md): the design of the call UI
 - [FOOTPRINT.md](docs/FOOTPRINT.md): CPU and memory measurements
 
-The app writes its log to `~/Library/Logs/Quipcall/quipcall.log` when launched from Finder.
+The app writes its log to `~/Library/Logs/Cubie/cubie.log` when launched from Finder.

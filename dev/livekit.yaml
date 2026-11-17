@@ -7,6 +7,6 @@ rtc:
   udp_port: 7882   # single UDP port, multiplexed
   use_external_ip: false
 keys:
-  quipcall-dev: quipcall-dev-secret-0123456789abcdef
+  cubie-dev: cubie-dev-secret-0123456789abcdef
 logging:
   level: info

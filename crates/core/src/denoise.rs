@@ -12,8 +12,8 @@
 //! of it also took quiet parts of the voice with it. It may remove more in
 //! pauses, where no voice can be lost.
 //!
-//! `QUIPCALL_DENOISE=webrtc` uses WebRTC's suppressor instead, `=off` neither.
-//! `QUIPCALL_DENOISE_LIMIT=<dB>[/<dB in pauses>]` (or `none`) overrides how
+//! `CUBIE_DENOISE=webrtc` uses WebRTC's suppressor instead, `=off` neither.
+//! `CUBIE_DENOISE_LIMIT=<dB>[/<dB in pauses>]` (or `none`) overrides how
 //! much the model may remove, for listening tests.
 
 use std::ffi::c_void;
@@ -85,9 +85,9 @@ impl Strength {
         input_gain_db: 12.0,
     };
 
-    /// [`Self::CALLS`], or the limits in `QUIPCALL_DENOISE_LIMIT`.
+    /// [`Self::CALLS`], or the limits in `CUBIE_DENOISE_LIMIT`.
     fn for_calls() -> Strength {
-        let Ok(value) = std::env::var("QUIPCALL_DENOISE_LIMIT") else {
+        let Ok(value) = std::env::var("CUBIE_DENOISE_LIMIT") else {
             return Self::CALLS;
         };
         match parse_limits(&value) {
@@ -97,7 +97,7 @@ impl Strength {
                 ..Self::CALLS
             },
             None => {
-                tracing::warn!(value, "QUIPCALL_DENOISE_LIMIT: not none, <dB> or <dB>/<dB>");
+                tracing::warn!(value, "CUBIE_DENOISE_LIMIT: not none, <dB> or <dB>/<dB>");
                 Self::CALLS
             }
         }
@@ -318,7 +318,7 @@ pub fn prepare() -> Mode {
     // once the lock is released. Checked under the lock: it may have failed
     // a moment ago.
     let failed = filter.take_if(|live| live.failed);
-    let mode = match std::env::var("QUIPCALL_DENOISE").as_deref() {
+    let mode = match std::env::var("CUBIE_DENOISE").as_deref() {
         Ok("webrtc") => Mode::WebRtc,
         Ok("off") => Mode::Off,
         _ if failed.is_some() || UNAVAILABLE.load(Ordering::Relaxed) => Mode::WebRtc,
@@ -353,10 +353,10 @@ pub fn prepare() -> Mode {
     // `extern "C"` functions that live for the whole program.
     unsafe {
         let neural = mode == Mode::Neural;
-        quipcall_set_device_noise_suppression(mode == Mode::WebRtc);
-        quipcall_set_device_gain_control(!neural);
-        quipcall_set_capture_gain_control(neural);
-        quipcall_set_capture_processor(neural.then_some(process), Some(release));
+        cubie_set_device_noise_suppression(mode == Mode::WebRtc);
+        cubie_set_device_gain_control(!neural);
+        cubie_set_capture_gain_control(neural);
+        cubie_set_capture_processor(neural.then_some(process), Some(release));
     }
     tracing::info!(?mode, "noise suppression");
     mode
@@ -435,10 +435,10 @@ type ProcessFn = unsafe extern "C" fn(*const c_void, *const *mut f32, usize, usi
 type ReleaseFn = unsafe extern "C" fn(*const c_void);
 
 unsafe extern "C" {
-    fn quipcall_set_capture_processor(process: Option<ProcessFn>, release: Option<ReleaseFn>);
-    fn quipcall_set_capture_gain_control(enabled: bool);
-    fn quipcall_set_device_noise_suppression(enabled: bool);
-    fn quipcall_set_device_gain_control(enabled: bool);
+    fn cubie_set_capture_processor(process: Option<ProcessFn>, release: Option<ReleaseFn>);
+    fn cubie_set_capture_gain_control(enabled: bool);
+    fn cubie_set_device_noise_suppression(enabled: bool);
+    fn cubie_set_device_gain_control(enabled: bool);
 }
 
 /// Called by WebRTC on its capture thread with each processed 10 ms frame.
@@ -588,7 +588,7 @@ mod tests {
 
     // From our webrtc-sys patch: an APM set up like a call's microphone.
     unsafe extern "C" {
-        fn quipcall_test_apm_create(
+        fn cubie_test_apm_create(
             sample_rate_hz: i32,
             noise_suppression: bool,
             gain_control1: bool,
@@ -596,12 +596,8 @@ mod tests {
             process: Option<ProcessFn>,
             context: *const c_void,
         ) -> *mut c_void;
-        fn quipcall_test_apm_process(
-            apm: *mut c_void,
-            render: *const i16,
-            capture: *mut i16,
-        ) -> i32;
-        fn quipcall_test_apm_destroy(apm: *mut c_void);
+        fn cubie_test_apm_process(apm: *mut c_void, render: *const i16, capture: *mut i16) -> i32;
+        fn cubie_test_apm_destroy(apm: *mut c_void);
     }
 
     /// The filter in an offline APM: the model, or nothing.
@@ -653,9 +649,8 @@ mod tests {
         });
         let context = &mut *probe as *mut Probe as *const c_void;
         // SAFETY: the APM is destroyed below, while `probe` is alive.
-        let apm = unsafe {
-            quipcall_test_apm_create(rate, false, false, false, Some(probe_hook), context)
-        };
+        let apm =
+            unsafe { cubie_test_apm_create(rate, false, false, false, Some(probe_hook), context) };
         assert!(!apm.is_null());
         let len = rate as usize / 100;
         let silence = vec![0i16; len];
@@ -666,14 +661,13 @@ mod tests {
             if n >= 200 {
                 power_in += power(&frame);
             }
-            let err =
-                unsafe { quipcall_test_apm_process(apm, silence.as_ptr(), frame.as_mut_ptr()) };
+            let err = unsafe { cubie_test_apm_process(apm, silence.as_ptr(), frame.as_mut_ptr()) };
             assert_eq!(err, 0, "APM error");
             if n >= 200 {
                 power_out += power(&frame);
             }
         }
-        unsafe { quipcall_test_apm_destroy(apm) };
+        unsafe { cubie_test_apm_destroy(apm) };
         (power_in, power_out, probe.bad_frames)
     }
 

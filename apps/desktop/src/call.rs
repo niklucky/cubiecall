@@ -9,13 +9,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use cubie_core::{
+    Engine, Event, Handover, MediaDevice, ModelInfo, ScreenSharePreset, SourceId, TrackKey,
+    TranscribeOptions, VideoKind, VideoQuality, VideoSubscription,
+};
 use gpui::{
     App, AppContext as _, Bounds, ClipboardItem, Context, DisplayId, Entity, EventEmitter, Pixels,
     Task, WindowHandle, point, px, size,
-};
-use quipcall_core::{
-    Engine, Event, Handover, MediaDevice, ModelInfo, ScreenSharePreset, SourceId, TrackKey,
-    TranscribeOptions, VideoKind, VideoQuality, VideoSubscription,
 };
 
 use crate::capsule::{self, Capsule};
@@ -766,7 +766,7 @@ impl Call {
     pub fn screen_sources(
         &self,
         thumb_width: u32,
-    ) -> async_channel::Receiver<anyhow::Result<quipcall_core::ShareSourceUpdate>> {
+    ) -> async_channel::Receiver<anyhow::Result<cubie_core::ShareSourceUpdate>> {
         self.engine.screen_sources(thumb_width)
     }
 
@@ -1706,7 +1706,7 @@ impl Call {
             }
             Event::ParticipantCanTranscribe { identity, model } => {
                 if let Some(member) = self.member(&identity, cx) {
-                    let model = model.as_deref().and_then(quipcall_core::catalog::model);
+                    let model = model.as_deref().and_then(cubie_core::catalog::model);
                     member.update(cx, |m, cx| {
                         m.can_transcribe = model;
                         cx.notify();
@@ -1785,7 +1785,7 @@ impl Call {
                             self.transcription = Some(Transcription {
                                 identity,
                                 name: name.clone(),
-                                model: quipcall_core::catalog::model(&model),
+                                model: cubie_core::catalog::model(&model),
                                 mine: false,
                             });
                             self.log(name, Happened::StartedTranscribing, cx);

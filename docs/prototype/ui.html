@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Quipcall UI prototypes</title>
+<title>Cubie UI prototypes</title>
 <style>
 :root{color-scheme:light dark}
 html,body{margin:0}
@@ -439,7 +439,7 @@ button.ev:hover .lnk{text-decoration:underline}
 <body>
 <div id="board" data-appearance="dark">
   <header class="head">
-    <h1>Quipcall desktop UI · round 1</h1>
+    <h1>Cubie desktop UI · round 1</h1>
     <p>My take on every screen you listed, drawn at real size. It's all clickable: room rows, tabs, ▶ on a recording, transcript lines, toolbar buttons, the ▴ next to mic and camera, and the capsule (hover it). Tell me what to change and I'll redraw it; once a screen is settled I build it in GPUI.</p>
     <div class="knobs">
       <span>App appearance <span class="seg" id="appearance"><button aria-pressed="true" data-v="dark">Dark</button><button aria-pressed="false" data-v="light">Light</button></span></span>
@@ -456,7 +456,7 @@ button.ev:hover .lnk{text-decoration:underline}
     <div class="stage" data-w="900" data-h="1218"><div class="canvas wall" id="cv-onb"></div></div>
     <ol class="notes">
       <li><b>Sign in and sign up are the same screen.</b> The email decides: a new address gets one extra step (1c).</li>
-      <li><b>One email with a magic link and a 6-digit code.</b> The link opens <code>quipcall://auth/…</code> (we already handle <code>quipcall://join</code>). The code is for people who read their mail on a phone.</li>
+      <li><b>One email with a magic link and a 6-digit code.</b> The link opens <code>cubie://auth/…</code> (we already handle <code>cubie://join</code>). The code is for people who read their mail on a phone.</li>
       <li><b>Passkey: yes, but not as a button.</b> A new user doesn't have one yet, so the app offers it once after the first sign-in (1c, Touch ID). After that, macOS suggests it as soon as you focus the email field (see 1a), and the key icon asks for it directly.</li>
       <li><b>GitHub and Google</b> work now. Apple is greyed out with "soon", or hidden until it works. Your call.</li>
       <li><b>Guest means just a name.</b> Opened from a call link, the screen shows the room and who's in it, with mic and camera toggles, so it doubles as the pre-join screen. Guests keep nothing, and the footer says what signing in adds.</li>
@@ -635,11 +635,11 @@ function mulberry(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Ma
 
 /* ───────── data ───────── */
 const ROOMS = [
- {id:'design',name:'Design review',members:['anna','lee','tom','sofia','me'],calls:['design-live','design-1'],link:'quipcall.com/r/design-review'},
- {id:'standup',name:'Team standup',members:['anna','max','lee','sofia','me'],calls:['standup-12','standup-11'],link:'quipcall.com/r/team-standup'},
- {id:'family',name:'Family',members:['mom','alex','me'],calls:['family-8'],link:'quipcall.com/r/family'},
- {id:'alpha',name:'Quipcall alpha',members:['max','mia','dan','kai','lee','tom','sofia','anna','me'],calls:['alpha-5'],link:'quipcall.com/r/alpha'},
- {id:'max',name:'Max Orlov',members:['max','me'],calls:['max-3'],link:'quipcall.com/r/max'}
+ {id:'design',name:'Design review',members:['anna','lee','tom','sofia','me'],calls:['design-live','design-1'],link:'cubiecall.com/r/design-review'},
+ {id:'standup',name:'Team standup',members:['anna','max','lee','sofia','me'],calls:['standup-12','standup-11'],link:'cubiecall.com/r/team-standup'},
+ {id:'family',name:'Family',members:['mom','alex','me'],calls:['family-8'],link:'cubiecall.com/r/family'},
+ {id:'alpha',name:'Cubie alpha',members:['max','mia','dan','kai','lee','tom','sofia','anna','me'],calls:['alpha-5'],link:'cubiecall.com/r/alpha'},
+ {id:'max',name:'Max Orlov',members:['max','me'],calls:['max-3'],link:'cubiecall.com/r/max'}
 ];
 const CALLS = {
  'design-live':{live:true,day:'Today',start:'11:02',people:['anna','lee','tom'],recs:[],
@@ -755,7 +755,7 @@ function empty(icon, title, text) { return `<div class="empty"><div class="ei">$
 /* ───────── 1 · onboarding ───────── */
 function onboarding() {
   const W = (x, y, inner, lbl, sub) => `<div class="lbl" style="left:${x + 2}px;top:${y - 26}px">${lbl}<span>${sub}</span></div><div class="win app" style="left:${x}px;top:${y}px;width:400px;height:540px">${LIGHTS}${inner}</div>`;
-  const signIn = `<div class="onb"><div class="logo"><span></span><span></span></div><h2 class="ot">Welcome to Quipcall</h2><p class="os">Small, fast calls with the people you work with.</p>
+  const signIn = `<div class="onb"><div class="logo"><span></span><span></span></div><h2 class="ot">Welcome to Cubie</h2><p class="os">Small, fast calls with the people you work with.</p>
     <div class="ostack"><label class="field"><input placeholder="Email" autocomplete="off" spellcheck="false"><button class="kbtn" data-tip="Sign in with a passkey">${ic('key', 15)}</button></label>
       <div class="af"><div class="af-i">${ic('key', 16)}<span><b>nikita@example.com</b><small>Passkey · Touch ID</small></span></div><div class="af-n">Suggested by macOS when this Mac has a passkey</div></div>
       <button class="bigbtn pri">Continue with email</button></div>
@@ -863,7 +863,7 @@ class Home {
     const tabHtml = `<div class="tabs">${tabs.map(([k, l, n]) => `<button class="tab${s.ctab === k ? ' on' : ''}" data-a="ctab" data-v="${k}">${l}${n !== '' ? `<span class="n">${n}</span>` : ''}</button>`).join('')}</div>`;
     let body = '', player = '';
     if (s.ctab === 'transcript') {
-      if (c.nobody) body = empty('users', 'Nobody else joined', `The link still works if you want to try again: ${'quipcall.com/q/7hk2'}`);
+      if (c.nobody) body = empty('users', 'Nobody else joined', `The link still works if you want to try again: ${'cubiecall.com/q/7hk2'}`);
       else if (c.txOff) body = empty('ccoff', 'No transcript', 'Transcription was off for this call. Turn it on from the side panel during a call.');
       else {
         const sum = c.summary ? `<div class="sum"><button class="sum-h" data-a="sum">${ic('sparkles', 15)}Summary <small>written after the call</small><span class="chev">${ic(s.sum ? 'up' : 'down', 14)}</span></button>${s.sum ? `<ul>${c.summary.points.map(p => `<li>${p}</li>`).join('')}</ul><div class="sum-h2">Action items</div><ul class="todo">${c.summary.todo.map(([w, t, d], i) => `<li><button class="cb${d ? ' on' : ''}" data-a="todo" data-v="${i}">${d ? ic('check', 11) : ''}</button>${av(P[w], 18)}<span class="${d ? 'done' : ''}">${t}</span></li>`).join('')}</ul>` : ''}</div>` : '';
@@ -922,7 +922,7 @@ class Basic {
   }
   stage() {
     const s = this.s, me = tile('me', {video: s.cam, muted: !s.mic});
-    if (s.layout === 'alone') return `<div class="alone"><div class="me-c">${s.cam ? vid(P.me) : `<div class="tav" style="--h:${hue(P.me.id)}">${av(P.me, 132)}</div>`}</div><b>Waiting for others</b><span class="dim">The link is copied. Anyone with it can join.</span><div class="linkbox">quipcall.com/r/design-review<button class="btn sm pri">${ic('copy', 12)}Copy</button></div></div>`;
+    if (s.layout === 'alone') return `<div class="alone"><div class="me-c">${s.cam ? vid(P.me) : `<div class="tav" style="--h:${hue(P.me.id)}">${av(P.me, 132)}</div>`}</div><b>Waiting for others</b><span class="dim">The link is copied. Anyone with it can join.</span><div class="linkbox">cubiecall.com/r/design-review<button class="btn sm pri">${ic('copy', 12)}Copy</button></div></div>`;
     if (s.layout === 'speaker') return `<div class="tiles spk"><div class="big">${tile('anna', {video: 1})}</div><div class="strip">${tile('lee', {video: 1})}${tile('tom', {muted: 1, avs: 48})}${me}</div></div>`;
     if (s.layout === 'share') return `<div class="tiles shr"><div class="scrtile">${mockPricing()}<div class="nm">${ic('share', 12)}Lee's screen</div></div><div class="faces-col">${tile('anna', {video: 1})}${tile('lee', {video: 1})}${tile('tom', {muted: 1, avs: 44})}${me}</div></div>`;
     return `<div class="tiles grid4">${tile('anna', {video: 1})}${tile('lee', {video: 1})}${tile('tom', {muted: 1})}${me}</div>`;
@@ -940,7 +940,7 @@ class Basic {
     let body;
     if (s.ptab === 'transcript') body = s.cc ? `<div class="p-h"><span class="live-dot"></span>Live · transcribed on Anna's Mac<span class="sp"></span><span class="switch on" data-a="cc"></span></div>${timeline(c, {av: 22})}` : `<div class="p-h">Transcription is off<span class="sp"></span><span class="switch" data-a="cc"></span></div>${empty('ccoff', 'Not transcribing', 'Turn it on and one Mac in the call transcribes for everyone.')}`;
     else if (s.ptab === 'files') body = `<div class="frow" style="margin-top:6px">${ftile('pricing-v3.fig')}<div class="fm"><div class="fn">pricing-v3.fig</div><div class="fs">4.8 MB · Anna at 11:03</div></div><button class="ibtn">${ic('download', 15)}</button></div><div class="drop">${ic('upload', 15)}Drop a file anywhere on the call</div>`;
-    else body = `<div class="linkbox" style="margin:10px 0 8px;justify-content:space-between"><span class="dim">quipcall.com/r/design-review</span><button class="btn sm pri">${ic('copy', 12)}Copy</button></div>
+    else body = `<div class="linkbox" style="margin:10px 0 8px;justify-content:space-between"><span class="dim">cubiecall.com/r/design-review</span><button class="btn sm pri">${ic('copy', 12)}Copy</button></div>
       ${[['anna', 'speaking'], ['lee', ''], ['tom', 'muted'], ['me', s.mic ? '' : 'muted']].map(([k, st]) => `<div class="prow">${av(P[k], 28)}<span class="name">${k === 'me' ? 'Nikita (you)' : P[k].name}</span>${st === 'muted' ? `<span class="mo">${ic('micoff', 15)}</span>` : ic('mic', 15)}</div>`).join('')}`;
     return `<aside class="panel"><div class="p-tabs">${tabs}<span class="sp"></span><button class="ibtn" data-a="panel">${ic('x', 15)}</button></div><div class="p-body">${body}</div></aside>`;
   }
@@ -970,7 +970,7 @@ function editor() {
   for (let i = 0; i < 24; i++) { const ind = [0, 16, 32, 16][Math.floor(rnd() * 4)]; let segs = ''; const n = 1 + Math.floor(rnd() * 4);
     for (let j = 0; j < n; j++) segs += `<i style="width:${Math.round(18 + rnd() * 110)}px;background:${cols[Math.floor(rnd() * cols.length)]}"></i>`;
     lines += `<div class="cl"><span class="ln">${i + 1}</span><span style="width:${ind}px"></span>${i % 7 === 3 ? '' : segs}</div>`; }
-  return `<div class="ed app"><div class="ed-top">${LIGHTS}call.rs — quipcall</div><div class="ed-body">${lines}</div></div>`;
+  return `<div class="ed app"><div class="ed-top">${LIGHTS}call.rs — cubie</div><div class="ed-body">${lines}</div></div>`;
 }
 class Mini {
   constructor(root) { this.root = root; this.s = {v: 'row', pin: false, menu: false, mic: true}; root.addEventListener('click', e => this.onClick(e)); this.render(); }
@@ -1008,7 +1008,7 @@ class Mini {
       <div class="mb-r"><span class="mb-q${s.menu ? ' open' : ''}" data-a="menu"><svg width="18" height="14" viewBox="0 0 18 14" aria-hidden="true"><circle cx="6" cy="7" r="5" fill="currentColor"/><circle cx="14" cy="9" r="3.2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span class="mb-pill"><span class="timer">12:31</span></span></span>${ic('wifi', 15)}${ic('battery', 19)}<span>Sat 7 Nov  11:14</span></div></div>`;
     const pop = s.menu ? `<div class="mpop app"><div class="mp-call"><div class="r1"><span class="live-dot"></span><b>Design review</b><span class="timer dim">12:31</span></div><div class="r2"><button class="tb" data-a="mic">${ic(s.mic ? 'mic' : 'micoff', 15)}</button><button class="tb">${ic('video', 15)}</button><button class="tb">${ic('share', 15)}</button><button class="tb" data-a="expand">${ic('max', 15)}</button><span class="sp"></span><button class="leave">Leave</button></div></div>
       <div class="mp-sec">Rooms</div>${ROOMS.filter(r => r.id !== 'design').map(r => { const c = CALLS[r.calls[0]], o = r.members.filter(k => k !== 'me'); return `<div class="mp-row"><div class="stack">${av(P[o[0]], 26)}${o.length > 1 ? `<span class="plus">+${o.length - 1}</span>` : ''}</div><div class="name">${r.name}<div class="meta">${SHORT[c.day]} · ${c.dur}</div></div><button class="ibtn">${ic('phone', 14)}</button></div>`; }).join('')}
-      <div class="mp-sep"></div><div class="mp-i">${ic('zap', 14)}Quick call<kbd>⌘N</kbd></div><div class="mp-i">${ic('panel', 14)}Open Quipcall<kbd>⌘O</kbd></div><div class="mp-i">${ic('settings', 14)}Settings…<kbd>⌘,</kbd></div></div>` : '';
+      <div class="mp-sep"></div><div class="mp-i">${ic('zap', 14)}Quick call<kbd>⌘N</kbd></div><div class="mp-i">${ic('panel', 14)}Open Cubie<kbd>⌘O</kbd></div><div class="mp-i">${ic('settings', 14)}Settings…<kbd>⌘,</kbd></div></div>` : '';
     const share = s.v === 'share' ? `<div class="sharewin app">${mockPricing()}<div class="nm">${ic('share', 12)}Lee's screen · 15 fps</div><button class="sw-fs" data-tip="Fullscreen">${ic('max', 14)}</button></div>` : '';
     this.root.innerHTML = `${menubar}${editor()}${share}<div class="app${s.pin ? ' pin' : ''}" data-livecall data-mic="${s.mic ? 'on' : 'off'}">${this.capsule()}</div>${pop}`;
     fitMocks(this.root); tickTimers(); speak();

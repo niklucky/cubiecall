@@ -9,7 +9,7 @@ import shlex
 import sys
 import tempfile
 
-AUTH = ('RESEND_API_KEY', 'QUIPCALL_MAIL_FROM', 'QUIPCALL_BOOTSTRAP_EMAIL')
+AUTH = ('RESEND_API_KEY', 'CUBIE_MAIL_FROM', 'CUBIE_BOOTSTRAP_EMAIL')
 LIVEKIT = ('LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET', 'LIVEKIT_KEYS')
 
 
@@ -26,6 +26,13 @@ def read_env(path):
             raise ValueError('Invalid environment assignment')
         parts = shlex.split(value, comments=False)
         values[key] = ' '.join(parts)
+    # Prefer explicit Cubie settings when an operator supplies both names.
+    for key in list(values):
+        if key.startswith('QUIPCALL_'):
+            value = values.pop(key)
+            if key == 'QUIPCALL_MAIL_FROM' and value.startswith('Quipcall <'):
+                value = 'Cubie <' + value[len('Quipcall <'):]
+            values.setdefault('CUBIE_' + key[len('QUIPCALL_'):], value)
     return values
 
 

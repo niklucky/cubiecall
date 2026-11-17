@@ -9,12 +9,12 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 
-use parking_lot::Mutex;
-use quipcall_core::livekit::prelude::RemoteVideoTrack;
-use quipcall_core::permissions::{self, Access};
-use quipcall_core::{
+use cubie_core::livekit::prelude::RemoteVideoTrack;
+use cubie_core::permissions::{self, Access};
+use cubie_core::{
     Engine, Event, MediaDevice, TrackKey, VideoKind, VideoQuality, VideoSubscription,
 };
+use parking_lot::Mutex;
 
 use crate::account::Client;
 use crate::log::Log;
@@ -184,7 +184,7 @@ impl Client {
         let weak = Arc::downgrade(&call);
         let client = self;
         std::thread::Builder::new()
-            .name("quipcall-call".into())
+            .name("cubie-call".into())
             .spawn(move || {
                 let room_name = match crate::block::on(admission) {
                     Ok(info) => {
@@ -363,8 +363,7 @@ const CONNECT_FAILED: &str = "connect failed";
 /// No microphone will open in this call: access is off, or (tests, the
 /// Simulator) the engine was told to leave it alone.
 fn mic_missing() -> bool {
-    std::env::var_os("QUIPCALL_NO_MIC").is_some()
-        || permissions::status(MediaDevice::Microphone) != Access::Granted
+    cubie_core::no_mic() || permissions::status(MediaDevice::Microphone) != Access::Granted
 }
 
 /// An engine event as the app hears it, keeping the call's own books on the

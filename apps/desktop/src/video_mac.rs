@@ -13,6 +13,9 @@ use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use cubie_core::FrameSink;
+use cubie_core::livekit::webrtc::video_frame::{BoxVideoBuffer, VideoBuffer, VideoFrame};
+use cubie_core::pixel_buffer::PixelBufferPool;
 use gpui::SharedString;
 use objc2_core_foundation::CFRetained;
 use objc2_core_video::{
@@ -22,9 +25,6 @@ use objc2_core_video::{
     kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVReturnSuccess,
 };
 use parking_lot::Mutex;
-use quipcall_core::FrameSink;
-use quipcall_core::livekit::webrtc::video_frame::{BoxVideoBuffer, VideoBuffer, VideoFrame};
-use quipcall_core::pixel_buffer::PixelBufferPool;
 
 /// A frame ready to hand to `gpui::surface`.
 #[derive(Clone)]

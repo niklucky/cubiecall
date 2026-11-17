@@ -4,6 +4,18 @@ pub use reqwest::Url;
 use serde_json::Value;
 use std::{sync::OnceLock, time::Duration};
 
+/// Local identity for credentials and history. The production aliases share
+/// the original key so installations keep their sign-in and previous calls.
+/// Custom servers retain their own keys.
+pub fn storage_origin(server: &str) -> &str {
+    match server.trim_end_matches('/') {
+        "https://cubiecall.com" | "https://cubycall.com" | "https://quipcall.com" => {
+            "https://quipcall.com"
+        }
+        _ => server,
+    }
+}
+
 #[derive(Debug)]
 pub struct RequestError {
     pub status: u16,
@@ -66,9 +78,7 @@ pub(crate) fn request_with_retry(
                 let client = client()?;
                 let mut attempt = 1;
                 let response = loop {
-                    let mut req = client
-                        .request(method.parse()?, &url)
-                        .header("X-Quipcall", "1");
+                    let mut req = client.request(method.parse()?, &url).header("X-Cubie", "1");
                     if let Some(token) = &token {
                         req = req.bearer_auth(token);
                     }

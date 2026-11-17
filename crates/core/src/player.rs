@@ -24,7 +24,7 @@ impl Player {
         // SAFETY: a file URL; AVPlayer loads it in the background.
         let player = unsafe { AVPlayer::playerWithURL(&url, mtm) };
         // Test instances have no speaker either.
-        if std::env::var_os("QUIPCALL_NO_MIC").is_some() {
+        if crate::no_mic() {
             unsafe { player.setMuted(true) };
         }
         Some(Self {

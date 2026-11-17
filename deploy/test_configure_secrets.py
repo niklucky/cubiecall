@@ -6,7 +6,7 @@ import unittest
 spec = importlib.util.spec_from_file_location('configure_secrets', Path(__file__).with_name('configure-secrets.py'))
 config = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(config)
-AUTH = 'RESEND_API_KEY=test-key\nQUIPCALL_MAIL_FROM="Quipcall <test@example.test>"\nQUIPCALL_BOOTSTRAP_EMAIL=admin@example.test\n'
+AUTH = 'RESEND_API_KEY=test-key\nCUBIE_MAIL_FROM="Cubie <test@example.test>"\nCUBIE_BOOTSTRAP_EMAIL=admin@example.test\n'
 PAIR = 'LIVEKIT_API_KEY=existing-key\nLIVEKIT_API_SECRET=existing-secret\n'
 
 
@@ -26,11 +26,24 @@ class SecretsTests(unittest.TestCase):
                 if 'existing-key' in existing:
                     self.assertEqual(values['LIVEKIT_API_KEY'], 'existing-key')
                     self.assertEqual(values['LIVEKIT_API_SECRET'], 'existing-secret')
-                self.assertEqual(values['QUIPCALL_MAIL_FROM'], 'Quipcall <test@example.test>')
+                self.assertEqual(values['CUBIE_MAIL_FROM'], 'Cubie <test@example.test>')
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
                 before = path.read_bytes()
                 self.assertFalse(config.configure(path, auth if supplied else None))
                 self.assertEqual(path.read_bytes(), before)
+
+    def test_migrates_legacy_settings_without_rotating_the_livekit_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'secrets.env'
+            path.write_text(AUTH.replace('CUBIE_', 'QUIPCALL_').replace('Cubie <', 'Quipcall <') + PAIR + 'LIVEKIT_KEYS="existing-key: existing-secret"\n')
+            self.assertFalse(config.configure(path))
+            self.assertNotIn('QUIPCALL_', path.read_text())
+            self.assertEqual(config.read_env(path)['CUBIE_MAIL_FROM'], 'Cubie <test@example.test>')
+            self.assertEqual(config.read_env(path)['CUBIE_BOOTSTRAP_EMAIL'], 'admin@example.test')
+            auth = Path(directory) / 'auth.env'
+            auth.write_text('CUBIE_MAIL_FROM=new@example.test\nQUIPCALL_MAIL_FROM=old@example.test\n')
+            self.assertFalse(config.configure(path, auth))
+            self.assertEqual(config.read_env(path)['CUBIE_MAIL_FROM'], 'new@example.test')
 
     def test_recovers_existing_livekit_pair_without_rotating(self):
         with tempfile.TemporaryDirectory() as directory:

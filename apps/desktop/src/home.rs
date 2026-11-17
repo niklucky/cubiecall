@@ -28,7 +28,7 @@ pub fn open(cx: &mut App) -> Option<WindowHandle<Home>> {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
-            title: Some("Quipcall".into()),
+            title: Some("Cubie".into()),
             appears_transparent: true,
             ..Default::default()
         }),
@@ -116,7 +116,7 @@ impl AccountView {
 
 /// A recording in Home's player.
 struct Playback {
-    player: quipcall_core::player::Player,
+    player: cubie_core::player::Player,
     /// Where the recording starts in its call, ms.
     start_ms: i64,
     playing: bool,
@@ -266,7 +266,7 @@ impl Home {
             .as_ref()
             .is_none_or(|p| p.player.path() != rec.path)
         {
-            let Some(player) = quipcall_core::player::Player::open(&rec.path) else {
+            let Some(player) = cubie_core::player::Player::open(&rec.path) else {
                 return;
             };
             // Follows the sound, and notices when it ends.

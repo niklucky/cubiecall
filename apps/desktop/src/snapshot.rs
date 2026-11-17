@@ -1,33 +1,33 @@
 //! Dev only (`--features snapshot`): headless UI checks.
 //!
-//! - `QUIPCALL_SNAPSHOT_DIR`: every window is rendered to a PNG there every two
+//! - `CUBIE_SNAPSHOT_DIR`: every window is rendered to a PNG there every two
 //!   seconds. AppKit effects (circle clipping, blur) are not part of the image.
 //!   A window macOS has stopped drawing (hidden behind others, or the screen
 //!   is locked) is drawn for the image, so runs work on a locked Mac too.
-//! - `QUIPCALL_SCRIPT="4:regular 8:minimal 12:leave"`: runs the same actions as
+//! - `CUBIE_SCRIPT="4:regular 8:minimal 12:leave"`: runs the same actions as
 //!   the buttons at the given second: `regular`, `minimal`, `leave`, `quick`
 //!   (quick call from home), `mic`, `camera`, `share` (opens the picker),
 //!   `hover` / `stack` (the capsule opens its row of controls, or of the
 //!   people in its stack, as if hovered), `unhover` (closes it), `top`
 //!   (moves it to the top of its screen), `panel` / `people`
 //!   (the call window's side panel, on the transcript or people tab),
-//!   `share-own` / `share-own-60` (shares one of Quipcall's own windows with
+//!   `share-own` / `share-own-60` (shares one of Cubie's own windows with
 //!   that preset, so tests never capture anything else on screen; with
-//!   `QUIPCALL_FAKE_SCREEN` set, a synthetic test pattern instead),
+//!   `CUBIE_FAKE_SCREEN` set, a synthetic test pattern instead),
 //!   `stop-share` (never opens the picker), `fullscreen` (the first screen
 //!   share from someone else goes fullscreen, or back), `record` (starts or
 //!   stops your recording), `record-screen` (records the synthetic screen;
-//!   needs `QUIPCALL_FAKE_SCREEN`), `hover-rec` / `record-choice` (the
+//!   needs `CUBIE_FAKE_SCREEN`), `hover-rec` / `record-choice` (the
 //!   capsule's recording row, or its choice of what to record), `recordings`
 //!   (home's Recordings tab), `transcribe` (starts or stops your transcript;
-//!   with `QUIPCALL_MODELS_DIR` pointing at models already downloaded),
+//!   with `CUBIE_MODELS_DIR` pointing at models already downloaded),
 //!   `transcript-window` (opens or closes it), `transcribe-choice` /
 //!   `hover-transcript` (the capsule's rows), `settings`, `ask` (asks the
 //!   first other Mac that can transcribe, or hands yours over to it),
 //!   `accept` / `decline` (answers the question you're asked), `play`
 //!   (Home plays the selected call from its first line, muted),
 //!   `settings-recording` (its Recording tab), `try` (Try it with your
-//!   voice: test instances speak `QUIPCALL_FAKE_MIC`, a 48 kHz float WAV),
+//!   voice: test instances speak `CUBIE_FAKE_MIC`, a 48 kHz float WAV),
 //!   `each-voice` (records each voice in its own file too), `quit-overlay`
 //!   (keeps the quit hint visible for screenshots), `appearance-light` /
 //!   `appearance-dark` (override this app's appearance for screenshots).
@@ -38,7 +38,7 @@ use gpui::App;
 
 pub fn start(cx: &mut App) {
     run_script(cx);
-    let Ok(dir) = std::env::var("QUIPCALL_SNAPSHOT_DIR") else {
+    let Ok(dir) = std::env::var("CUBIE_SNAPSHOT_DIR") else {
         return;
     };
     let _ = std::fs::create_dir_all(&dir);
@@ -78,7 +78,7 @@ pub fn start(cx: &mut App) {
 }
 
 fn run_script(cx: &mut App) {
-    let Ok(script) = std::env::var("QUIPCALL_SCRIPT") else {
+    let Ok(script) = std::env::var("CUBIE_SCRIPT") else {
         return;
     };
     let mut steps: Vec<(u64, String)> = script
@@ -207,20 +207,20 @@ fn act(action: &str, cx: &mut App) {
     if let Some(rest) = action.strip_prefix("share-own") {
         // `share-own` (15 fps) or e.g. `share-own-60`.
         let fps: u32 = rest.trim_start_matches('-').parse().unwrap_or(15);
-        let preset = quipcall_core::ScreenSharePreset::PRESETS
+        let preset = cubie_core::ScreenSharePreset::PRESETS
             .into_iter()
             .find(|p| p.fps == fps)
-            .unwrap_or(quipcall_core::ScreenSharePreset::PRESETS[1]);
+            .unwrap_or(cubie_core::ScreenSharePreset::PRESETS[1]);
         let shell = Shell::global(cx);
-        if std::env::var_os("QUIPCALL_FAKE_SCREEN").is_some() {
+        if std::env::var_os("CUBIE_FAKE_SCREEN").is_some() {
             // The source is ignored: the test pattern is shared instead.
             if let Some(call) = shell.read(cx).call() {
-                let source = quipcall_core::SourceId::Display(0);
+                let source = cubie_core::SourceId::Display(0);
                 call.update(cx, |c, cx| c.share(source, preset, cx));
             }
             return;
         }
-        cx.spawn(async move |cx| match quipcall_core::own_window().await {
+        cx.spawn(async move |cx| match cubie_core::own_window().await {
             Ok(Some(source)) => {
                 cx.update(|cx| {
                     if let Some(call) = shell.read(cx).call() {
@@ -329,13 +329,13 @@ fn act(action: &str, cx: &mut App) {
             let open = !c.transcript_open;
             c.set_transcript_open(open, cx)
         }
-        // Records Quipcall's own screen pattern: only with QUIPCALL_FAKE_SCREEN.
+        // Records Cubie's own screen pattern: only with CUBIE_FAKE_SCREEN.
         "record-screen" => {
-            if std::env::var_os("QUIPCALL_FAKE_SCREEN").is_some() {
-                let preset = quipcall_core::ScreenSharePreset::PRESETS[1];
-                c.record_screen(quipcall_core::SourceId::Display(0), preset, cx)
+            if std::env::var_os("CUBIE_FAKE_SCREEN").is_some() {
+                let preset = cubie_core::ScreenSharePreset::PRESETS[1];
+                c.record_screen(cubie_core::SourceId::Display(0), preset, cx)
             } else {
-                tracing::warn!("script: record-screen needs QUIPCALL_FAKE_SCREEN");
+                tracing::warn!("script: record-screen needs CUBIE_FAKE_SCREEN");
             }
         }
         "stop-share" => {

@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use sha2::{Digest as _, Sha256};
 
-pub use quipcall_stt::{ModelInfo, catalog};
+pub use cubie_stt::{ModelInfo, catalog};
 
 pub fn path(info: &ModelInfo, dir: &Path) -> PathBuf {
     dir.join(info.file)
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn a_whole_part_is_installed_without_the_network() {
-        let dir = std::env::temp_dir().join(format!("qc-models-whole-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("cubie-models-whole-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(part(&HELLO, &dir), b"hello").unwrap();
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     #[ignore = "downloads from Hugging Face"]
     fn resumes_and_checks() {
-        let dir = std::env::temp_dir().join(format!("qc-models-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("cubie-models-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let info = &catalog::VAD;
         let wait = |d: Download| loop {

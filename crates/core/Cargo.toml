@@ -1,5 +1,5 @@
 [package]
-name = "quipcall-core"
+name = "cubie-core"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -11,7 +11,7 @@ default = ["denoise", "transcribe"]
 # DeepFilterNet 3 on the microphone (17.6 MB of binary).
 denoise = ["dep:deep_filter", "dep:ndarray", "dep:tract-onnx"]
 # Speech to text on this device (transcribe.cpp; needs cmake).
-transcribe = ["dep:quipcall-stt"]
+transcribe = ["dep:cubie-stt"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -24,8 +24,8 @@ ndarray = { version = "0.15", optional = true }
 # Not used directly: deep_filter needs tract 0.21.4 (0.21.7+ moved to ndarray 0.16).
 tract-onnx = { version = "=0.21.4", optional = true }
 parking_lot = "0.13.0"
-quipcall-protocol.workspace = true
-quipcall-stt = { workspace = true, optional = true }
+cubie-protocol.workspace = true
+cubie-stt = { workspace = true, optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
 serde_json = "1.0.154"
 # Checks downloaded models (already in the tree for LiveKit's tokens).

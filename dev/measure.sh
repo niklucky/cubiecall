@@ -1,7 +1,7 @@
 #!/bin/bash
 # Sample a process every 5 s: CPU %, RSS, physical footprint, IOSurface count.
 #
-#   dev/measure.sh $(pgrep -x quipcall-desktop) 8
+#   dev/measure.sh $(pgrep -x cubie-desktop) 8
 #
 # Use the footprint, not RSS: it is what Activity Monitor shows as "Memory" and
 # includes GPU and IOSurface memory, which RSS mostly misses.

@@ -287,7 +287,7 @@ define_class!(
     // used on the main thread and implements no Drop.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
-    #[name = "QuipcallMenuTarget"]
+    #[name = "CubieMenuTarget"]
     #[ivars = MenuIvars]
     struct MenuTarget;
 

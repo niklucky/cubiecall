@@ -38,7 +38,7 @@ fn open(first_run: bool, cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
-            title: Some("Welcome to Quipcall".into()),
+            title: Some("Welcome to Cubie".into()),
             appears_transparent: true,
             ..Default::default()
         }),

@@ -1,5 +1,5 @@
 [package]
-name = "quipcall-protocol"
+name = "cubie-protocol"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

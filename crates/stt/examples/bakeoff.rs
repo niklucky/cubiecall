@@ -2,7 +2,7 @@
 //! spoken by macOS's `say` voices. Word error rate (character error rate for
 //! Chinese and Japanese) and speed, on the GPU and on the CPU.
 //!
-//!   QUIPCALL_STT_MODELS=<dir> cargo run --release -p quipcall-stt --example bakeoff
+//!   CUBIE_STT_MODELS=<dir> cargo run --release -p cubie-stt --example bakeoff
 //!
 //! Synthetic voices are cleaner than people on a call: the numbers compare
 //! models, they don't predict a real call's accuracy.
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use quipcall_stt::catalog::{self, ModelInfo};
+use cubie_stt::catalog::{self, ModelInfo};
 use transcribe_cpp as tc;
 
 const SAMPLES: &[(&str, &str, &str)] = &[
@@ -48,8 +48,8 @@ const SAMPLES: &[(&str, &str, &str)] = &[
 ];
 
 fn main() {
-    let dir = PathBuf::from(std::env::var("QUIPCALL_STT_MODELS").expect("QUIPCALL_STT_MODELS"));
-    let tmp = std::env::temp_dir().join(format!("qc-bakeoff-{}", std::process::id()));
+    let dir = PathBuf::from(std::env::var("CUBIE_STT_MODELS").expect("CUBIE_STT_MODELS"));
+    let tmp = std::env::temp_dir().join(format!("cubie-bakeoff-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     let clips: Vec<(&str, &str, Vec<f32>)> = SAMPLES
         .iter()

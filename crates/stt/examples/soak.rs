@@ -1,12 +1,12 @@
 //! Memory soak: two voices talking for `MINUTES` of audio, fed ten times
 //! faster than real time. Watch the process with `dev/measure.sh`.
 //!
-//!   QUIPCALL_STT_MODELS=<dir> cargo run --release -p quipcall-stt --example soak -- <wav48k-f32> [MINUTES]
+//!   CUBIE_STT_MODELS=<dir> cargo run --release -p cubie-stt --example soak -- <wav48k-f32> [MINUTES]
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use quipcall_stt::{Options, Transcriber, catalog};
+use cubie_stt::{Options, Transcriber, catalog};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -16,7 +16,7 @@ fn main() {
     let (samples, _) = wav[at..].as_chunks::<4>();
     let speech: Vec<f32> = samples.iter().map(|b| f32::from_le_bytes(*b)).collect();
 
-    let dir = PathBuf::from(std::env::var("QUIPCALL_STT_MODELS").unwrap());
+    let dir = PathBuf::from(std::env::var("CUBIE_STT_MODELS").unwrap());
     let lines = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = lines.clone();
     let t = Transcriber::start(

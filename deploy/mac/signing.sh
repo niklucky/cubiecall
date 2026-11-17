@@ -1,5 +1,5 @@
 #!/bin/sh
-# Make the identity Quipcall.app is signed with: a self-signed certificate in
+# Make the identity Cubie.app is signed with: a self-signed certificate in
 # a keychain of its own (no password, not in the search list).
 #
 #   deploy/mac/signing.sh <keychain>
@@ -16,7 +16,7 @@
 set -eu
 
 KEYCHAIN=$1
-NAME="Quipcall Signing"
+NAME="Cubie Signing"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
@@ -36,14 +36,14 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 7300 -config "$TMP/cert.cnf" \
 	-keyout "$TMP/key.pem" -out "$TMP/cert.pem" 2>/dev/null
 # -legacy: `security import` can't read OpenSSL 3's default PKCS#12 cipher.
 openssl pkcs12 -export -legacy -inkey "$TMP/key.pem" -in "$TMP/cert.pem" \
-	-out "$TMP/id.p12" -passout pass:quipcall 2>/dev/null ||
+	-out "$TMP/id.p12" -passout pass:cubie 2>/dev/null ||
 	openssl pkcs12 -export -inkey "$TMP/key.pem" -in "$TMP/cert.pem" \
-		-out "$TMP/id.p12" -passout pass:quipcall
+		-out "$TMP/id.p12" -passout pass:cubie
 
 security create-keychain -p "" "$KEYCHAIN"
 chmod 600 "$KEYCHAIN"
 security unlock-keychain -p "" "$KEYCHAIN"
-security import "$TMP/id.p12" -k "$KEYCHAIN" -P quipcall -T /usr/bin/codesign >/dev/null
+security import "$TMP/id.p12" -k "$KEYCHAIN" -P cubie -T /usr/bin/codesign >/dev/null
 # Lets codesign use the key without asking.
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$KEYCHAIN" >/dev/null
 echo "created the signing identity \"$NAME\" in $KEYCHAIN; back it up"

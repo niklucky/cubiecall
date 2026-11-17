@@ -3,7 +3,7 @@
 ## gpui-pre-macos 0.3.11
 
 GPUI's macOS backend, copied from crates.io with five window fixes. Search
-for `quipcall patch` to locate each modification in `src/window.rs`,
+for `cubie patch` to locate each modification in `src/window.rs`,
 `src/display_link.rs`, `src/gpui_macos.rs`, `src/accessibility.rs`,
 `Cargo.toml`, and `tests/accessibility.rs`.
 
@@ -77,25 +77,25 @@ The patch changes `src/peer_connection_factory.cpp` only:
 
 - Every WebRTC audio processor (APM) gets a capture post-processor that hands
   each 10 ms microphone frame, after echo cancellation, to a Rust callback
-  (`quipcall_set_capture_processor`), then optionally runs WebRTC's adaptive
-  gain control (AGC2, `quipcall_set_capture_gain_control`) on the result.
+  (`cubie_set_capture_processor`), then optionally runs WebRTC's adaptive
+  gain control (AGC2, `cubie_set_capture_gain_control`) on the result.
   `crates/core/src/denoise.rs` runs DeepFilterNet there, so the gain control
   follows the cleaned voice. The post-processor is the last step in the APM,
   so this is the only way to put gain control after the model. WebRTC
   processes the microphone at the lower of its rate and the codec's, so the
   APM may run at 8, 16 or 32 kHz; the callback still gets 48 kHz frames,
   resampled there and back with WebRTC's `PushResampler`.
-- A capture tap (`quipcall_set_capture_tap`) gets a copy of every finished
+- A capture tap (`cubie_set_capture_tap`) gets a copy of every finished
   microphone frame, after the filter and AGC2, at the processor's rate: what
   the call sends, before encoding. `crates/core/src/audio_tap.rs` reads it
   for recordings (and, later, transcription). Offline test APMs skip it.
 - Device microphone tracks take WebRTC's own noise suppression and older gain
-  control (AGC1) from `quipcall_set_device_noise_suppression` and
-  `quipcall_set_device_gain_control` instead of always turning them on. They
+  control (AGC1) from `cubie_set_device_noise_suppression` and
+  `cubie_set_device_gain_control` instead of always turning them on. They
   are read when the track is created, because WebRTC re-applies the track's
   options on every unmute and renegotiation; changing the APM afterwards
   doesn't stick.
-- `quipcall_test_apm_*`: an APM set up like a call's microphone on macOS, at
+- `cubie_test_apm_*`: an APM set up like a call's microphone on macOS, at
   any of those rates, for `crates/core/examples/denoise_eval.rs` and the tests
   in `denoise.rs`. The app doesn't call them, so the linker drops them.
 

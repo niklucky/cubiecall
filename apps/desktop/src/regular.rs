@@ -9,13 +9,13 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use cubie_core::TrackKey;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, EntityId, FontWeight, ListState,
     ObjectFit, Stateful, Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowHandle,
     WindowOptions, div, px, relative, rgb, size,
 };
-use quipcall_core::TrackKey;
 
 use crate::assets::Icon;
 use crate::call::{Call, Camera, Member, Mode, Preparing};
@@ -46,7 +46,7 @@ const GRID_MAX: usize = 4;
 
 pub fn open(call: Entity<Call>, cx: &mut App) -> Option<WindowHandle<Regular>> {
     let bounds = Bounds::centered(None, size(px(1040.0), px(680.0)), cx);
-    let title = format!("{} — Quipcall", call.read(cx).room.name);
+    let title = format!("{} — Cubie", call.read(cx).room.name);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
@@ -293,7 +293,7 @@ impl Regular {
         // Snapshot tests open the panel up front: a window behind others
         // stops drawing, so later changes wouldn't reach the snapshot.
         #[cfg(feature = "snapshot")]
-        let panel = match std::env::var("QUIPCALL_PANEL").as_deref() {
+        let panel = match std::env::var("CUBIE_PANEL").as_deref() {
             Ok("people") => Some(Tab::People),
             Ok(_) => Some(Tab::Transcript),
             Err(_) => None,
