@@ -1,4 +1,4 @@
-//! Quipcall for phones: everything under the screens.
+//! Cubie (the phone app of Quipcall): everything under the screens.
 //!
 //! The iOS app (Swift) and, later, the Android app (Kotlin) are views only.
 //! Accounts, rooms and the call itself live here, on top of `quipcall-core`,
@@ -57,7 +57,7 @@ impl From<anyhow::Error> for AppError {
         // not the transport's own words.
         let message = if answered.is_none() && quipcall_core::http::transient(&error) {
             tracing::warn!("request failed: {error:#}");
-            "Can't reach Quipcall. Check your connection and try again.".to_owned()
+            "Can't reach Cubie. Check your connection and try again.".to_owned()
         } else {
             format!("{error:#}")
         };
@@ -99,7 +99,7 @@ mod tests {
         assert!(matches!(&error, AppError::Failed { .. }));
         assert_eq!(
             error.to_string(),
-            "Can't reach Quipcall. Check your connection and try again."
+            "Can't reach Cubie. Check your connection and try again."
         );
     }
 

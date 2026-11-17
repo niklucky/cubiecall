@@ -127,11 +127,11 @@ One window (1040 × 680): the room's name and the call's time in the title bar, 
 
 ## Phones
 
-The iPhone app looks like iOS, not like the Mac app: the system's lists, search fields, bars, buttons and colours, light or dark as the phone is set. Only faces (initials on a person's colour, the same colour as here) and the video tiles are drawn by us. Four tabs:
+The iPhone app (Cubie on the phone: the first to carry the new name, bundle `com.cubiecall.ios`; the Mac app, the site and the code's own names follow in one rename) looks like iOS, not like the Mac app: the system's lists, search fields, bars, buttons and colours, light or dark as the phone is set. Only faces (initials on a person's colour, the same colour as here) and the video tiles are drawn by us. Four tabs:
 
 - **Calls** (where the app opens, once there are any): the calls you were in on this phone, newest first, as the Phone app lists them: the room, who was there and for how long, when. A call nobody joined is red. Tap one for its page; swipe to delete; Edit to clear.
 - **Rooms**: your rooms, searchable; + makes one. Tap a room for its page; the small round button on the row calls at once; swipe or long-press to share the link.
-- **Contacts**: your address book, searchable by name, email or number. People with a Quipcall account come first, under "On Quipcall", with a call button; everyone else has **Invite**, which opens the system's share sheet (Messages, Telegram, WhatsApp, Mail…) with a link to a room for the two of you (it opens in a browser, no app needed). Until calls can ring, calling someone on Quipcall sends them that link first, then takes you into the call.
+- **Contacts**: your address book, searchable by name, email or number. People with an account come first, under "On Cubie", with a call button; everyone else has **Invite**, which opens the system's share sheet (Messages, Telegram, WhatsApp, Mail…) with a link to a room for the two of you (it opens in a browser, no app needed). Until calls can ring, calling someone on Quipcall sends them that link first, then takes you into the call.
 - **Settings**: you, and Sign Out.
 
 **A room opens as a group chat**, the way Telegram and WhatsApp show one. The room's face and name are in the bar, with Share and Call. The history runs oldest to newest and opens at the newest end:

@@ -9,12 +9,12 @@ private struct Contact {
     let emails: [String]
     let phones: [String]
     let photo: Data?
-    /// They have a Quipcall account (one of their emails does).
+    /// They have a Cubie account (one of their emails does).
     var here = false
 }
 
 /// The phone's own contacts, searchable, with the people who already use
-/// Quipcall on top. Tap someone who does to call them; tap anyone else to
+/// Cubie on top. Tap someone who does to call them; tap anyone else to
 /// send them an invitation through the system's share sheet (Messages,
 /// Telegram, WhatsApp, Mail: whatever the phone has).
 ///
@@ -129,7 +129,7 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating 
         navigationItem.searchController?.searchBar.text ?? ""
     }
 
-    /// People on Quipcall first, then everyone else under their letter.
+    /// People on Cubie first, then everyone else under their letter.
     private func arrange() {
         let query = query
         let digits = query.filter(\.isNumber)
@@ -141,7 +141,7 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating 
         var sections: [(title: String, people: [Contact])] = []
         let here = found.filter(\.here)
         if !here.isEmpty {
-            sections.append(("On Quipcall", here))
+            sections.append(("On Cubie", here))
         }
         let others = found.filter { !$0.here }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -165,7 +165,7 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating 
         switch access {
         case .notDetermined:
             empty.text = "Find People You Know"
-            empty.secondaryText = "See which of your contacts use Quipcall, and invite the rest."
+            empty.secondaryText = "See which of your contacts use Cubie, and invite the rest."
             empty.button = .borderedProminent()
             empty.button.title = "Continue"
             empty.buttonProperties.primaryAction = UIAction { [weak self] _ in
@@ -175,7 +175,7 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating 
             }
         case .denied, .restricted:
             empty.text = "No Access to Contacts"
-            empty.secondaryText = "Allow Quipcall to see your contacts in Settings."
+            empty.secondaryText = "Allow Cubie to see your contacts in Settings."
             empty.button = .bordered()
             empty.button.title = "Open Settings"
             empty.buttonProperties.primaryAction = UIAction { _ in
@@ -226,7 +226,7 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating 
         let person = sections[indexPath.section].people[indexPath.row]
         var content = UIListContentConfiguration.face(
             person.name,
-            detail: person.here ? "On Quipcall" : person.phones.first ?? person.emails.first,
+            detail: person.here ? "On Cubie" : person.phones.first ?? person.emails.first,
             photo: person.photo
         )
         if person.here {
@@ -285,7 +285,7 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating 
 
     // MARK: Calling and inviting
 
-    /// Someone on Quipcall: call them. Anyone else: text them an invitation.
+    /// Someone on Cubie: call them. Anyone else: text them an invitation.
     private func act(on person: Contact, from source: UIView?) {
         invite(person, thenCall: person.here, from: source)
     }
@@ -312,8 +312,8 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating 
         room(of: person) { [weak self] room, link in
             guard let self else { return }
             let text = thenCall
-                ? "I'm calling you on Quipcall. Join me here: \(link)"
-                : "Let's talk on Quipcall. Open this to call me, no app needed: \(link)"
+                ? "I'm calling you on Cubie. Join me here: \(link)"
+                : "Let's talk on Cubie. Open this to call me, no app needed: \(link)"
             let sheet = UIActivityViewController(activityItems: [text], applicationActivities: nil)
             sheet.popoverPresentationController?.sourceView = source ?? self.view
             sheet.completionWithItemsHandler = { [weak self] _, sent, _, _ in

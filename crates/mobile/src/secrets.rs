@@ -4,7 +4,7 @@
 //! the real session. Only on iOS: built for the Mac (checks, tests), this
 //! crate keeps nothing, and never goes near the Mac's Keychain.
 
-const SERVICE: &str = "com.quipcall.session";
+const SERVICE: &str = "com.cubiecall.session";
 
 fn account(server: &str) -> &str {
     server.trim_end_matches('/')

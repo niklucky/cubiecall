@@ -134,7 +134,7 @@
 </script>
 
 {#if done}
-  <section class="result"><div class="success-mark">✓</div><h1>You’re ready</h1><p>Return to Quipcall on your {device}. You’ll continue as <strong>{name}</strong>.</p>{#if phone}<button class="primary" onclick={() => { location.href = 'quipcall://signed-in'; }}>Open Quipcall</button>{:else}<button onclick={onhome}>Back to your rooms</button>{/if}</section>
+  <section class="result"><div class="success-mark">✓</div><h1>You’re ready</h1><p>Return to {phone ? 'the app' : 'Quipcall'} on your {device}. You’ll continue as <strong>{name}</strong>.</p>{#if phone}<button class="primary" onclick={() => { location.href = 'quipcall://signed-in'; }}>Open the app</button>{:else}<button onclick={onhome}>Back to your rooms</button>{/if}</section>
 {:else if loading && !entry}
   <section class="result" aria-live="polite"><span class="eyebrow">GETTING READY</span><h1>Checking your link…</h1><p>One moment while we check room access.</p></section>
 {:else if denied}
@@ -182,7 +182,7 @@
       <form onsubmit={(e) => { e.preventDefault(); void proceed(desktopId ? 'approve' : 'browser'); }}>
         <label>Your name<input bind:value={name} maxlength="64" autocomplete="nickname" placeholder="What should we call you?" required disabled={working} /></label>
         {#if me?.email}<p class="fine identity">Signed in as {me.email} <button type="button" class="text-button" disabled={working} onclick={onlogin}>Switch account</button></p>{/if}
-        {#if desktopId}<label>Code shown {phone ? 'in the app' : 'on your Mac'}<input bind:value={desktopCode} autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="8" pattern={'[a-fA-F0-9]{8}'} placeholder="8-character code" required disabled={working} /></label><p class="fine">{phone ? 'Go back to Quipcall for the code it shows (it’s copied, so you can paste it).' : 'Open Quipcall on this Mac and type the code displayed there.'} Do not use a code sent by someone else.{phone ? '' : ' The Mac app uses its own microphone and camera settings.'}</p>{/if}
+        {#if desktopId}<label>Code shown {phone ? 'in the app' : 'on your Mac'}<input bind:value={desktopCode} autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="8" pattern={'[a-fA-F0-9]{8}'} placeholder="8-character code" required disabled={working} /></label><p class="fine">{phone ? 'Go back to the app for the code it shows (it’s copied, so you can paste it).' : 'Open Quipcall on this Mac and type the code displayed there.'} Do not use a code sent by someone else.{phone ? '' : ' The Mac app uses its own microphone and camera settings.'}</p>{/if}
         <button class="primary join-button" disabled={working || loading || !name.trim() || (desktopId && !/^[a-f0-9]{8}$/i.test(desktopCode.trim())) || media.audioBusy || media.videoBusy}>{working ? (joining ? 'Joining…' : 'Getting ready…') : desktopId ? `Continue${name.trim() ? ` as ${name.trim()}` : ''}` : 'Join call'}<span aria-hidden="true">→</span></button>
       </form>
       {#if !desktopId}

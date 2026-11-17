@@ -13,7 +13,7 @@ import UIKit
 ///   starting are small centred lines between the bubbles, the last three
 ///   with their symbol.
 ///
-/// Messages and files will be bubbles here too once Quipcall has them; there
+/// Messages and files will be bubbles here too once Cubie has them; there
 /// is nothing to type into yet. iOS has no chat-bubble component, so the two
 /// cells below are ours, drawn in the system's colours and type.
 final class ChatViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {

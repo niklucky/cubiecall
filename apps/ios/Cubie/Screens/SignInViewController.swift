@@ -18,7 +18,7 @@ final class SignInViewController: UIViewController {
         view.backgroundColor = .systemBackground
 
         logo.contentMode = .scaleAspectFit
-        titleLabel.text = "Quipcall"
+        titleLabel.text = "Cubie"
         titleLabel.font = .preferredFont(forTextStyle: .largeTitle).bold
         titleLabel.textColor = .label
         message.font = .preferredFont(forTextStyle: .body)

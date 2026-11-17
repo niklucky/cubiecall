@@ -48,7 +48,7 @@ final class SettingsViewController: UITableViewController {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? ""
         let build = info?["CFBundleVersion"] as? String ?? ""
-        return "Quipcall \(version) (\(build))"
+        return "Cubie \(version) (\(build))"
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {

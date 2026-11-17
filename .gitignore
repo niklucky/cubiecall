@@ -17,6 +17,6 @@ __pycache__/
 
 # iOS: the Rust core's library, header and generated Swift (dev/ios-core.sh).
 /apps/ios/Core/
-/apps/ios/Quipcall/Generated/
+/apps/ios/Cubie/Generated/
 xcuserdata/
 *.xcuserstate

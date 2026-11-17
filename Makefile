@@ -26,14 +26,14 @@ desktop: vendor
 
 # The iOS app's Rust core and its Swift bindings, for the Simulator
 # (`dev/ios-core.sh device release` for an iPhone). Xcode runs this itself on
-# every build; run it once by hand before opening apps/ios/Quipcall.xcodeproj
+# every build; run it once by hand before opening apps/ios/Cubie.xcodeproj
 # in a fresh checkout, so the generated Swift is there when Xcode looks.
 ios-core: vendor
 	dev/ios-core.sh sim
 
-# The iOS app for the Simulator → target/ios/Build/Products/Debug-iphonesimulator/Quipcall.app
+# The iOS app for the Simulator → target/ios/Build/Products/Debug-iphonesimulator/Cubie.app
 ios-sim: ios-core
-	cd apps/ios && xcodebuild -project Quipcall.xcodeproj -scheme Quipcall -configuration Debug \
+	cd apps/ios && xcodebuild -project Cubie.xcodeproj -scheme Cubie -configuration Debug \
 		-sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
 		-derivedDataPath ../../target/ios ARCHS=arm64 build | grep -E "error:|warning: |\*\* BUILD" || true
 

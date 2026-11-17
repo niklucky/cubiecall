@@ -122,5 +122,5 @@ extension UIViewController {
 
 extension Notification.Name {
     /// A call ended: the list of calls has a new entry.
-    static let callsChanged = Notification.Name("quipcall.calls.changed")
+    static let callsChanged = Notification.Name("cubie.calls.changed")
 }

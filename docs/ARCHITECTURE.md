@@ -45,7 +45,7 @@ crates/capture-mac  ScreenCaptureKit and AVFoundation capture (added when needed
 crates/stt          VAD + ASR pipeline and the model catalog (transcribe.cpp)
 crates/mobile       the engine for phones: accounts, rooms and calls behind UniFFI
 apps/desktop        GPUI app
-apps/ios            iPhone app (Swift, UIKit)
+apps/ios            iPhone app, Cubie (Swift, UIKit)
 apps/server         Axum backend
 apps/web            Svelte web client
 dev/                local LiveKit config

@@ -7,14 +7,14 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		C0DE00000000000000000001 /* Quipcall.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Quipcall.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C0DE00000000000000000001 /* Cubie.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Cubie.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C0DE00000000000000000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		C0DE00000000000000000003 /* Quipcall */ = {
+		C0DE00000000000000000003 /* Cubie */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = Quipcall;
+			path = Cubie;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -33,7 +33,7 @@
 		C0DE00000000000000000005 = {
 			isa = PBXGroup;
 			children = (
-				C0DE00000000000000000003 /* Quipcall */,
+				C0DE00000000000000000003 /* Cubie */,
 				C0DE00000000000000000002 /* Info.plist */,
 				C0DE00000000000000000006 /* Products */,
 			);
@@ -42,7 +42,7 @@
 		C0DE00000000000000000006 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				C0DE00000000000000000001 /* Quipcall.app */,
+				C0DE00000000000000000001 /* Cubie.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -50,9 +50,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		C0DE00000000000000000007 /* Quipcall */ = {
+		C0DE00000000000000000007 /* Cubie */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = C0DE0000000000000000000E /* Build configuration list for PBXNativeTarget "Quipcall" */;
+			buildConfigurationList = C0DE0000000000000000000E /* Build configuration list for PBXNativeTarget "Cubie" */;
 			buildPhases = (
 				C0DE00000000000000000008 /* Rust core */,
 				C0DE00000000000000000009 /* Sources */,
@@ -64,11 +64,11 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				C0DE00000000000000000003 /* Quipcall */,
+				C0DE00000000000000000003 /* Cubie */,
 			);
-			name = Quipcall;
-			productName = Quipcall;
-			productReference = C0DE00000000000000000001 /* Quipcall.app */;
+			name = Cubie;
+			productName = Cubie;
+			productReference = C0DE00000000000000000001 /* Cubie.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -86,7 +86,7 @@
 					};
 				};
 			};
-			buildConfigurationList = C0DE0000000000000000000C /* Build configuration list for PBXProject "Quipcall" */;
+			buildConfigurationList = C0DE0000000000000000000C /* Build configuration list for PBXProject "Cubie" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -100,7 +100,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				C0DE00000000000000000007 /* Quipcall */,
+				C0DE00000000000000000007 /* Cubie */,
 			);
 		};
 /* End PBXProject section */
@@ -201,11 +201,11 @@
 				ENABLE_BITCODE = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Quipcall;
+				INFOPLIST_KEY_CFBundleDisplayName = Cubie;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Quipcall uses the camera when you turn your video on in a call.";
-				INFOPLIST_KEY_NSContactsUsageDescription = "Quipcall shows your contacts so you can call or invite them. To tell who already uses Quipcall, it checks scrambled copies of their email addresses with the server, which keeps none of them.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Quipcall uses the microphone so people in your call can hear you.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Cubie uses the camera when you turn your video on in a call.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Cubie shows your contacts so you can call or invite them. To tell who already uses Cubie, it checks scrambled copies of their email addresses with the server, which keeps none of them.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Cubie uses the microphone so people in your call can hear you.";
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -251,7 +251,7 @@
 					"-framework",
 					VideoToolbox,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.quipcall.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cubiecall.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -271,11 +271,11 @@
 				ENABLE_BITCODE = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Quipcall;
+				INFOPLIST_KEY_CFBundleDisplayName = Cubie;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Quipcall uses the camera when you turn your video on in a call.";
-				INFOPLIST_KEY_NSContactsUsageDescription = "Quipcall shows your contacts so you can call or invite them. To tell who already uses Quipcall, it checks scrambled copies of their email addresses with the server, which keeps none of them.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Quipcall uses the microphone so people in your call can hear you.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Cubie uses the camera when you turn your video on in a call.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Cubie shows your contacts so you can call or invite them. To tell who already uses Cubie, it checks scrambled copies of their email addresses with the server, which keeps none of them.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Cubie uses the microphone so people in your call can hear you.";
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -321,7 +321,7 @@
 					"-framework",
 					VideoToolbox,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.quipcall.ios;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cubiecall.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -335,7 +335,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		C0DE0000000000000000000C /* Build configuration list for PBXProject "Quipcall" */ = {
+		C0DE0000000000000000000C /* Build configuration list for PBXProject "Cubie" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C0DE0000000000000000000F /* Debug */,
@@ -344,7 +344,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		C0DE0000000000000000000E /* Build configuration list for PBXNativeTarget "Quipcall" */ = {
+		C0DE0000000000000000000E /* Build configuration list for PBXNativeTarget "Cubie" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C0DE00000000000000000011 /* Debug */,

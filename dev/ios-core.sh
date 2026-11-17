@@ -6,7 +6,7 @@
 # Xcode's "Rust core" build phase runs it with no arguments: the platform and
 # configuration then come from the build (PLATFORM_NAME, CONFIGURATION).
 # Out: apps/ios/Core/libquipcall_mobile.a and its C header, and
-# apps/ios/Quipcall/Generated/quipcall_mobile.swift.
+# apps/ios/Cubie/Generated/quipcall_mobile.swift.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -40,14 +40,14 @@ fi
 
 dev/vendor-webrtc-sys.sh
 
-# The same floor as the app (apps/ios/Quipcall.xcodeproj), for the C++ in the tree.
+# The same floor as the app (apps/ios/Cubie.xcodeproj), for the C++ in the tree.
 export IPHONEOS_DEPLOYMENT_TARGET=17.0
 # shellcheck disable=SC2086
 cargo build -p quipcall-mobile --target "$target" $flag
 
 lib=target/$target/$profile/libquipcall_mobile.a
 out=apps/ios/Core
-generated=apps/ios/Quipcall/Generated
+generated=apps/ios/Cubie/Generated
 tmp=$out/.bindings
 mkdir -p "$out/include" "$generated"
 rm -rf "$tmp"

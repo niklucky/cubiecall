@@ -13,14 +13,14 @@
 #   ASC_KEY_ID=<key id> ASC_ISSUER_ID=<issuer id>   (the key itself is
 #   ~/.appstoreconnect/private_keys/AuthKey_<key id>.p8)
 #
-# QUIPCALL_IOS_BUNDLE changes the bundle id (default com.quipcall.ios);
+# QUIPCALL_IOS_BUNDLE changes the bundle id (default com.cubiecall.ios);
 # QUIPCALL_IOS_BUILD the build number (default: the time, so each upload is
 # newer than the last).
 set -eu
 cd "$(dirname "$0")/../.."
 
 : "${QUIPCALL_IOS_TEAM:?set QUIPCALL_IOS_TEAM to the Apple developer team id}"
-bundle=${QUIPCALL_IOS_BUNDLE:-com.quipcall.ios}
+bundle=${QUIPCALL_IOS_BUNDLE:-com.cubiecall.ios}
 build=${QUIPCALL_IOS_BUILD:-$(date +%Y%m%d%H%M)}
 destination=upload
 [ "${1:-}" = "--no-upload" ] && destination=export
@@ -35,12 +35,12 @@ if [ -n "${ASC_KEY_ID:-}" ]; then
 fi
 
 out=target/ios
-archive=$out/Quipcall.xcarchive
+archive=$out/Cubie.xcarchive
 rm -rf "$archive" "$out/export"
 
-echo "release: Quipcall for iOS, build $build, $bundle, team $QUIPCALL_IOS_TEAM"
+echo "release: Cubie for iOS, build $build, $bundle, team $QUIPCALL_IOS_TEAM"
 # The "Rust core" build phase builds the engine for the phone in release mode.
-xcodebuild -project apps/ios/Quipcall.xcodeproj -scheme Quipcall -configuration Release \
+xcodebuild -project apps/ios/Cubie.xcodeproj -scheme Cubie -configuration Release \
 	-destination 'generic/platform=iOS' -derivedDataPath "$out" -archivePath "$archive" \
 	DEVELOPMENT_TEAM="$QUIPCALL_IOS_TEAM" PRODUCT_BUNDLE_IDENTIFIER="$bundle" \
 	CURRENT_PROJECT_VERSION="$build" "$@" archive |
@@ -71,8 +71,8 @@ PLIST
 xcodebuild -exportArchive -archivePath "$archive" -exportOptionsPlist "$options" \
 	-exportPath "$out/export" "$@" | grep -E "error|Upload|EXPORT|\.ipa" || true
 
-app="$archive/Products/Applications/Quipcall.app"
-echo "release: the app is $(du -sh "$app" | cut -f1) on the phone ($(du -h "$app/Quipcall" | cut -f1) of it the binary)"
+app="$archive/Products/Applications/Cubie.app"
+echo "release: the app is $(du -sh "$app" | cut -f1) on the phone ($(du -h "$app/Cubie" | cut -f1) of it the binary)"
 if [ "$destination" = upload ]; then
 	echo "release: uploaded. It shows in TestFlight once Apple has processed it (a few minutes to an hour)."
 else
