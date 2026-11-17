@@ -904,7 +904,16 @@ impl Capsule {
             let slot = self.bubbles.get(who)?;
             let geo = self.geo.get(who)?;
             let (w, r) = bubble::shape(who, geo.size, aspect);
-            geo.docked.then_some((who, slot, w, geo.size.round(), r))
+            // Fit the attached preview to the horizontal pill, including
+            // changes to its people and controls. Keep column bubbles at
+            // their usual size rather than squeezing a share to MAIN wide.
+            let (w, h) = if *who == Who::Share && !self.column {
+                let w = pill_len(plan, false);
+                (w, (w / aspect).round())
+            } else {
+                (w, geo.size.round())
+            };
+            geo.docked.then_some((who, slot, w, h, r))
         })
     }
 
@@ -1136,6 +1145,10 @@ impl Capsule {
                     this.magnet = false;
                     if moved {
                         if let Some(geo) = this.geo.get_mut(&who) {
+                            if who == Who::Share && geo.docked && !near {
+                                // Detach at the size it had on the pill.
+                                geo.size = frame.h as f32;
+                            }
                             geo.docked = near;
                         }
                         if !near {
