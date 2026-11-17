@@ -3,6 +3,13 @@
 //! change (a tap's worth of them a day), into a new file first and renamed
 //! into place, so a crash never leaves half of one.
 //!
+//! What happened in a call (its [`Moment`]s, a transcript among them) is a
+//! file of its own beside it, read when that call is opened: the list stays
+//! small in memory however much was said.
+//!
+//! It belongs to one account: another one signing in on this phone starts
+//! with none of it.
+//!
 //! The server knows nothing of either yet: call records come with its
 //! presence (PLAN.md, Stage 3).
 
@@ -69,6 +76,9 @@ pub struct Moment {
 
 #[derive(Default, Serialize, Deserialize)]
 struct Data {
+    /// Whose it is: the account's id. Nobody's yet until someone signs in.
+    #[serde(default)]
+    owner: Option<String>,
     /// Newest first.
     #[serde(default)]
     calls: Vec<CallRecord>,
@@ -76,15 +86,22 @@ struct Data {
     /// them.
     #[serde(default)]
     lines: HashMap<String, String>,
-    /// What happened in each call, by the call's id.
-    #[serde(default)]
-    moments: HashMap<u64, Vec<Moment>>,
 }
 
 pub(crate) struct Store {
-    /// Where it's kept; nowhere in tests.
+    /// Where it's kept; nowhere in tests (which then keep no moments).
     path: Option<PathBuf>,
     data: Mutex<Data>,
+}
+
+/// `bytes` into `path` whole, or not at all.
+fn write(path: &Path, bytes: Vec<u8>) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let new = path.with_extension("json.new");
+    std::fs::write(&new, bytes)?;
+    std::fs::rename(&new, path)
 }
 
 impl Store {
@@ -128,41 +145,63 @@ impl Store {
             .collect()
     }
 
+    /// Where the calls' moments are: a folder beside the file.
+    fn moments_dir(&self) -> Option<PathBuf> {
+        self.path.as_ref().map(|path| path.with_extension("calls"))
+    }
+
+    fn moments_path(&self, id: u64) -> Option<PathBuf> {
+        self.moments_dir().map(|dir| dir.join(format!("{id}.json")))
+    }
+
     /// What happened in call `id`, in order.
     pub(crate) fn moments(&self, id: u64) -> Vec<Moment> {
-        self.data
-            .lock()
-            .moments
-            .get(&id)
-            .cloned()
+        self.moments_path(id)
+            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default()
     }
 
+    fn forget_moments(&self, id: u64) {
+        if let Some(path) = self.moments_path(id) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    fn forget_all_moments(&self) {
+        if let Some(dir) = self.moments_dir() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
     pub(crate) fn add_call(&self, call: CallRecord, moments: Vec<Moment>) {
-        self.change(|data| {
-            if !moments.is_empty() {
-                data.moments.insert(call.id, moments);
+        if let Some(path) = self.moments_path(call.id).filter(|_| !moments.is_empty()) {
+            let kept = serde_json::to_vec(&moments)
+                .map_err(std::io::Error::other)
+                .and_then(|bytes| write(&path, bytes));
+            if let Err(e) = kept {
+                tracing::warn!("keeping {}: {e}", path.display());
             }
+        }
+        let mut dropped = Vec::new();
+        self.change(|data| {
             data.calls.insert(0, call);
             // The oldest calls go, and their histories with them.
-            for old in data.calls.split_off(KEEP.min(data.calls.len())) {
-                data.moments.remove(&old.id);
-            }
+            dropped = data.calls.split_off(KEEP.min(data.calls.len()));
         });
+        for old in dropped {
+            self.forget_moments(old.id);
+        }
     }
 
     pub(crate) fn remove_call(&self, id: u64) {
-        self.change(|data| {
-            data.calls.retain(|c| c.id != id);
-            data.moments.remove(&id);
-        });
+        self.change(|data| data.calls.retain(|c| c.id != id));
+        self.forget_moments(id);
     }
 
     pub(crate) fn clear_calls(&self) {
-        self.change(|data| {
-            data.calls.clear();
-            data.moments.clear();
-        });
+        self.change(|data| data.calls.clear());
+        self.forget_all_moments();
     }
 
     pub(crate) fn line(&self, contact: &str) -> Option<String> {
@@ -178,6 +217,20 @@ impl Store {
     /// Signing out takes everything with it.
     pub(crate) fn wipe(&self) {
         self.change(|data| *data = Data::default());
+        self.forget_all_moments();
+    }
+
+    /// `account` (its id) is signed in: what's here is theirs from now on.
+    /// Whatever someone else left (a session that ended without signing
+    /// out) goes first.
+    pub(crate) fn claim(&self, account: &str) {
+        let owner = self.data.lock().owner.clone();
+        match owner.as_deref() {
+            Some(owner) if owner == account => return,
+            Some(_) => self.wipe(),
+            None => {}
+        }
+        self.change(|data| data.owner = Some(account.to_owned()));
     }
 
     fn change(&self, change: impl FnOnce(&mut Data)) {
@@ -186,14 +239,7 @@ impl Store {
         let Some(path) = &self.path else { return };
         let written = serde_json::to_vec(&*data)
             .map_err(std::io::Error::other)
-            .and_then(|bytes| {
-                if let Some(dir) = path.parent() {
-                    std::fs::create_dir_all(dir)?;
-                }
-                let new = path.with_extension("json.new");
-                std::fs::write(&new, bytes)?;
-                std::fs::rename(&new, path)
-            });
+            .and_then(|bytes| write(path, bytes));
         if let Err(e) = written {
             tracing::warn!("keeping {}: {e}", path.display());
         }
@@ -246,6 +292,43 @@ mod tests {
 
         again.wipe();
         assert!(Store::open(dir, "http://127.0.0.1:8180").calls().is_empty());
+        assert!(again.moments(2000).is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn another_account_starts_with_nothing() {
+        let dir = std::env::temp_dir().join(format!("quipcall-owner-{}", std::process::id()));
+        let dir = dir.to_str().unwrap();
+        let store = Store::open(dir, "http://127.0.0.1:8180");
+        store.wipe();
+        let said = Moment {
+            at: 2,
+            kind: MomentKind::Said,
+            who: "Anna".into(),
+            mine: false,
+            text: "Hello".into(),
+            key: "anna:1".into(),
+        };
+        // Calls made before anyone is known to own them become the first
+        // account's; signing in again as the same person keeps them.
+        store.add_call(call(1000), vec![said.clone()]);
+        store.set_line("contact-1", "room-1");
+        store.claim("anna");
+        store.claim("anna");
+        assert_eq!(store.calls(), [call(1000)]);
+        assert_eq!(store.moments(1000), [said]);
+
+        // Someone else: none of it, on disk either.
+        let again = Store::open(dir, "http://127.0.0.1:8180");
+        again.claim("max");
+        assert!(again.calls().is_empty());
+        assert!(again.moments(1000).is_empty());
+        assert!(again.line("contact-1").is_none());
+        let reopened = Store::open(dir, "http://127.0.0.1:8180");
+        assert!(reopened.calls().is_empty());
+        reopened.claim("anna");
+        assert!(reopened.calls().is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
 

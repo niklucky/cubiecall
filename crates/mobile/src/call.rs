@@ -11,6 +11,7 @@ use std::sync::{Arc, Weak};
 
 use parking_lot::Mutex;
 use quipcall_core::livekit::prelude::RemoteVideoTrack;
+use quipcall_core::permissions::{self, Access};
 use quipcall_core::{
     Engine, Event, MediaDevice, TrackKey, VideoKind, VideoQuality, VideoSubscription,
 };
@@ -138,6 +139,8 @@ pub struct Call {
     preview: Arc<crate::video::RendererSink>,
     /// What the mic button says, before and after the microphone is open.
     mic_wanted: AtomicBool,
+    /// There is no microphone in this call: access to it is off.
+    mic_missing: AtomicBool,
     /// The camera is restarting on its other side.
     flipping: AtomicBool,
     front: AtomicBool,
@@ -149,12 +152,16 @@ impl Client {
     /// Events go to `listener` until the call is dropped; drop it (after
     /// [`Call::leave`]) when the call is over.
     pub fn join(
-        &self,
+        self: Arc<Self>,
         room: String,
         name: Option<String>,
         listener: Arc<dyn CallListener>,
     ) -> Result<Arc<Call>, crate::AppError> {
         let (engine, events) = Engine::new().map_err(crate::AppError::from)?;
+        // Every call opens on the front camera, whichever the last one ended
+        // on (the engine's choice outlives a call).
+        #[cfg(target_os = "ios")]
+        engine.set_camera_front(true);
         let session = self.session();
         // Admission: asks for the microphone first (a token lasts two
         // minutes; an unanswered prompt can take longer), then the server.
@@ -170,10 +177,12 @@ impl Client {
             #[cfg(target_vendor = "apple")]
             preview: Arc::default(),
             mic_wanted: AtomicBool::new(true),
+            mic_missing: AtomicBool::new(false),
             flipping: AtomicBool::new(false),
             front: AtomicBool::new(true),
         });
         let weak = Arc::downgrade(&call);
+        let client = self;
         std::thread::Builder::new()
             .name("quipcall-call".into())
             .spawn(move || {
@@ -190,13 +199,20 @@ impl Client {
                     }
                     Err(e) => {
                         let error = crate::AppError::from(e);
+                        let signed_out = matches!(error, crate::AppError::SignedOut { .. });
+                        // The session has ended: the app goes back to
+                        // signing in, so it has to be gone here too.
+                        if let (true, Some(session)) = (signed_out, &session) {
+                            client.forget(session);
+                        }
                         listener.on_event(CallEvent::Failed {
-                            signed_out: matches!(error, crate::AppError::SignedOut { .. }),
+                            signed_out,
                             message: error.to_string(),
                         });
                         return;
                     }
                 };
+                drop(client);
                 // Until the call is dropped: the engine holds the other end.
                 while let Ok(event) = events.recv_blocking() {
                     for mut event in translate(&weak, event) {
@@ -219,11 +235,18 @@ impl Client {
 
 #[uniffi::export]
 impl Call {
-    /// Mute or unmute. Before the microphone is open this is remembered, and
-    /// applied the moment it is.
-    pub fn set_mic(&self, on: bool) {
+    /// Mute or unmute, and what the mic button should say now. Before the
+    /// microphone is open this is remembered, and the microphone opens that
+    /// way: muted, nothing of you is sent first. Without access to a
+    /// microphone it stays off.
+    pub fn set_mic(&self, on: bool) -> bool {
+        if self.mic_missing.load(Ordering::Relaxed) {
+            return false;
+        }
         self.mic_wanted.store(on, Ordering::Relaxed);
+        self.engine.set_mic_opens_muted(!on);
         self.engine.set_mic_enabled(on);
+        on
     }
 
     pub fn set_camera(&self, on: bool) {
@@ -265,7 +288,8 @@ impl Call {
             let mut videos = self.videos.lock();
             if let Some(video) = videos.get_mut(&track) {
                 let sink = Arc::new(crate::video::RendererSink::new(renderer));
-                // The old view's frames stop before the new one's start.
+                // The old view stops being fed before the new one starts (a
+                // frame already on its way to it may still land there).
                 video.showing = None;
                 video.showing = Some(self.engine.attach_video(&video.track, sink));
             }
@@ -333,6 +357,13 @@ impl Call {
     }
 }
 
+/// No microphone will open in this call: access is off, or (tests, the
+/// Simulator) the engine was told to leave it alone.
+fn mic_missing() -> bool {
+    std::env::var_os("QUIPCALL_NO_MIC").is_some()
+        || permissions::status(MediaDevice::Microphone) != Access::Granted
+}
+
 /// An engine event as the app hears it, keeping the call's own books on the
 /// way (which videos exist, what the mic should be).
 fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
@@ -346,10 +377,17 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
         }),
         Event::Connected { identity, .. } => {
             *call.log.lock() = Some(Log::begin(identity.clone(), call.your_name.clone()));
-            one(CallEvent::Connected {
+            let connected = CallEvent::Connected {
                 you: identity,
                 room_name: None,
-            })
+            };
+            // The engine asked for the microphone before connecting. Without
+            // it none will open: the mic button says so from the start.
+            if mic_missing() {
+                call.mic_missing.store(true, Ordering::Relaxed);
+                return vec![connected, CallEvent::YourMic { on: false }];
+            }
+            one(connected)
         }
         Event::Disconnected { reason } => {
             call.videos.lock().clear();
@@ -394,7 +432,8 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
             one(CallEvent::VideoRemoved { track: key.sid })
         }
         Event::MicChanged { enabled } => {
-            // The microphone opens unmuted; muted before that means muted.
+            // It opens as it was asked to; should it come up live when mute
+            // was pressed meanwhile, it's muted here.
             if enabled && !call.mic_wanted.load(Ordering::Relaxed) {
                 call.engine.set_mic_enabled(false);
                 return Vec::new();

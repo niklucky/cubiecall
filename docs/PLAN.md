@@ -272,7 +272,7 @@ Set to the least we think can work. We raise a line only when a real call hits i
 - [ ] Files in a room. *The same question, plus where they're stored; the Mac's Files tab is an empty state today.*
 - [ ] Recordings in a room's history as something to play. *They stay on the recorder's Mac until uploading exists (Later).*
 - [ ] Create, rename and close rooms; quick calls; share sheets
-- [ ] Room links open the app: `quipcall://` (built) and https://quipcall.com links
+- [ ] Room links open the app: `quipcall://` (built; a link asks "Join This Call?" first, since any app or page can open one and joining turns the microphone on) and https://quipcall.com links
 - [ ] Call history on the phone; your name; offline and error states
 - [ ] Session lifecycle as on the Mac: expired sessions return to sign-in from anywhere (built for the list and for joining)
 
@@ -285,7 +285,7 @@ Set to the least we think can work. We raise a line only when a real call hits i
 - [ ] Audio routes: loudspeaker, receiver, Bluetooth and wired headsets, with the system's picker; the proximity sensor on audio calls
 - [ ] Interruptions: a phone call, Siri, an alarm; the app in the background (audio goes on, video stops both ways); the screen locked
 - [ ] Reconnecting when the network changes (Wi-Fi to mobile data and back)
-- [ ] Join muted or with the camera off (the engine publishes the microphone unmuted today; the phone mutes it the moment it opens)
+- [ ] Join muted or with the camera off. *Mute pressed while the call is still joining works: the engine publishes the microphone already muted (`set_mic_opens_muted`), so nothing is sent first. What's missing is the choice before joining.*
 - [ ] Flip the camera without republishing the track; turn the phone (your video, and other phones' turned video)
 - [ ] Recording and transcript notices (the events arrive already); captions and the transcript itself wait for the transcription round
 - [ ] Use less when it matters: Low Power Mode and a hot phone lower what's sent and received

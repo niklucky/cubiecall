@@ -295,6 +295,8 @@ impl Client {
             s.session = Some(token);
             s.account = Some(account.clone());
         }
+        // Before anything of the phone's own is shown: it's theirs, or gone.
+        self.store.claim(&account.id);
         // The session is provisional until its first use: this makes it last,
         // and ends the one it replaces.
         Ok(Some(self.refresh().await.unwrap_or(account)))
@@ -309,6 +311,7 @@ impl Client {
     pub async fn refresh(&self) -> Result<Account, AppError> {
         let value = self.authorized("/auth/me", None, "GET").await?;
         let account: Account = serde_json::from_value(value).map_err(anyhow::Error::from)?;
+        self.store.claim(&account.id);
         self.state.lock().account = Some(account.clone());
         Ok(account)
     }

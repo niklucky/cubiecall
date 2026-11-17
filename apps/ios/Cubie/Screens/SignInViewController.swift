@@ -105,21 +105,22 @@ final class SignInViewController: UIViewController {
             do {
                 let signIn = try await client.signInStart()
                 guard let url = URL(string: signIn.url) else { throw AppError.Failed(message: "The server sent a bad address") }
-                guard let self, !Task.isCancelled else { return }
+                guard !Task.isCancelled else { return }
                 UIPasteboard.general.string = signIn.code
-                self.show(.waiting(url: url, code: signIn.code))
+                self?.show(.waiting(url: url, code: signIn.code))
                 await UIApplication.shared.open(url)
                 // Every two seconds, for the ten minutes a code lasts. While
                 // the app is in the background this sleeps with it.
                 let deadline = Date().addingTimeInterval(600)
-                while Date() < deadline {
+                // The screen isn't held meanwhile: once it's gone, so is this.
+                while Date() < deadline, self != nil {
                     try await Task.sleep(for: .seconds(2))
                     if try await client.signInPoll() != nil {
                         SceneDelegate.signedIn()
                         return
                     }
                 }
-                self.show(.failed("That code has expired. Try again."))
+                self?.show(.failed("That code has expired. Try again."))
             } catch is CancellationError {
             } catch {
                 guard !Task.isCancelled else { return }

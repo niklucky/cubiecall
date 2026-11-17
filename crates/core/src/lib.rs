@@ -248,6 +248,9 @@ struct State {
     /// Without it remote audio has nowhere to play.
     audio: Option<PlatformAudio>,
     mic: Option<LocalAudioTrack>,
+    /// The microphone, when it opens, opens muted (asked for by a phone,
+    /// where mute can be pressed while the call is still joining).
+    mic_opens_muted: bool,
     camera: Option<camera::Camera>,
     /// Set while the camera is being opened, to ignore repeated clicks.
     camera_starting: bool,
@@ -474,6 +477,13 @@ impl Engine {
         self.runtime.as_ref().expect("engine runtime initialized")
     }
 
+    /// Before the microphone is open: whether it opens muted, so nothing of
+    /// you is sent until you unmute. Once it's open, [`Engine::set_mic_enabled`].
+    /// Lasts for one call.
+    pub fn set_mic_opens_muted(&self, muted: bool) {
+        self.state.lock().mic_opens_muted = muted;
+    }
+
     pub fn set_mic_enabled(&self, enabled: bool) {
         // LiveKit spawns tokio tasks internally; UI threads have no runtime.
         let _rt = self.rt().enter();
@@ -511,7 +521,8 @@ impl Engine {
                     }
                     anyhow::ensure!(
                         permissions::request(MediaDevice::Camera).await,
-                        "camera access is off. Allow it in System Settings → Privacy & Security → Camera"
+                        "camera access is off. Allow it in {}",
+                        permissions::where_to_allow(MediaDevice::Camera)
                     );
                 }
                 let room = state.lock().room.clone().context("not in a call")?;
@@ -1798,11 +1809,10 @@ async fn connect(
     let mic_allowed = microphone_permission(&events).await?;
     if use_audio && !mic_allowed {
         events
-            .send(Event::Error(
-                "microphone access is off, so others can't hear you. Allow it in System \
-                 Settings → Privacy & Security → Microphone, then rejoin"
-                    .into(),
-            ))
+            .send(Event::Error(format!(
+                "microphone access is off, so others can't hear you. Allow it in {}, then rejoin",
+                permissions::where_to_allow(MediaDevice::Microphone)
+            )))
             .await?;
     }
 
@@ -1895,6 +1905,11 @@ async fn connect(
                 tracing::error!("noise suppression: {e}");
             }
             let mic = LocalAudioTrack::create_audio_track("microphone", audio.rtc_source());
+            // Muted before it's published, if that was asked for: the server
+            // hears of a muted track, and no sound goes out first.
+            if state.lock().mic_opens_muted {
+                mic.mute();
+            }
             let options = TrackPublishOptions {
                 source: TrackSource::Microphone,
                 dtx: true,
@@ -1907,17 +1922,21 @@ async fn connect(
                 .await
             {
                 Ok(_) => {
-                    let live = {
+                    let enabled = {
                         let mut s = state.lock();
-                        let live = is_current(&s, &room);
-                        if live {
+                        is_current(&s, &room).then(|| {
+                            // Asked for while it was being published: now.
+                            let enabled = !s.mic_opens_muted;
+                            if !enabled {
+                                mic.mute();
+                            }
                             s.mic = Some(mic);
-                            audio_tap::set_mic_live(&s.hub, true);
-                        }
-                        live
+                            audio_tap::set_mic_live(&s.hub, enabled);
+                            enabled
+                        })
                     };
-                    if live {
-                        let _ = events.send(Event::MicChanged { enabled: true }).await;
+                    if let Some(enabled) = enabled {
+                        let _ = events.send(Event::MicChanged { enabled }).await;
                     }
                 }
                 Err(e) => {
@@ -2068,6 +2087,7 @@ fn forget_call(s: &mut State) {
     audio_tap::set_mic_live(&s.hub, false);
     s.hub = Default::default();
     s.mic = None;
+    s.mic_opens_muted = false;
     s.transcribed.clear();
     s.stopped_transcribing.clear();
     s.handover_asked.clear();

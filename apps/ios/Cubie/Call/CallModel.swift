@@ -33,7 +33,10 @@ final class CallModel {
     private(set) var you: String?
     private(set) var people: [Person] = []
     private(set) var youSpeak = false
-    private(set) var micOn = false
+    /// What the mic button says. A call opens with the microphone on, so it
+    /// says so from the start: muting while it's still joining makes it open
+    /// muted. Off for good when there's no access to a microphone.
+    private(set) var micOn = true
     private(set) var cameraOn = false
     private(set) var frontCamera = true
     private(set) var speakerOn = true
@@ -64,6 +67,7 @@ final class CallModel {
         do {
             call = try AppEnv.shared.client.join(room: room, name: knownName, listener: Relay(self))
         } catch {
+            Audio.finish()
             onChange?(.ended(error.shown, signedOut: false))
         }
     }
@@ -71,8 +75,8 @@ final class CallModel {
     // MARK: What you do
 
     func toggleMic() {
-        micOn.toggle()
-        call?.setMic(on: micOn)
+        // The engine's word for it: off stays off without a microphone.
+        micOn = call?.setMic(on: !micOn) ?? false
         onChange?(.controls)
     }
 

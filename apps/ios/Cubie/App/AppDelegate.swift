@@ -27,6 +27,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
         if let room = connectionOptions.urlContexts.first.flatMap({ Self.room(in: $0.url) }) {
             AppEnv.shared.launchRoom = room
+            AppEnv.shared.launchRoomAsks = true
         }
         joinLaunchRoom()
     }
@@ -34,6 +35,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, openURLContexts contexts: Set<UIOpenURLContext>) {
         guard let room = contexts.first.flatMap({ Self.room(in: $0.url) }) else { return }
         AppEnv.shared.launchRoom = room
+        AppEnv.shared.launchRoomAsks = true
         joinLaunchRoom()
     }
 
@@ -64,7 +66,22 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
               let root = window?.rootViewController, root.presentedViewController == nil
         else { return }
         AppEnv.shared.launchRoom = nil
-        CallViewController.present(room: room, name: nil, from: root)
+        guard AppEnv.shared.launchRoomAsks else {
+            CallViewController.present(room: room, name: nil, from: root)
+            return
+        }
+        AppEnv.shared.launchRoomAsks = false
+        let ask = UIAlertController(
+            title: "Join This Call?",
+            message: "A link opened Cubie to join a call. Your microphone turns on when you join.",
+            preferredStyle: .alert
+        )
+        ask.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        ask.addAction(UIAlertAction(title: "Join", style: .default) { [weak root] _ in
+            guard let root else { return }
+            CallViewController.present(room: room, name: nil, from: root)
+        })
+        root.present(ask, animated: true)
     }
 
     /// `quipcall://join/<room>` and `quipcall://open/<room>`, as on the Mac.

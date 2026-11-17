@@ -37,15 +37,21 @@ fi
 out=target/ios
 archive=$out/Cubie.xcarchive
 rm -rf "$archive" "$out/export"
+mkdir -p "$out"
 
 echo "release: Cubie for iOS, build $build, $bundle, team $QUIPCALL_IOS_TEAM"
 # The "Rust core" build phase builds the engine for the phone in release mode.
-xcodebuild -project apps/ios/Cubie.xcodeproj -scheme Cubie -configuration Release \
+# xcodebuild's output goes to a log and its own exit status decides: a pipe
+# into grep would report grep's.
+log=$out/release-archive.log
+if ! xcodebuild -project apps/ios/Cubie.xcodeproj -scheme Cubie -configuration Release \
 	-destination 'generic/platform=iOS' -derivedDataPath "$out" -archivePath "$archive" \
 	DEVELOPMENT_TEAM="$QUIPCALL_IOS_TEAM" PRODUCT_BUNDLE_IDENTIFIER="$bundle" \
-	CURRENT_PROJECT_VERSION="$build" "$@" archive |
-	grep -E "error:|warning: .*(sign|provision)|\*\* ARCHIVE" || true
-[ -d "$archive" ] || { echo "release: the archive failed (run the xcodebuild line by hand to see why)" >&2; exit 1; }
+	CURRENT_PROJECT_VERSION="$build" "$@" archive >"$log" 2>&1 || [ ! -d "$archive" ]; then
+	grep -E "error:|warning: .*(sign|provision)" "$log" >&2 || true
+	echo "release: the archive failed (all of it: $log)" >&2
+	exit 1
+fi
 
 options=$out/ExportOptions.plist
 cat >"$options" <<PLIST
@@ -68,13 +74,18 @@ cat >"$options" <<PLIST
 </dict>
 </plist>
 PLIST
-xcodebuild -exportArchive -archivePath "$archive" -exportOptionsPlist "$options" \
-	-exportPath "$out/export" "$@" | grep -E "error|Upload|EXPORT|\.ipa" || true
+log=$out/release-export.log
+if ! xcodebuild -exportArchive -archivePath "$archive" -exportOptionsPlist "$options" \
+	-exportPath "$out/export" "$@" >"$log" 2>&1; then
+	grep -E "error|Upload|EXPORT" "$log" >&2 || true
+	echo "release: the $destination failed (all of it: $log)" >&2
+	exit 1
+fi
 
 app="$archive/Products/Applications/Cubie.app"
 echo "release: the app is $(du -sh "$app" | cut -f1) on the phone ($(du -h "$app/Cubie" | cut -f1) of it the binary)"
 if [ "$destination" = upload ]; then
 	echo "release: uploaded. It shows in TestFlight once Apple has processed it (a few minutes to an hour)."
 else
-	ls -lh "$out/export"/*.ipa
+	ls -lh "$out/export"/*.ipa || { echo "release: no .ipa was exported (see $log)" >&2; exit 1; }
 fi

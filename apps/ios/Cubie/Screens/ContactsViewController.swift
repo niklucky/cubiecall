@@ -27,6 +27,11 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating 
     private var people: [Contact] = []
     private var sections: [(title: String, people: [Contact])] = []
     private var loading: Task<Void, Never>?
+    /// The addresses the server was last asked about, and which of them have
+    /// an account: asked again only when the address book's addresses change.
+    private var asked: Set<String> = []
+    private var here: Set<String> = []
+    private var watching: NSObjectProtocol?
 
     init() {
         super.init(style: .plain)
@@ -44,11 +49,20 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating 
         search.obscuresBackgroundDuringPresentation = false
         navigationItem.searchController = search
         navigationItem.hidesSearchBarWhenScrolling = false
-        // The address book changed (in Contacts, or by a sync): read it again.
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(load), name: .CNContactStoreDidChange, object: nil
-        )
+        // The address book changed (in Contacts, or by a sync): read it
+        // again, once it has settled. A sync says so many times over.
+        watching = NotificationCenter.default.addObserver(
+            forName: .CNContactStoreDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(self.load), object: nil)
+            self.perform(#selector(self.load), with: nil, afterDelay: 1)
+        }
         load()
+    }
+
+    deinit {
+        if let watching { NotificationCenter.default.removeObserver(watching) }
     }
 
     // MARK: Reading the address book
@@ -68,7 +82,7 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating 
             let people = await Task.detached(priority: .userInitiated) { Self.read(store) }.value
             guard let self, !Task.isCancelled else { return }
             self.people = people
-            self.arrange()
+            self.markWhoIsHere()
             await self.findWhoIsHere()
         }
     }
@@ -100,23 +114,32 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating 
 
     /// Ask the server which of them have an account. Only a scramble
     /// (SHA-256) of each address leaves the phone. A server that can't say
-    /// (an older one) leaves everyone as "invite".
+    /// (an older one, or one that has heard enough for now) leaves what was
+    /// known before as it is.
     private func findWhoIsHere() async {
-        let emails = people.flatMap(\.emails)
-        guard !emails.isEmpty else { return }
+        let emails = Set(people.flatMap(\.emails).map { $0.lowercased() })
+        // The same addresses as last time: the answer stands (the server
+        // takes only so many questions an hour).
+        guard !emails.isEmpty, emails != asked else { return }
         do {
-            let matches = try await AppEnv.shared.client.matchContacts(emails: emails)
-            let here = Set(matches.map { $0.email.lowercased() })
+            let matches = try await AppEnv.shared.client.matchContacts(emails: Array(emails))
             guard !Task.isCancelled else { return }
-            for index in people.indices {
-                people[index].here = people[index].emails.contains { here.contains($0.lowercased()) }
-            }
-            arrange()
+            asked = emails
+            here = Set(matches.map { $0.email.lowercased() })
+            markWhoIsHere()
         } catch AppError.SignedOut {
             SceneDelegate.signedOut()
         } catch {
             // Not worth an alert: the list works without it.
         }
+    }
+
+    /// Put what's known about who has an account onto the list, and show it.
+    private func markWhoIsHere() {
+        for index in people.indices {
+            people[index].here = people[index].emails.contains { here.contains($0.lowercased()) }
+        }
+        arrange()
     }
 
     // MARK: Sections and search
@@ -139,9 +162,9 @@ final class ContactsViewController: ListViewController, UISearchResultsUpdating 
                 || (!digits.isEmpty && person.phones.contains { $0.filter(\.isNumber).contains(digits) })
         }
         var sections: [(title: String, people: [Contact])] = []
-        let here = found.filter(\.here)
-        if !here.isEmpty {
-            sections.append(("On Cubie", here))
+        let users = found.filter(\.here)
+        if !users.isEmpty {
+            sections.append(("On Cubie", users))
         }
         let others = found.filter { !$0.here }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }

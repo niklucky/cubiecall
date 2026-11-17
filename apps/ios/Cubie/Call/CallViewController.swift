@@ -22,6 +22,10 @@ final class CallViewController: UIViewController {
     private var tiles: [String: Tile] = [:]
     private var order: [String] = []
     private var clock: Timer?
+    /// The screen is up (its presentation has finished).
+    private var appeared = false
+    /// How the call ended, if it did before the screen was up.
+    private var ending: (String?, Bool)?
 
     static func present(room: String, name: String?, from presenter: UIViewController) {
         let call = CallViewController(model: CallModel(room: room, name: name))
@@ -85,6 +89,16 @@ final class CallViewController: UIViewController {
         clock?.invalidate()
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        appeared = true
+        // A call that was over before the screen was up says so now.
+        if let (message, signedOut) = ending {
+            ending = nil
+            finish(message, signedOut: signedOut)
+        }
+    }
+
     // MARK: Changes
 
     private func apply(_ change: CallModel.Change) {
@@ -111,6 +125,11 @@ final class CallViewController: UIViewController {
     }
 
     private func finish(_ message: String?, signedOut: Bool) {
+        // Still sliding in: nothing can be presented or dismissed yet.
+        guard appeared else {
+            ending = (message, signedOut)
+            return
+        }
         guard let message, !signedOut else {
             close(then: signedOut ? { SceneDelegate.signedOut() } : nil)
             return

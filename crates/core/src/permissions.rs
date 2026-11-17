@@ -29,6 +29,21 @@ pub enum Access {
     Undecided,
 }
 
+/// Where access to `device` is switched on, as the system names the place.
+pub fn where_to_allow(device: MediaDevice) -> String {
+    let name = match device {
+        MediaDevice::Microphone => "Microphone",
+        MediaDevice::Camera => "Camera",
+    };
+    // A phone has no "System Settings".
+    let settings = if cfg!(any(target_os = "ios", target_os = "android")) {
+        "Settings"
+    } else {
+        "System Settings"
+    };
+    format!("{settings} → Privacy & Security → {name}")
+}
+
 #[cfg(target_vendor = "apple")]
 pub use mac::{request, status};
 

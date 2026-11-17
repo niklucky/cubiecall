@@ -604,6 +604,18 @@ async fn contact_lookup_names_accounts_by_hash_only_for_users() {
         .req("POST", "/api/contacts/match", &admin, many(1001))
         .await;
     assert_ne!(status, StatusCode::OK);
+
+    // Ten thousand addresses a day, however they're split up: 1,003 so far.
+    for _ in 0..8 {
+        let (status, _, _) = t
+            .req("POST", "/api/contacts/match", &admin, many(1000))
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let (status, _, _) = t
+        .req("POST", "/api/contacts/match", &admin, many(1000))
+        .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]

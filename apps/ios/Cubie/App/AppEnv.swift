@@ -15,8 +15,11 @@ final class AppEnv {
     static let shared = AppEnv()
 
     let client: Client
-    /// A room to join at launch (`-room`), once.
+    /// A room to join at launch (`-room`) or that a link asked for, once.
     var launchRoom: String?
+    /// It came in a link: ask before joining. Any app or web page can open
+    /// one, and joining turns the microphone on.
+    var launchRoomAsks = false
 
     private init() {
         let defaults = UserDefaults.standard
