@@ -381,7 +381,7 @@ pub async fn join(
     State(s): State<AppState>,
     h: HeaderMap,
     Json(req): Json<Join>,
-) -> Result<Json<quipcall_protocol::JoinInfo>> {
+) -> Result<Json<cubie_protocol::JoinInfo>> {
     let p = auth::current(&s, &h).await?;
     let mut tx = s.db.begin_with("BEGIN IMMEDIATE").await?;
     let mut r = room(&mut tx, &req.room).await?;
@@ -436,7 +436,7 @@ pub async fn join(
         })
         .to_jwt()?;
     tx.commit().await?;
-    Ok(Json(quipcall_protocol::JoinInfo {
+    Ok(Json(cubie_protocol::JoinInfo {
         room_name: Some(r.name),
         url: s.config.livekit_public_url.clone(),
         token,

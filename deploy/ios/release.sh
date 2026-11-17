@@ -3,8 +3,8 @@
 # picks it up. Needs the app's record to exist there already (made by hand,
 # once, with the same bundle id).
 #
-#   QUIPCALL_IOS_TEAM=<team id> deploy/ios/release.sh
-#   QUIPCALL_IOS_TEAM=<team id> deploy/ios/release.sh --no-upload   # just the .ipa
+#   CUBIE_IOS_TEAM=<team id> deploy/ios/release.sh
+#   CUBIE_IOS_TEAM=<team id> deploy/ios/release.sh --no-upload   # just the .ipa
 #
 # Signing is automatic: Xcode makes the certificate's profile for the team.
 # It signs in either as the account in Xcode › Settings › Accounts, or, set
@@ -13,17 +13,17 @@
 #   ASC_KEY_ID=<key id> ASC_ISSUER_ID=<issuer id>   (the key itself is
 #   ~/.appstoreconnect/private_keys/AuthKey_<key id>.p8)
 #
-# QUIPCALL_IOS_BUNDLE changes the bundle id (default com.cubiecall.ios);
-# QUIPCALL_IOS_BUILD the build number (default: the time, so each upload is
+# CUBIE_IOS_BUNDLE changes the bundle id (default com.cubiecall.ios);
+# CUBIE_IOS_BUILD the build number (default: the time, so each upload is
 # newer than the last).
 set -eu
 cd "$(dirname "$0")/../.."
 
-: "${QUIPCALL_IOS_TEAM:?set QUIPCALL_IOS_TEAM to the Apple developer team id}"
-bundle=${QUIPCALL_IOS_BUNDLE:-com.cubiecall.ios}
-build=${QUIPCALL_IOS_BUILD:-$(date +%Y%m%d%H%M)}
+team=${CUBIE_IOS_TEAM:-${QUIPCALL_IOS_TEAM:?set CUBIE_IOS_TEAM to the Apple developer team id}}
+bundle=${CUBIE_IOS_BUNDLE:-${QUIPCALL_IOS_BUNDLE:-com.cubiecall.ios}}
+build=${CUBIE_IOS_BUILD:-${QUIPCALL_IOS_BUILD:-$(date +%Y%m%d%H%M)}}
 destination=upload
-[ "${1:-}" = "--no-upload" ] && destination=export
+[ "${1:-}" = "--no-upload" ] && destination="export"
 
 set -- -allowProvisioningUpdates
 if [ -n "${ASC_KEY_ID:-}" ]; then
@@ -39,14 +39,14 @@ archive=$out/Cubie.xcarchive
 rm -rf "$archive" "$out/export"
 mkdir -p "$out"
 
-echo "release: Cubie for iOS, build $build, $bundle, team $QUIPCALL_IOS_TEAM"
+echo "release: Cubie for iOS, build $build, $bundle, team $team"
 # The "Rust core" build phase builds the engine for the phone in release mode.
 # xcodebuild's output goes to a log and its own exit status decides: a pipe
 # into grep would report grep's.
 log=$out/release-archive.log
 if ! xcodebuild -project apps/ios/Cubie.xcodeproj -scheme Cubie -configuration Release \
 	-destination 'generic/platform=iOS' -derivedDataPath "$out" -archivePath "$archive" \
-	DEVELOPMENT_TEAM="$QUIPCALL_IOS_TEAM" PRODUCT_BUNDLE_IDENTIFIER="$bundle" \
+	DEVELOPMENT_TEAM="$team" PRODUCT_BUNDLE_IDENTIFIER="$bundle" \
 	CURRENT_PROJECT_VERSION="$build" "$@" archive >"$log" 2>&1 || [ ! -d "$archive" ]; then
 	grep -E "error:|warning: .*(sign|provision)" "$log" >&2 || true
 	echo "release: the archive failed (all of it: $log)" >&2
@@ -64,7 +64,7 @@ cat >"$options" <<PLIST
 	<key>destination</key>
 	<string>$destination</string>
 	<key>teamID</key>
-	<string>$QUIPCALL_IOS_TEAM</string>
+	<string>$team</string>
 	<key>signingStyle</key>
 	<string>automatic</string>
 	<key>uploadSymbols</key>

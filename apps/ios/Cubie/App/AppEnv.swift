@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Launch arguments, for development (`-key value`, read through
 /// `UserDefaults`):
-/// - `-server <url>` and `-web <url>`: another server than quipcall.com, and
+/// - `-server <url>` and `-web <url>`: another server than cubiecall.com, and
 ///   its site (they differ only in development).
 /// - `-session <token>`: debug builds only, use this session for the run.
 /// - `-room <id>`: join this room at launch.
@@ -23,7 +23,7 @@ final class AppEnv {
 
     private init() {
         let defaults = UserDefaults.standard
-        let server = defaults.string(forKey: "server") ?? "https://quipcall.com"
+        let server = defaults.string(forKey: "server") ?? "https://cubiecall.com"
         let web = defaults.string(forKey: "web") ?? server
 
         #if DEBUG
@@ -37,9 +37,9 @@ final class AppEnv {
         // not open it by accident. And it has no camera, so calls there send
         // the engine's test pattern.
         if !defaults.bool(forKey: "mic") {
-            setenv("QUIPCALL_NO_MIC", "1", 1)
+            setenv("CUBIE_NO_MIC", "1", 1)
         }
-        setenv("QUIPCALL_FAKE_CAMERA", "1", 1)
+        setenv("CUBIE_FAKE_CAMERA", "1", 1)
         #endif
 
         // Its own list of calls lives in Application Support (backed up with

@@ -1,4 +1,4 @@
-//! quipcall patch: keep the window content view's Objective-C class stable.
+//! cubie patch: keep the window content view's Objective-C class stable.
 //! AppKit observes nextResponder on this view when the Touch Bar is active.
 //! Restoring its class on close would discard AppKit's observer registration.
 

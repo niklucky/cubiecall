@@ -11,22 +11,34 @@ pub struct Principal {
     pub name: String,
     pub kind: String,
 }
+#[cfg(target_os = "macos")]
+const SESSION_SERVICE: &str = "com.cubiecall.session";
+#[cfg(target_os = "macos")]
+const PREVIOUS_SERVICE: &str = "com.quipcall.session";
+#[cfg(target_os = "macos")]
 fn key_account(server: &str) -> String {
     format!(
         "{}:{}",
-        server.trim_end_matches('/'),
-        std::env::var("QUIPCALL_DATA_DIR").unwrap_or_default()
+        cubie_core::http::storage_origin(server.trim_end_matches('/')),
+        crate::store::data_override().unwrap_or_default().display()
     )
 }
 pub fn load(server: &str) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
-        security_framework::passwords::get_generic_password(
-            "com.quipcall.session",
-            &key_account(server),
-        )
-        .ok()
-        .and_then(|v| String::from_utf8(v).ok())
+        use security_framework::passwords::get_generic_password;
+        let account = key_account(server);
+        // An existing session keeps its Keychain ACL until the next sign-in.
+        // A locked or denied item must never select another credential.
+        const ITEM_NOT_FOUND: i32 = -25300; // errSecItemNotFound
+        let bytes = match get_generic_password(SESSION_SERVICE, &account) {
+            Ok(bytes) => bytes,
+            Err(e) if e.code() == ITEM_NOT_FOUND => {
+                get_generic_password(PREVIOUS_SERVICE, &account).ok()?
+            }
+            Err(_) => return None,
+        };
+        String::from_utf8(bytes).ok()
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -37,11 +49,13 @@ pub fn load(server: &str) -> Option<String> {
 fn save(server: &str, token: &str) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
     {
+        let account = key_account(server);
         security_framework::passwords::set_generic_password(
-            "com.quipcall.session",
-            &key_account(server),
+            SESSION_SERVICE,
+            &account,
             token.as_bytes(),
         )?;
+        let _ = security_framework::passwords::delete_generic_password(PREVIOUS_SERVICE, &account);
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -54,13 +68,13 @@ fn save(server: &str, token: &str) -> anyhow::Result<()> {
 fn clear(server: &str) {
     #[cfg(target_os = "macos")]
     {
-        let _ = security_framework::passwords::delete_generic_password(
-            "com.quipcall.session",
-            &key_account(server),
-        );
+        let account = key_account(server);
+        for service in [SESSION_SERVICE, PREVIOUS_SERVICE] {
+            let _ = security_framework::passwords::delete_generic_password(service, &account);
+        }
     }
 }
-pub(crate) use quipcall_core::http::{RequestError, request};
+pub(crate) use cubie_core::http::{RequestError, request};
 
 /// A completion can only modify the operation generation that started it.
 pub struct Generation<T> {
@@ -141,7 +155,7 @@ async fn load_account(
     server: &str,
     session: Option<&str>,
 ) -> anyhow::Result<(Principal, Vec<SavedRoom>)> {
-    let (principal, rooms) = quipcall_core::http::join(
+    let (principal, rooms) = cubie_core::http::join(
         request(server, session, "/auth/me", None, "GET"),
         request(server, session, "/rooms", None, "GET"),
     )
@@ -283,7 +297,7 @@ impl Shell {
                     )
                     .await;
                     let value = match value {
-                        Err(e) if quipcall_core::http::transient(&e) => {
+                        Err(e) if cubie_core::http::transient(&e) => {
                             delay = (delay * 2).min(std::time::Duration::from_secs(30));
                             continue;
                         }

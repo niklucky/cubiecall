@@ -99,9 +99,15 @@ async fn guard(State(s): State<AppState>, req: Request, next: Next) -> Response 
         axum::http::Method::GET | axum::http::Method::HEAD
     ) {
         let h = req.headers();
-        if h.get("x-quipcall").and_then(|v| v.to_str().ok()) != Some("1")
-            || h.get(header::ORIGIN)
-                .is_some_and(|v| v.to_str().ok() != Some(&s.config.public_url))
+        // Older installed clients send the original custom header.
+        let marked = ["x-cubie", "x-quipcall"]
+            .iter()
+            .any(|key| h.get(*key).and_then(|value| value.to_str().ok()) == Some("1"));
+        if !marked
+            || h.get(header::ORIGIN).is_some_and(|v| {
+                !v.to_str()
+                    .is_ok_and(|origin| s.config.trusts_origin(origin))
+            })
         {
             return AppError::forbidden("Untrusted request origin").into_response();
         }
@@ -160,7 +166,7 @@ fn start_cleanup(state: AppState) -> [tokio::task::JoinHandle<()>; 2] {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| "quipcall_server=info".into()),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| "cubie_server=info".into()),
         )
         .init();
     let state = AppState::new(Config::from_env()?).await?;
@@ -210,7 +216,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         (
             self.status,
-            Json(quipcall_protocol::ApiError {
+            Json(cubie_protocol::ApiError {
                 error: self.message,
             }),
         )

@@ -1,5 +1,5 @@
 [package]
-name = "quipcall-stt"
+name = "cubie-stt"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

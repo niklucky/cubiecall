@@ -26,7 +26,7 @@
     }
   });
   let openedMac = $state(false);
-  let name = $state(localStorage.getItem('quipcall.name') ?? '');
+  let name = $state(localStorage.getItem('cubie.name') ?? '');
   let identityId: string | undefined;
   let media = $state.raw<PreviewState>({ audioBusy: false, videoBusy: false, audioError: '', videoError: '' });
   let devices = $state<MediaDeviceInfo[]>([]);
@@ -123,7 +123,7 @@
         openMac: id => {
           openedMac = true;
           // Only the room address is sent; credentials use browser approval.
-          location.href = `quipcall://open/${encodeURIComponent(id)}`;
+          location.href = `cubie://open/${encodeURIComponent(id)}`;
         },
         join: onjoin,
       });
@@ -134,18 +134,18 @@
 </script>
 
 {#if done}
-  <section class="result"><div class="success-mark">✓</div><h1>You’re ready</h1><p>Return to {phone ? 'the app' : 'Quipcall'} on your {device}. You’ll continue as <strong>{name}</strong>.</p>{#if phone}<button class="primary" onclick={() => { location.href = 'quipcall://signed-in'; }}>Open the app</button>{:else}<button onclick={onhome}>Back to your rooms</button>{/if}</section>
+  <section class="result"><div class="success-mark">✓</div><h1>You’re ready</h1><p>Return to {phone ? 'the app' : 'Cubie'} on your {device}. You’ll continue as <strong>{name}</strong>.</p>{#if phone}<button class="primary" onclick={() => { location.href = 'cubie://signed-in'; }}>Open the app</button>{:else}<button onclick={onhome}>Back to your rooms</button>{/if}</section>
 {:else if loading && !entry}
   <section class="result" aria-live="polite"><span class="eyebrow">GETTING READY</span><h1>Checking your link…</h1><p>One moment while we check room access.</p></section>
 {:else if denied}
   <section class="result"><span class="eyebrow">ROOM ACCESS</span><h1>{descriptions[entry!.state][0]}</h1><p>{descriptions[entry!.state][1]}</p>
     <div class="result-actions">{#if ['private', 'used', 'full'].includes(entry!.state)}<button class="primary" onclick={onlogin}>Sign in to your account</button>{/if}<button onclick={() => { error = ''; void loadEntry(); }} disabled={loading}>Check again</button></div>
-    <button class="text-button" onclick={onhome}>Back to Quipcall</button>
+    <button class="text-button" onclick={onhome}>Back to Cubie</button>
   </section>
 {:else if entry?.state === 'signin'}
   <section class="result"><span class="eyebrow">MEMBER INVITATION</span><h1>You’re invited to {entry.room?.name}</h1><p>This invitation is for a specific account. Sign in with the email the room owner invited.</p>{#if me?.email}<p>You’re currently signed in as {me.email}.</p>{/if}<button class="primary" onclick={onlogin}>Sign in with the invited email</button><p class="fine">The invitation stays here while you sign in.</p></section>
 {:else if !entry}
-  <section class="result"><h1>Let’s try that again</h1><p role="alert">{error}</p><button class="primary" onclick={() => { error = ''; void loadEntry(); }}>Retry</button><button class="text-button" onclick={onhome}>Back to Quipcall</button></section>
+  <section class="result"><h1>Let’s try that again</h1><p role="alert">{error}</p><button class="primary" onclick={() => { error = ''; void loadEntry(); }}>Retry</button><button class="text-button" onclick={onhome}>Back to Cubie</button></section>
 {:else}
   <div class:desktop={!!desktopId} class="join-layout">
     {#if !desktopId}<div class="mobile-heading"><span class="eyebrow">{entry.room?.kind === 'private' ? 'PRIVATE ROOM' : entry.room?.kind === 'direct' ? '1-TO-1 CALL' : 'PUBLIC ROOM'}</span><h1>{title}</h1></div>{/if}
@@ -153,7 +153,7 @@
       <section class="setup" aria-label="Camera and microphone preview">
         <div class="preview">
           {#if media.video}<video bind:this={video} autoplay muted playsinline aria-label="Your camera preview"></video>
-          {:else}<div class="placeholder"><div class="avatar">{name.trim().slice(0, 1).toLocaleUpperCase() || 'Q'}</div><span>{media.videoBusy ? 'Waiting for camera permission…' : 'Camera is off'}</span></div>{/if}
+          {:else}<div class="placeholder"><div class="avatar">{name.trim().slice(0, 1).toLocaleUpperCase() || 'C'}</div><span>{media.videoBusy ? 'Waiting for camera permission…' : 'Camera is off'}</span></div>{/if}
           <span class="preview-label">Only you can see this</span>
         </div>
         <div class="media-controls">
@@ -178,22 +178,22 @@
     <section class="join-info">
       <div class:desktop-heading={!desktopId}><span class="eyebrow">{desktopId ? `CONTINUE ON YOUR ${device.toUpperCase()}` : entry.room?.kind === 'private' ? 'PRIVATE ROOM' : entry.room?.kind === 'direct' ? '1-TO-1 CALL' : 'PUBLIC ROOM'}</span>
       <h1>{title}</h1>
-      <p class="intro">{desktopId ? 'Connect Quipcall to the identity you’re using here.' : invitation ? 'You’re invited. Get comfortable, then join when you’re ready.' : 'A moment to get ready. Join when it suits you.'}</p></div>
+      <p class="intro">{desktopId ? 'Connect Cubie to the identity you’re using here.' : invitation ? 'You’re invited. Get comfortable, then join when you’re ready.' : 'A moment to get ready. Join when it suits you.'}</p></div>
       <form onsubmit={(e) => { e.preventDefault(); void proceed(desktopId ? 'approve' : 'browser'); }}>
         <label>Your name<input bind:value={name} maxlength="64" autocomplete="nickname" placeholder="What should we call you?" required disabled={working} /></label>
         {#if me?.email}<p class="fine identity">Signed in as {me.email} <button type="button" class="text-button" disabled={working} onclick={onlogin}>Switch account</button></p>{/if}
-        {#if desktopId}<label>Code shown {phone ? 'in the app' : 'on your Mac'}<input bind:value={desktopCode} autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="8" pattern={'[a-fA-F0-9]{8}'} placeholder="8-character code" required disabled={working} /></label><p class="fine">{phone ? 'Go back to the app for the code it shows (it’s copied, so you can paste it).' : 'Open Quipcall on this Mac and type the code displayed there.'} Do not use a code sent by someone else.{phone ? '' : ' The Mac app uses its own microphone and camera settings.'}</p>{/if}
+        {#if desktopId}<label>Code shown {phone ? 'in the app' : 'on your Mac'}<input bind:value={desktopCode} autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="8" pattern={'[a-fA-F0-9]{8}'} placeholder="8-character code" required disabled={working} /></label><p class="fine">{phone ? 'Go back to the app for the code it shows (it’s copied, so you can paste it).' : 'Open Cubie on this Mac and type the code displayed there.'} Do not use a code sent by someone else.{phone ? '' : ' The Mac app uses its own microphone and camera settings.'}</p>{/if}
         <button class="primary join-button" disabled={working || loading || !name.trim() || (desktopId && !/^[a-f0-9]{8}$/i.test(desktopCode.trim())) || media.audioBusy || media.videoBusy}>{working ? (joining ? 'Joining…' : 'Getting ready…') : desktopId ? `Continue${name.trim() ? ` as ${name.trim()}` : ''}` : 'Join call'}<span aria-hidden="true">→</span></button>
       </form>
       {#if !desktopId}
         <p class="fine media-summary">{!media.audio && !media.video ? 'You’ll join in this browser with your mic and camera off.' : `${media.audio ? 'Microphone on' : 'Microphone off'} · ${media.video ? 'Camera on' : 'Camera off'}`}</p>
         <button class="mac-button" disabled={working || loading || !name.trim()} onclick={() => proceed('mac')}>Open in the Mac app <span aria-hidden="true">↗</span></button>
-        {#if openedMac}<p class="fine" role="status">Quipcall opens with the identity signed in on your Mac. If it asks you to sign in, complete the browser approval. If nothing opened, <a href="/download/">install or update the Mac app</a>, then try again. You can also join here.</p>{/if}
+        {#if openedMac}<p class="fine" role="status">Cubie opens with the identity signed in on your Mac. If it asks you to sign in, complete the browser approval. If nothing opened, <a href="/download/">install or update the Mac app</a>, then try again. You can also join here.</p>{/if}
       {/if}
       {#if invitation && entry.inviteKind === 'guest'}<p class="access-note">This link is for one guest. Joining claims it for you; you can return until the owner removes your access.</p>{:else if me?.kind === 'guest' && entry.room?.kind === 'private'}<p class="access-note">Your access is remembered in this browser. Save this room’s address to come back.</p>{:else if entry.room?.kind === 'public'}<p class="access-note">Anyone with this room’s link can join.</p>{/if}
       {#if !me || me.kind === 'guest'}<p class="fine">Have an account? <button class="text-button" disabled={working} onclick={onlogin}>Sign in</button></p>{/if}
       {#if error || callError}<p class="error" role="alert">{error || callError}</p>{/if}
-      <button class="text-button back" disabled={working} onclick={onhome}>Back to Quipcall</button>
+      <button class="text-button back" disabled={working} onclick={onhome}>Back to Cubie</button>
     </section>
   </div>
 {/if}

@@ -84,9 +84,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         root.present(ask, animated: true)
     }
 
-    /// `quipcall://join/<room>` and `quipcall://open/<room>`, as on the Mac.
+    /// `cubie://join/<room>` and `cubie://open/<room>`, as on the Mac.
     private static func room(in url: URL) -> String? {
-        guard url.scheme == "quipcall", url.host == "join" || url.host == "open" else { return nil }
+        guard url.scheme == "cubie" || url.scheme == "quipcall",
+              url.host == "join" || url.host == "open" else { return nil }
         let room = url.lastPathComponent
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
         let valid = (1...64).contains(room.utf8.count)

@@ -7,7 +7,7 @@ export async function api<T>(path: string, body?: unknown, method?: string): Pro
   const response = await fetch(`/api${path}`, {
     method: method ?? (body === undefined ? 'GET' : 'POST'),
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-Quipcall': '1' },
+    headers: { 'Content-Type': 'application/json', 'X-Cubie': '1' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) {

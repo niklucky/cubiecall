@@ -338,7 +338,7 @@ impl MetalFrames {
     }
 
     /// Whether to skip an update whose drawable doesn't have the layer's size
-    /// (quipcall patch). The link acquires drawables ahead of time, so the
+    /// (cubie patch). The link acquires drawables ahead of time, so the
     /// first after a resize can have the old size. Drawn into, one shows
     /// stretched to the new size until the next frame, and an idle window
     /// may not have one for seconds.
@@ -636,7 +636,7 @@ mod tests {
         assert!(frames.end_frame(false), "an idle update pauses the link");
     }
 
-    // quipcall patch.
+    // cubie patch.
     #[test]
     fn wrong_size_drawables_are_skipped_a_few_in_a_row() {
         let frames = MetalFrames::default();

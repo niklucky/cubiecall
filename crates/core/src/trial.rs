@@ -1,8 +1,8 @@
 //! "Try it with your voice" in Settings: your microphone, outside a call,
 //! through the speech model you picked, as live as in a call.
 //!
-//! Test instances (`QUIPCALL_NO_MIC`) never open a microphone: they read a
-//! 48 kHz float WAV from `QUIPCALL_FAKE_MIC` instead, in real time.
+//! Test instances (`CUBIE_NO_MIC`) never open a microphone: they read a
+//! 48 kHz float WAV from `CUBIE_FAKE_MIC` instead, in real time.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use quipcall_stt::{Line, Options, Transcriber};
+use cubie_stt::{Line, Options, Transcriber};
 
 use crate::models::{self, ModelInfo, catalog};
 use crate::permissions::{self, MediaDevice};
@@ -74,7 +74,7 @@ fn run(
 ) -> anyhow::Result<()> {
     // Stopped while asking or loading: the microphone never opens.
     let stopped = || stop.load(Ordering::Relaxed);
-    let fake = std::env::var_os("QUIPCALL_NO_MIC").is_some();
+    let fake = crate::no_mic();
     if stopped() {
         return Ok(());
     }
@@ -128,8 +128,9 @@ fn fake_mic(
     frames: std::sync::mpsc::SyncSender<Vec<f32>>,
     stop: Arc<AtomicBool>,
 ) -> anyhow::Result<std::thread::JoinHandle<()>> {
-    let path =
-        std::env::var_os("QUIPCALL_FAKE_MIC").context("QUIPCALL_FAKE_MIC: a WAV to speak")?;
+    let path = std::env::var_os("CUBIE_FAKE_MIC")
+        .or_else(|| std::env::var_os("QUIPCALL_FAKE_MIC"))
+        .context("CUBIE_FAKE_MIC: a WAV to speak")?;
     let wav = std::fs::read(&path)?;
     let at = wav
         .windows(4)
@@ -168,7 +169,7 @@ mod mic {
     define_class!(
         // SAFETY: NSObject has no subclassing requirements; no Drop.
         #[unsafe(super(NSObject))]
-        #[name = "QuipcallTrialMicDelegate"]
+        #[name = "CubieTrialMicDelegate"]
         #[ivars = SyncSender<Vec<f32>>]
         struct Delegate;
 
@@ -253,7 +254,7 @@ mod mic {
             let settings = NSDictionary::<NSString, AnyObject>::from_slices(&key_refs, &value_refs);
             output.setAudioSettings(Some(&settings));
 
-            let queue = DispatchQueue::new("quipcall.trial-mic", DispatchQueueAttr::SERIAL);
+            let queue = DispatchQueue::new("cubie.trial-mic", DispatchQueueAttr::SERIAL);
             let delegate: Retained<Delegate> = {
                 let this = Delegate::alloc().set_ivars(frames);
                 msg_send![super(this), init]

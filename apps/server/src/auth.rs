@@ -527,11 +527,11 @@ async fn send(s: &AppState, email: &str, url: &str) -> anyhow::Result<()> {
             options.mode(0o600);
         }
         let mut file = options.open(dir.join(format!("{}.txt", hash(email))))?;
-        writeln!(file, "Sign in to Quipcall (expires in 15 minutes):\n{url}")?;
+        writeln!(file, "Sign in to Cubie (expires in 15 minutes):\n{url}")?;
         return Ok(());
     }
     s.http.post("https://api.resend.com/emails").bearer_auth(s.config.resend_api_key.as_deref().unwrap_or_default())
-        .json(&json!({"from":s.config.mail_from,"to":[email],"subject":"Sign in to Quipcall","text":format!("Sign in to Quipcall:\n{url}\n\nThis link expires in 15 minutes and can only be used once. If you did not request it, ignore this email.")}))
+        .json(&json!({"from":s.config.mail_from,"to":[email],"subject":"Sign in to Cubie","text":format!("Sign in to Cubie:\n{url}\n\nThis link expires in 15 minutes and can only be used once. If you did not request it, ignore this email.")}))
         .send().await?.error_for_status()?;
     Ok(())
 }
@@ -635,7 +635,7 @@ pub async fn desktop_approve(
         // Commit failed guesses too; a challenge gets five attempts total.
         tx.commit().await?;
         return Err(AppError::bad(
-            "Check the code shown in Quipcall on your Mac, or restart sign-in",
+            "Check the code shown in Cubie on your Mac, or restart sign-in",
         ));
     }
     sqlx::query("UPDATE desktop_logins SET principal=? WHERE id=?")

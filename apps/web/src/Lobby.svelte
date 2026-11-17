@@ -11,7 +11,8 @@
   const fragment = new URLSearchParams(location.hash.slice(1));
   // Keep pending tokens in this history entry, so a reload or sign-in does not
   // lose the invitation. They never enter a request URL or referrer.
-  const pending = location.hash ? Object.fromEntries(fragment) : (history.state?.quipcall ?? {});
+  const pending = location.hash ? Object.fromEntries(fragment) : (history.state?.cubie ?? history.state?.quipcall ?? {});
+  const roomOrigin = ['https://quipcall.com', 'https://cubycall.com'].includes(location.origin) ? 'https://cubiecall.com' : location.origin;
   let magic = $state(pending.magic ?? '');
   let accountInvite = $state(pending.accountInvite ?? '');
   let roomInvite = $state(pending.roomInvite ?? '');
@@ -40,7 +41,9 @@
   const flow = $derived(!!(roomInvite || linkedRoom || desktop));
   const authScreen = $derived(!!(magic || accountInvite || showLogin));
   function remember() {
-    history.replaceState({ ...history.state, quipcall: { magic, accountInvite, roomInvite } }, '', location.pathname + location.search);
+    const state = { ...history.state, cubie: { magic, accountInvite, roomInvite } };
+    delete state.quipcall;
+    history.replaceState(state, '', location.pathname + location.search);
   }
   remember();
   function setRoomUrl(id: string) {
@@ -71,7 +74,7 @@
     let principal = me ?? await api<Principal>('/auth/guest', { name });
     if (!current()) return principal;
     if (principal.name !== name) principal = await api<Principal>('/auth/me', { name }, 'PATCH');
-    if (current()) { me = principal; localStorage.setItem('quipcall.name', principal.name); }
+    if (current()) { me = principal; localStorage.setItem('cubie.name', principal.name); }
     return principal;
   }
   async function inspect(id: string) { detail = await api<RoomDetail>(`/rooms/${id}`); editedRoomName = detail.room.name; inviteUrl = ''; }
@@ -113,7 +116,7 @@
 </script>
 
 <div class="lobby" class:joining-flow={flow && !authScreen}>
-  <header><button class="brand" onclick={home} disabled={joining}>Quipcall<span>Good company. One link away.</span></button><a href="/download/">Get the Mac app ↗</a></header>
+  <header><button class="brand" onclick={home} disabled={joining}>Cubie<span>Good company. One link away.</span></button><a href="/download/">Get the Mac app ↗</a></header>
   {#if !ready}<p>Loading…</p>
   {:else if flow && !authScreen}
     {#key entryVersion}
@@ -127,7 +130,7 @@
   {#if error || callError}<p role="alert" class="error">{error || callError}</p>{/if}
   {#if message}<p role="status" class="message">{message}</p>{/if}
   {#if magic}
-    <section><h2>Finish signing in</h2><p>Confirm to use your single-use email link.</p><button disabled={busy} onclick={() => run(verify)}>Sign in to Quipcall</button></section>
+    <section><h2>Finish signing in</h2><p>Confirm to use your single-use email link.</p><button disabled={busy} onclick={() => run(verify)}>Sign in to Cubie</button></section>
   {:else if !me || me.kind === 'guest' || showLogin || accountInvite}
     <section>
       <h2>{accountInvite ? 'Accept your account invitation' : 'Sign in'}</h2>
@@ -160,8 +163,8 @@
           <button disabled={busy} onclick={() => run(async () => { const id = detail!.room.id; await api(`/rooms/${id}/keep`, {}); await inspect(id); await refresh(); })}>Keep as room</button>
         {/if}
       {/if}
-      <input aria-label="Room link" readonly value={`${location.origin}/?room=${detail.room.id}`} onclick={(e) => e.currentTarget.select()} />
-      <a href={`quipcall://open/${detail.room.id}`}>Open in the Mac app</a>
+      <input aria-label="Room link" readonly value={`${roomOrigin}/?room=${detail.room.id}`} onclick={(e) => e.currentTarget.select()} />
+      <a href={`cubie://open/${detail.room.id}`}>Open in the Mac app</a>
       {#if detail.room.owner === me?.id}
         <form onsubmit={(e) => { e.preventDefault(); void run(renameRoom); }}>
           <input aria-label="Edit room name" bind:value={editedRoomName} maxlength="64" required disabled={busy} />

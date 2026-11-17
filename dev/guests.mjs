@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const DIR = join(tmpdir(), 'quipcall-guests');
+const DIR = join(tmpdir(), 'cubie-guests');
 const STATE = join(DIR, 'state.json');
 const FIRST_PORT = 9411;
 /// How long each guest has the floor, and what they say in it.

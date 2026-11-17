@@ -1,17 +1,17 @@
 [package]
-name = "quipcall-mobile"
+name = "cubie-mobile"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [lib]
-name = "quipcall_mobile"
+name = "cubie_mobile"
 # A static library for the iOS app; a plain one so the workspace checks it.
 crate-type = ["staticlib", "lib"]
 
 [dependencies]
 # The call engine without the desktop's noise model and speech to text.
-quipcall-core = { path = "../core", default-features = false }
+cubie-core = { path = "../core", default-features = false }
 # Typed Swift and Kotlin bindings from one Rust definition.
 uniffi = "0.32"
 anyhow = "1.0.104"

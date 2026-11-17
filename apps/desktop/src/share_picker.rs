@@ -4,14 +4,14 @@
 
 use std::time::Duration;
 
+use cubie_core::permissions;
+use cubie_core::{ScreenSharePreset, ShareSource, ShareSourceUpdate, SourceId};
 use gpui::prelude::*;
 use gpui::{
     App, Bounds, ClickEvent, Context, Div, Entity, FocusHandle, FontWeight, KeyBinding, ObjectFit,
     Stateful, Task, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
     actions, div, hsla, px, rgb, size, svg,
 };
-use quipcall_core::permissions;
-use quipcall_core::{ScreenSharePreset, ShareSource, ShareSourceUpdate, SourceId};
 
 use crate::assets::Icon;
 use crate::call::Call;
@@ -160,7 +160,7 @@ impl SharePicker {
                                     source.thumbnail = Some(thumbnail);
                                 }
                             }
-                            Err(e) if e.is::<quipcall_core::NoPermission>() => {
+                            Err(e) if e.is::<cubie_core::NoPermission>() => {
                                 picker.state = State::NeedsPermission
                             }
                             Err(e) => {
@@ -354,12 +354,12 @@ impl SharePicker {
                 div()
                     .text_base()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("Quipcall needs Screen Recording permission"),
+                    .child("Cubie needs Screen Recording permission"),
             )
             .child(div().text_color(rgb(TEXT_DIM)).child(
                 "Turn it on in System Settings → Privacy & Security → Screen & System Audio \
-                 Recording, then restart Quipcall (or the terminal it runs from). If it's on \
-                 already, that's an older copy of Quipcall: remove it with −, then turn it on \
+                 Recording, then restart Cubie (or the terminal it runs from). If it's on \
+                 already, that's an older copy of Cubie: remove it with −, then turn it on \
                  again.",
             ))
             .child(

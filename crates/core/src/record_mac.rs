@@ -433,7 +433,7 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("quipcall-record-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("cubie-record-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(name);
         let _ = std::fs::remove_file(&path);
@@ -514,7 +514,7 @@ mod tests {
     /// dies without closing the file. Does nothing in a normal test run.
     #[test]
     fn crash_while_writing() {
-        let Some(path) = std::env::var_os("QUIPCALL_CRASH_FILE") else {
+        let Some(path) = std::env::var_os("CUBIE_CRASH_FILE") else {
             return;
         };
         let mut writer = MediaWriter::create(Path::new(&path), None).unwrap();
@@ -535,7 +535,7 @@ mod tests {
                 "record_mac::tests::crash_while_writing",
                 "--nocapture",
             ])
-            .env("QUIPCALL_CRASH_FILE", &path)
+            .env("CUBIE_CRASH_FILE", &path)
             .status()
             .unwrap();
         assert!(!status.success(), "the writer was meant to crash");

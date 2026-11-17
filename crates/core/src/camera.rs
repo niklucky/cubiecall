@@ -8,7 +8,7 @@
 //! the capture connection (so nothing rotates frames on the CPU) and held to
 //! the phone's limits below.
 //!
-//! `QUIPCALL_FAKE_CAMERA=1` swaps the device for a synthetic 720p30 pattern
+//! `CUBIE_FAKE_CAMERA=1` swaps the device for a synthetic 720p30 pattern
 //! that takes the same path, for headless tests and measurements.
 
 use std::sync::Arc;
@@ -88,7 +88,8 @@ fn publish_options() -> TrackPublishOptions {
 
 /// Whether the synthetic camera is in use (no device, no permission prompt).
 pub(crate) fn synthetic() -> bool {
-    std::env::var_os("QUIPCALL_FAKE_CAMERA").is_some()
+    std::env::var_os("CUBIE_FAKE_CAMERA").is_some()
+        || std::env::var_os("QUIPCALL_FAKE_CAMERA").is_some()
 }
 
 pub(crate) struct Camera {
@@ -248,7 +249,7 @@ mod platform {
     define_class!(
         // SAFETY: NSObject has no subclassing requirements; we don't implement Drop.
         #[unsafe(super(NSObject))]
-        #[name = "QuipcallCameraDelegate"]
+        #[name = "CubieCameraDelegate"]
         #[ivars = Handler]
         struct Delegate;
 
@@ -317,7 +318,7 @@ mod platform {
                 output.setVideoSettings(Some(&settings));
                 output.setAlwaysDiscardsLateVideoFrames(true);
 
-                let queue = DispatchQueue::new("quipcall.camera", DispatchQueueAttr::SERIAL);
+                let queue = DispatchQueue::new("cubie.camera", DispatchQueueAttr::SERIAL);
                 let delegate = Delegate::new(handler);
                 output.setSampleBufferDelegate_queue(
                     Some(ProtocolObject::from_ref(&*delegate)),
@@ -446,7 +447,7 @@ mod platform {
 
     impl SyntheticCapture {
         fn start(handler: Handler) -> anyhow::Result<Self> {
-            tracing::info!("using the synthetic camera (QUIPCALL_FAKE_CAMERA)");
+            tracing::info!("using the synthetic camera (CUBIE_FAKE_CAMERA)");
             let pool = PixelBufferPool::new(WIDTH, HEIGHT).context("pixel buffer pool")?;
             let stop = Arc::new(AtomicBool::new(false));
             let thread = std::thread::Builder::new()

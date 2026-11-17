@@ -1,4 +1,4 @@
-// quipcall patch: exercise the production content view on AppKit's main thread.
+// cubie patch: exercise the production content view on AppKit's main thread.
 // A custom harness is needed because Rust's test threads cannot create NSViews.
 
 #[path = "../src/accessibility.rs"]

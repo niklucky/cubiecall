@@ -1,4 +1,4 @@
-//! Quipcall call engine.
+//! Cubie call engine.
 //!
 //! Owns everything about being in a call: the LiveKit room, platform audio,
 //! published tracks and remote video plumbing. It has no UI dependency — a UI
@@ -41,28 +41,29 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
+use cubie_protocol::JoinInfo;
 use futures_util::{FutureExt as _, StreamExt as _};
 use livekit::options::TrackPublishOptions;
 use livekit::prelude::*;
 use livekit::{AudioProcessingOptions, PlatformAudio};
 use parking_lot::Mutex;
-use quipcall_protocol::JoinInfo;
 
 pub use audio_tap::{Listener, Speaker, VoiceFrame};
+pub use cubie_protocol as protocol;
+pub use cubie_protocol::TranscriptLine;
+use cubie_protocol::{TRANSCRIPT_TOPIC, TranscriptMessage};
 pub use livekit;
 pub use livekit::track::VideoQuality;
 #[cfg(feature = "transcribe")]
 pub use models::{ModelInfo, catalog};
 pub use permissions::{Access, MediaDevice};
-pub use quipcall_protocol as protocol;
-pub use quipcall_protocol::TranscriptLine;
-use quipcall_protocol::{TRANSCRIPT_TOPIC, TranscriptMessage};
 pub use record::Saved;
 pub use screen::{ContentMode, ScreenSharePreset, SourceId};
 #[cfg(target_os = "macos")]
 pub use screen_mac::{NoPermission, ShareSource, ShareSourceUpdate, Thumbnail, own_window};
 pub use video::{FrameSink, VideoSubscription};
 
+// These deployed names allow old and new clients to share the same call.
 /// The participant attribute that says someone is recording the call:
 /// "audio", or "screen" (audio and their screen). Everyone's app shows it.
 const RECORDING: &str = "quipcall.recording";
@@ -76,7 +77,7 @@ const CAN_TRANSCRIBE: &str = "quipcall.can_transcribe";
 /// How long after a Mac stops transcribing its last lines are still taken:
 /// its claim goes first, then what was still being said is transcribed and
 /// sent. The web app takes them as long.
-const LAST_WORDS: Duration = Duration::from_millis(quipcall_protocol::LAST_WORDS_MS);
+const LAST_WORDS: Duration = Duration::from_millis(cubie_protocol::LAST_WORDS_MS);
 
 /// Stable identifier of a remote track inside the UI.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -326,7 +327,7 @@ fn runtime() -> anyhow::Result<&'static tokio::runtime::Runtime> {
         .get_or_init(|| {
             tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
-                .thread_name("quipcall-http")
+                .thread_name("cubie-http")
                 .enable_all()
                 .build()
         })
@@ -345,7 +346,7 @@ impl Engine {
     pub fn new() -> anyhow::Result<(Self, async_channel::Receiver<Event>)> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
-            .thread_name("quipcall-engine")
+            .thread_name("cubie-engine")
             .enable_all()
             .build()?;
         let tasks = tasks::Tasks::new(runtime.handle().clone());
@@ -361,7 +362,7 @@ impl Engine {
         ))
     }
 
-    /// Fetch a token for `room` from a quipcall server.
+    /// Fetch a token for `room` from a Cubie server.
     pub fn join(
         &self,
         server: &str,
@@ -1118,7 +1119,7 @@ async fn start_transcribing(
         }
     };
     let model = options.model;
-    let stt = quipcall_stt::Options {
+    let stt = cubie_stt::Options {
         model: models::path(model, &options.dir),
         vad: models::path(&catalog::VAD, &options.dir),
         language: options.language,
@@ -1128,7 +1129,7 @@ async fn start_transcribing(
     let (outgoing, mut to_send) = tokio::sync::mpsc::unbounded_channel::<TranscriptLine>();
     let lines = events.clone();
     let by = you.clone();
-    let on_line = move |line: quipcall_stt::Line| {
+    let on_line = move |line: cubie_stt::Line| {
         let line = TranscriptLine {
             id: line.id,
             speaker: line.speaker,
@@ -1175,8 +1176,7 @@ async fn start_transcribing(
         }
     }
     let transcriber =
-        tokio::task::spawn_blocking(move || quipcall_stt::Transcriber::start(stt, on_line))
-            .await??;
+        tokio::task::spawn_blocking(move || cubie_stt::Transcriber::start(stt, on_line)).await??;
     // Loading takes seconds: is it still yours to start?
     if let Err(e) = may_start(state, &room, connection, id, taking_over.as_ref()) {
         let _ = tokio::task::spawn_blocking(move || transcriber.stop()).await;
@@ -1756,7 +1756,7 @@ impl Drop for Engine {
         };
         if let Err(e) = retire_runtime(runtime, self.tasks.clone(), finish, |close| {
             std::thread::Builder::new()
-                .name("quipcall-close".into())
+                .name("cubie-close".into())
                 .spawn(close)
                 .map(|_| ())
         }) {
@@ -1781,10 +1781,15 @@ async fn stop_screen_share(state: Arc<Mutex<State>>, events: async_channel::Send
         .await;
 }
 
+/// Skip the physical audio devices, including for test launches from before the rename.
+pub fn no_mic() -> bool {
+    std::env::var_os("CUBIE_NO_MIC").is_some() || std::env::var_os("QUIPCALL_NO_MIC").is_some()
+}
+
 /// Ask before admission or opening WebRTC's audio device. Calling again after
 /// join only reads an answered permission; direct connect uses the same policy.
 async fn microphone_permission(events: &async_channel::Sender<Event>) -> anyhow::Result<bool> {
-    if std::env::var("QUIPCALL_NO_MIC").is_ok() {
+    if no_mic() {
         return Ok(false);
     }
     if permissions::status(MediaDevice::Microphone) == Access::Undecided {
@@ -1801,8 +1806,8 @@ async fn connect(
     join: JoinInfo,
     connection: u64,
 ) -> anyhow::Result<()> {
-    // QUIPCALL_NO_MIC=1 skips the audio device entirely (headless tests, CI).
-    let use_audio = std::env::var("QUIPCALL_NO_MIC").is_err();
+    // CUBIE_NO_MIC=1 skips the audio device entirely (headless tests, CI).
+    let use_audio = !no_mic();
 
     // Ask before anything opens the mic: an unanswered prompt would block
     // WebRTC's audio thread. Without access we still play remote audio.
@@ -1832,7 +1837,7 @@ async fn connect(
         })?;
         Some(audio)
     } else {
-        tracing::warn!("QUIPCALL_NO_MIC set: no microphone, no speaker");
+        tracing::warn!("CUBIE_NO_MIC set: no microphone, no speaker");
         None
     };
 

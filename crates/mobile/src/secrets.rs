@@ -7,7 +7,7 @@
 const SERVICE: &str = "com.cubiecall.session";
 
 fn account(server: &str) -> &str {
-    server.trim_end_matches('/')
+    cubie_core::http::storage_origin(server.trim_end_matches('/'))
 }
 
 #[cfg(target_os = "ios")]

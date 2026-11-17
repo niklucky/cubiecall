@@ -1,5 +1,5 @@
 //! Transcribing the call on this Mac: everyone's voice (see [`audio_tap`])
-//! into [`quipcall_stt`], lines out as [`Event::TranscriptLine`].
+//! into [`cubie_stt`], lines out as [`Event::TranscriptLine`].
 //!
 //! [`audio_tap`]: crate::audio_tap
 //! [`Event::TranscriptLine`]: crate::Event::TranscriptLine
@@ -26,7 +26,7 @@ impl Transcribing {
 mod on {
     use std::thread::JoinHandle;
 
-    use quipcall_stt::Transcriber;
+    use cubie_stt::Transcriber;
 
     use crate::audio_tap::{Listener, Speaker, VoiceFrame};
 

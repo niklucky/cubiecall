@@ -1497,6 +1497,139 @@ dependencies = [
 ]
 
 [[package]]
+name = "cubie-bindgen"
+version = "0.1.0"
+dependencies = [
+ "uniffi",
+]
+
+[[package]]
+name = "cubie-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "block2 0.6.2",
+ "cubie-protocol",
+ "cubie-stt",
+ "deep_filter",
+ "dispatch2",
+ "futures-util",
+ "livekit",
+ "ndarray",
+ "nnnoiseless",
+ "objc2 0.6.5",
+ "objc2-av-foundation",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-core-media",
+ "objc2-core-video",
+ "objc2-foundation 0.3.2",
+ "objc2-screen-capture-kit",
+ "parking_lot 0.13.0",
+ "reqwest",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "tract-onnx",
+]
+
+[[package]]
+name = "cubie-desktop"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "block2 0.6.2",
+ "cubie-core",
+ "cubie-protocol",
+ "gpui-pre",
+ "gpui-pre-platform",
+ "image",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-core-video",
+ "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "parking_lot 0.13.0",
+ "raw-window-handle",
+ "security-framework",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "cubie-mobile"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "cubie-core",
+ "dispatch2",
+ "objc2 0.6.5",
+ "objc2-core-foundation",
+ "objc2-core-media",
+ "objc2-core-video",
+ "parking_lot 0.13.0",
+ "security-framework",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tracing",
+ "tracing-subscriber",
+ "uniffi",
+]
+
+[[package]]
+name = "cubie-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cubie-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "cubie-protocol",
+ "getrandom 0.3.4",
+ "http-body-util",
+ "livekit-api",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "cubie-stt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "objc2 0.6.5",
+ "parking_lot 0.13.0",
+ "tracing",
+ "transcribe-cpp",
+]
+
+[[package]]
 name = "cxx"
 version = "1.0.205"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5972,139 +6105,6 @@ dependencies = [
  "socket2",
  "tracing",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "quipcall-bindgen"
-version = "0.1.0"
-dependencies = [
- "uniffi",
-]
-
-[[package]]
-name = "quipcall-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "block2 0.6.2",
- "deep_filter",
- "dispatch2",
- "futures-util",
- "livekit",
- "ndarray",
- "nnnoiseless",
- "objc2 0.6.5",
- "objc2-av-foundation",
- "objc2-core-audio-types",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-core-media",
- "objc2-core-video",
- "objc2-foundation 0.3.2",
- "objc2-screen-capture-kit",
- "parking_lot 0.13.0",
- "quipcall-protocol",
- "quipcall-stt",
- "reqwest",
- "serde_json",
- "sha2",
- "tokio",
- "tracing",
- "tract-onnx",
-]
-
-[[package]]
-name = "quipcall-desktop"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "block2 0.6.2",
- "gpui-pre",
- "gpui-pre-platform",
- "image",
- "objc2 0.6.5",
- "objc2-app-kit 0.3.2",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-core-video",
- "objc2-foundation 0.3.2",
- "objc2-quartz-core 0.3.2",
- "parking_lot 0.13.0",
- "quipcall-core",
- "quipcall-protocol",
- "raw-window-handle",
- "security-framework",
- "serde",
- "serde_json",
- "tracing",
- "tracing-subscriber",
- "unicode-segmentation",
-]
-
-[[package]]
-name = "quipcall-mobile"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "dispatch2",
- "objc2 0.6.5",
- "objc2-core-foundation",
- "objc2-core-media",
- "objc2-core-video",
- "parking_lot 0.13.0",
- "quipcall-core",
- "security-framework",
- "serde",
- "serde_json",
- "sha2",
- "tracing",
- "tracing-subscriber",
- "uniffi",
-]
-
-[[package]]
-name = "quipcall-protocol"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "quipcall-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "getrandom 0.3.4",
- "http-body-util",
- "livekit-api",
- "quipcall-protocol",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "tempfile",
- "tokio",
- "tower",
- "tracing",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
-name = "quipcall-stt"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "objc2 0.6.5",
- "parking_lot 0.13.0",
- "tracing",
- "transcribe-cpp",
 ]
 
 [[package]]

@@ -722,7 +722,7 @@ class Scene {
     const s = this.s;
     const mi = (act, icon, label, state, chev) => `<button class="mi" data-act="${act}">${ic(icon, 16)}<span>${label}</span>${state ? `<em>${state}</em>` : ''}${chev ? `<em>${ic('chevright', 14)}</em>` : ''}</button>`;
     const back = label => `<button class="back" data-act="back">${ic('chevleft', 14)}${label}</button>`;
-    if (pop.kind === 'menu' && pop.page === 'record') return `<div class="sub">${back('Record')}<p>Saved on this Mac, in Movies › Quipcall. Everyone sees that the call is recorded.</p><div class="row"><button class="btn pri" data-act="rec-audio">Audio</button><button class="btn" data-act="rec-screen">Audio and screen</button></div></div>`;
+    if (pop.kind === 'menu' && pop.page === 'record') return `<div class="sub">${back('Record')}<p>Saved on this Mac, in Movies › Cubie. Everyone sees that the call is recorded.</p><div class="row"><button class="btn pri" data-act="rec-audio">Audio</button><button class="btn" data-act="rec-screen">Audio and screen</button></div></div>`;
     if (pop.kind === 'menu' && pop.page === 'transcribe') return `<div class="sub">${back('Transcribe')}<p>Parakeet v3 on this Mac. Everyone sees it.</p><div class="row"><button class="btn pri" data-act="cc-start">Start</button><button class="btn" data-act="settings">Settings</button></div></div>`;
     if (pop.kind === 'menu') return `<div class="chead"><b>Team standup</b><span data-clock="call"></span></div>`
       + mi('cam', s.me.video ? 'video' : 'videooff', 'Camera', s.me.video ? 'On' : 'Off')
@@ -1052,7 +1052,7 @@ const desk = document.getElementById('desk');
 let code = '';
 for (let i = 0; i < 15; i++) { let segs = ''; for (let j = 0; j < 1 + Math.floor(rnd() * 4); j++) segs += `<i style="width:${20 + Math.round(rnd() * 100)}px;background:${['#c792ea', '#82aaff', '#c3e88d', '#f78c6c', '#89ddff', '#9aa3b2'][Math.floor(rnd() * 6)]}"></i>`; code += `<div class="cl" style="padding-left:${46 + [0, 16, 32][Math.floor(rnd() * 3)]}px">${i % 6 === 2 ? '' : segs}</div>`; }
 desk.innerHTML = `<div class="menubar"><b>Code</b><span>File</span><span>Edit</span><span>View</span><span class="r">Sun 15 Nov 11:14</span></div>
-  <div class="ed"><div class="ed-top"><span class="lights"><i></i><i></i><i></i></span>capsule.rs — quipcall</div><div style="padding-top:10px">${code}</div></div>
+  <div class="ed"><div class="ed-top"><span class="lights"><i></i><i></i><i></i></span>capsule.rs — cubie</div><div style="padding-top:10px">${code}</div></div>
   <div class="sharewin" style="display:none">${mock(true)}<span class="tag">${ic('share', 11)}Lee’s screen</span></div>`;
 desk.style.width = '960px'; desk.style.height = '560px';
 const live = new Scene(desk, {W: 960, H: 560, live: true, pill: {ay: 504}});

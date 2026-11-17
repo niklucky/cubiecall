@@ -3,7 +3,7 @@
 //!
 //! - Your microphone as the call sends it: after echo cancellation, noise
 //!   suppression and gain, before encoding. A hook in our webrtc-sys patch
-//!   (`quipcall_set_capture_tap`) copies each frame on WebRTC's capture
+//!   (`cubie_set_capture_tap`) copies each frame on WebRTC's capture
 //!   thread. Nothing comes while you're muted.
 //! - Each remote microphone as it's decoded, through LiveKit's audio sinks
 //!   (one per track, see `Engine::listen`).
@@ -145,13 +145,13 @@ pub(crate) fn set_mic_live(hub: &Arc<Hub>, live: bool) {
 type TapFn = unsafe extern "C" fn(*const f32, usize, i32);
 
 unsafe extern "C" {
-    fn quipcall_set_capture_tap(tap: Option<TapFn>);
+    fn cubie_set_capture_tap(tap: Option<TapFn>);
 }
 
 fn set_hook(on: bool) {
     // SAFETY: a plain setter in our webrtc-sys patch; `capture_tap` is an
     // `extern "C"` function that lives for the whole program.
-    unsafe { quipcall_set_capture_tap(on.then_some(capture_tap as TapFn)) };
+    unsafe { cubie_set_capture_tap(on.then_some(capture_tap as TapFn)) };
 }
 
 /// Called by WebRTC on its capture thread with each finished 10 ms frame.

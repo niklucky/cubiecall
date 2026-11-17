@@ -38,7 +38,7 @@
   const codec = (params.get('codec') ?? 'h264') as VideoCodec;
   let roomName = $state('');
   let roomTitle = $state('');
-  let name = $state(params.get('name') ?? localStorage.getItem('quipcall.name') ?? '');
+  let name = $state(params.get('name') ?? localStorage.getItem('cubie.name') ?? '');
 
   let room: Room | undefined;
   let status = $state<'idle' | 'joining' | 'connected'>('idle');
@@ -85,7 +85,7 @@
     status = 'joining';
     try {
       name = name.trim() || 'Guest';
-      localStorage.setItem('quipcall.name', name);
+      localStorage.setItem('cubie.name', name);
       const { url, token } = await requestJoin(roomName.trim());
       const r = new Room({
         adaptiveStream: true,
@@ -95,7 +95,7 @@
       connecting = r;
       transcribers = new Transcribers();
       // Lets headless tests inspect the call over the DevTools protocol.
-      if (import.meta.env.DEV) Object.assign(window, { qcRoom: r });
+      if (import.meta.env.DEV) Object.assign(window, { cubieRoom: r });
       r.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
         if (track.kind === Track.Kind.Audio) document.body.appendChild(track.attach());
         refresh();
@@ -276,7 +276,7 @@
         <div class="lines" bind:this={transcriptEl}>
           {#if lines.length === 0}
             <p class="muted empty">
-              {transcribedBy ? 'What anyone says shows up here.' : 'Nobody transcribes this call. Start it from the Quipcall app for Mac.'}
+              {transcribedBy ? 'What anyone says shows up here.' : 'Nobody transcribes this call. Start it from the Cubie app for Mac.'}
             </p>
           {/if}
           {#each lines as line, i (line.key)}

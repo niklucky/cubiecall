@@ -63,7 +63,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DIR = ROOT / "target/denoise-eval"
 RATE = 48000
 WARM = 40 * RATE
-UA = {"User-Agent": "quipcall-denoise-eval/0.2"}
+UA = {"User-Agent": "cubie-denoise-eval/0.2"}
 
 ARCHIVE = "https://archive.org/download/"
 # The first 1.5 MB of each recording (about 90 s), checked by SHA-256.
@@ -153,11 +153,11 @@ def ensure_deps():
         return
     venv = DIR / "venv"
     if Path(sys.prefix).resolve() == venv.resolve():
-        if os.environ.get("QUIPCALL_EVAL_INSTALLED"):
+        if os.environ.get("CUBIE_EVAL_INSTALLED"):
             raise SystemExit(f"{venv}: still missing {', '.join(missing)} after installing")
         print(f"Installing {' '.join(REQUIRED)} into {venv}...")
         subprocess.run([sys.executable, "-m", "pip", "install", "-q", *REQUIRED], check=True)
-        os.environ["QUIPCALL_EVAL_INSTALLED"] = "1"
+        os.environ["CUBIE_EVAL_INSTALLED"] = "1"
         os.execv(sys.executable, [sys.executable, *sys.argv])
     python = venv / "bin/python"
     if not python.exists():
@@ -378,7 +378,7 @@ def read_pcm(path):
 # --- Run and score ----------------------------------------------------------
 
 def run(chains):
-    cmd = ["cargo", "run", "--release", "-q", "-p", "quipcall-core", "--example", "denoise_eval",
+    cmd = ["cargo", "run", "--release", "-q", "-p", "cubie-core", "--example", "denoise_eval",
            "--", str(DIR)]
     if chains:
         cmd.append(chains)

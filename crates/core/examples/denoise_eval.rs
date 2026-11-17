@@ -2,12 +2,12 @@
 //! audio device. `dev/denoise-eval.py` builds the sounds, runs this and
 //! scores the results:
 //!
-//!   cargo run --release -p quipcall-core --example denoise_eval -- <dir>
+//!   cargo run --release -p cubie-core --example denoise_eval -- <dir>
 //!
 //! Each `<dir>/scenes/<scene>/` holds `mic.pcm` (what the microphone hears)
 //! and `far.pcm` (what the speaker plays, for echo cancellation), 48 kHz mono
 //! s16le. Every chain below processes every scene with WebRTC's audio
-//! processing set up as in a call (`quipcall_test_apm_create` in our
+//! processing set up as in a call (`cubie_test_apm_create` in our
 //! webrtc-sys patch), writing `<dir>/out/<scene>/<chain>.wav`, and prints one
 //! JSON line per run.
 
@@ -15,7 +15,7 @@ use std::ffi::c_void;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use quipcall_core::denoise::{Denoiser, FRAME, SAMPLE_RATE, Strength};
+use cubie_core::denoise::{Denoiser, FRAME, SAMPLE_RATE, Strength};
 
 /// One way to process the microphone.
 struct Chain {
@@ -46,7 +46,7 @@ const fn deep(limit_db: f32, pause_limit_db: Option<f32>, input_gain_db: f32) ->
 }
 
 const CHAINS: &[Chain] = &[
-    // QUIPCALL_DENOISE=webrtc: WebRTC's own suppressor.
+    // CUBIE_DENOISE=webrtc: WebRTC's own suppressor.
     Chain {
         name: "webrtc",
         webrtc_ns: true,
@@ -134,7 +134,7 @@ impl Filter {
 type ProcessFn = unsafe extern "C" fn(*const c_void, *const *mut f32, usize, usize, i32);
 
 unsafe extern "C" {
-    fn quipcall_test_apm_create(
+    fn cubie_test_apm_create(
         sample_rate_hz: i32,
         noise_suppression: bool,
         gain_control1: bool,
@@ -142,8 +142,8 @@ unsafe extern "C" {
         process: Option<ProcessFn>,
         context: *const c_void,
     ) -> *mut c_void;
-    fn quipcall_test_apm_process(apm: *mut c_void, render: *const i16, capture: *mut i16) -> i32;
-    fn quipcall_test_apm_destroy(apm: *mut c_void);
+    fn cubie_test_apm_process(apm: *mut c_void, render: *const i16, capture: *mut i16) -> i32;
+    fn cubie_test_apm_destroy(apm: *mut c_void);
 }
 
 /// The hook: WebRTC's capture thread hands each processed frame here.
@@ -222,7 +222,7 @@ fn run(chain: &Chain, mic: &[i16], far: &[i16]) -> (Vec<i16>, Duration, Duration
     };
     // SAFETY: the APM is destroyed below, before `filter` goes away.
     let apm = unsafe {
-        quipcall_test_apm_create(
+        cubie_test_apm_create(
             SAMPLE_RATE,
             chain.webrtc_ns,
             chain.agc1,
@@ -239,12 +239,12 @@ fn run(chain: &Chain, mic: &[i16], far: &[i16]) -> (Vec<i16>, Duration, Duration
         let render = far.get(i * FRAME..(i + 1) * FRAME).unwrap_or(&silence);
         let mut capture = *frame;
         let start = Instant::now();
-        let err = unsafe { quipcall_test_apm_process(apm, render.as_ptr(), capture.as_mut_ptr()) };
+        let err = unsafe { cubie_test_apm_process(apm, render.as_ptr(), capture.as_mut_ptr()) };
         total += start.elapsed();
         assert_eq!(err, 0, "APM error");
         out.extend_from_slice(&capture);
     }
-    unsafe { quipcall_test_apm_destroy(apm) };
+    unsafe { cubie_test_apm_destroy(apm) };
     (out, filter.busy, total)
 }
 

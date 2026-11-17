@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use cubie_core::http::{self, request};
 use parking_lot::Mutex;
-use quipcall_core::http::{self, request};
 use serde::Deserialize;
 use serde_json::{Value, json};
 

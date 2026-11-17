@@ -131,7 +131,7 @@ impl Test {
             .header("x-real-ip", ip)
             .method(method)
             .uri(path)
-            .header("x-quipcall", "1")
+            .header("x-cubie", "1")
             .header("content-type", "application/json");
         if !token.is_empty() {
             req = req.header("authorization", format!("Bearer {token}"));
@@ -623,7 +623,8 @@ async fn csrf_and_email_rate_limits() {
     let t = Test::new().await;
     for headers in [
         vec![],
-        vec![("x-quipcall", "1"), ("origin", "https://evil.example")],
+        vec![("x-cubie", "1"), ("origin", "https://evil.example")],
+        vec![("x-quipcall", "1"), ("origin", "https://quipcall.com")],
     ] {
         let mut req = Request::builder()
             .method("POST")
@@ -639,6 +640,32 @@ async fn csrf_and_email_rate_limits() {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    }
+    let mut production = t.state.clone();
+    Arc::make_mut(&mut production.config).public_url = "https://cubiecall.com".into();
+    let production = router(production);
+    for (header, origin, expected) in [
+        ("x-cubie", "https://cubiecall.com", StatusCode::OK),
+        ("x-quipcall", "https://quipcall.com", StatusCode::OK),
+        ("x-cubie", "https://quipcall.com", StatusCode::OK),
+        (
+            "x-cubie",
+            "https://quipcall.com.evil.example",
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/auth/guest")
+            .header(header, "1")
+            .header("origin", origin)
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"name":"Guest"}"#))
+            .unwrap();
+        assert_eq!(
+            production.clone().oneshot(req).await.unwrap().status(),
+            expected
+        );
     }
     for _ in 0..3 {
         assert_eq!(
@@ -2282,7 +2309,7 @@ async fn active_sessions_renew_without_reviving_expired_or_logged_out_credential
             Request::builder()
                 .method("POST")
                 .uri("/api/auth/logout")
-                .header("x-quipcall", "1")
+                .header("x-cubie", "1")
                 .header("cookie", format!("qc_session={token}"))
                 .body(Body::empty())
                 .unwrap(),

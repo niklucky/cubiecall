@@ -1,16 +1,16 @@
 [package]
-name = "quipcall-desktop"
+name = "cubie-desktop"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [features]
-# Dev only: QUIPCALL_SNAPSHOT_DIR=… renders every window to PNG (see src/snapshot.rs).
+# Dev only: CUBIE_SNAPSHOT_DIR=… renders every window to PNG (see src/snapshot.rs).
 snapshot = ["gpui_platform/test-support", "dep:image"]
 
 [dependencies]
-quipcall-core.workspace = true
-quipcall-protocol.workspace = true
+cubie-core.workspace = true
+cubie-protocol.workspace = true
 gpui = { package = "gpui-pre", version = "=0.3.11", default-features = false, features = ["font-kit"] }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", default-features = false, features = ["font-kit", "runtime_shaders"] }
 anyhow = "1.0.104"

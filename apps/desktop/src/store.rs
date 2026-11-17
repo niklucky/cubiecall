@@ -1,9 +1,9 @@
 //! Cached server rooms and local call history.
 //!
-//! `~/Library/Application Support/Quipcall/local.json`, or `$QUIPCALL_DATA_DIR/local.json`
+//! `~/Library/Application Support/Cubie/local.json`, or `$CUBIE_DATA_DIR/local.json`
 //! (tests and parallel dev copies).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -91,7 +91,7 @@ pub struct RecordingSettings {
     /// Each voice in a file of its own too, next to the mix.
     #[serde(default)]
     pub each_voice: bool,
-    /// Where recordings go; `None` for Movies › Quipcall.
+    /// Where recordings go; `None` for Movies › Cubie.
     #[serde(default)]
     pub folder: Option<PathBuf>,
 }
@@ -148,11 +148,11 @@ impl Default for CallSettings {
 
 impl TranscriptionSettings {
     /// The speech model to use.
-    pub fn model(&self) -> &'static quipcall_core::ModelInfo {
+    pub fn model(&self) -> &'static cubie_core::ModelInfo {
         self.model
             .as_deref()
-            .and_then(quipcall_core::catalog::model)
-            .unwrap_or_else(|| quipcall_core::catalog::for_language(self.language.as_deref()))
+            .and_then(cubie_core::catalog::model)
+            .unwrap_or_else(|| cubie_core::catalog::for_language(self.language.as_deref()))
     }
 }
 
@@ -234,13 +234,39 @@ pub struct Store {
     pub call: CallSettings,
 }
 
+/// Retain the state and Keychain isolation of older development launches.
+pub(crate) fn data_override() -> Option<PathBuf> {
+    std::env::var_os("CUBIE_DATA_DIR")
+        .or_else(|| std::env::var_os("QUIPCALL_DATA_DIR"))
+        .map(PathBuf::from)
+}
+
+/// Move only app-managed state. Recordings and custom folders have absolute
+/// paths in the history and stay where the user put them.
+fn support_item(home: &Path, name: &str) -> PathBuf {
+    let support = home.join("Library/Application Support");
+    let current = support.join("Cubie").join(name);
+    let previous = support.join("Quipcall").join(name);
+    if !current.exists() && previous.exists() {
+        let moved = std::fs::create_dir_all(support.join("Cubie"))
+            .and_then(|()| std::fs::rename(&previous, &current));
+        if let Err(e) = moved
+            && !current.exists()
+        {
+            tracing::warn!("migrating {}: {e}", previous.display());
+            return previous;
+        }
+    }
+    current
+}
+
 impl Store {
     fn path() -> Option<PathBuf> {
-        if let Some(dir) = std::env::var_os("QUIPCALL_DATA_DIR") {
-            return Some(PathBuf::from(dir).join("local.json"));
+        if let Some(dir) = data_override() {
+            return Some(dir.join("local.json"));
         }
         let home = std::env::var_os("HOME")?;
-        Some(PathBuf::from(home).join("Library/Application Support/Quipcall/local.json"))
+        Some(support_item(Path::new(&home), "local.json"))
     }
 
     pub fn load() -> Self {
@@ -494,31 +520,33 @@ impl Store {
 }
 
 /// Where recordings go: the folder chosen in Settings, else Movies ›
-/// Quipcall (macOS doesn't ask for access to Movies), or
-/// `$QUIPCALL_DATA_DIR/Recordings` for tests.
+/// Cubie (macOS doesn't ask for access to Movies), or
+/// `$CUBIE_DATA_DIR/Recordings` for tests.
 pub fn recordings_dir(chosen: Option<&std::path::Path>) -> PathBuf {
-    if let Some(dir) = std::env::var_os("QUIPCALL_DATA_DIR") {
-        return PathBuf::from(dir).join("Recordings");
+    if let Some(dir) = data_override() {
+        return dir.join("Recordings");
     }
     if let Some(dir) = chosen {
         return dir.to_owned();
     }
     let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
-    PathBuf::from(home).join("Movies/Quipcall")
+    PathBuf::from(home).join("Movies/Cubie")
 }
 
-/// Where speech models are downloaded to: Application Support › Quipcall ›
-/// Models, `$QUIPCALL_DATA_DIR/Models`, or `$QUIPCALL_MODELS_DIR` (tests
+/// Where speech models are downloaded to: Application Support › Cubie ›
+/// Models, `$CUBIE_DATA_DIR/Models`, or `$CUBIE_MODELS_DIR` (tests
 /// that share one download).
 pub fn models_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("QUIPCALL_MODELS_DIR") {
+    if let Some(dir) =
+        std::env::var_os("CUBIE_MODELS_DIR").or_else(|| std::env::var_os("QUIPCALL_MODELS_DIR"))
+    {
         return PathBuf::from(dir);
     }
-    if let Some(dir) = std::env::var_os("QUIPCALL_DATA_DIR") {
-        return PathBuf::from(dir).join("Models");
+    if let Some(dir) = data_override() {
+        return dir.join("Models");
     }
     let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
-    PathBuf::from(home).join("Library/Application Support/Quipcall/Models")
+    support_item(Path::new(&home), "Models")
 }
 
 /// "2026-11-09 11.14" for unix seconds, local time: part of a file name.
@@ -629,6 +657,29 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::{SavedRoom, Store, civil_from_days, file_size};
+
+    #[test]
+    fn existing_history_and_models_survive_the_rename() {
+        let home = std::env::temp_dir().join(format!("cubie-upgrade-{}", std::process::id()));
+        let old = home.join("Library/Application Support/Quipcall");
+        let new = home.join("Library/Application Support/Cubie");
+        std::fs::create_dir_all(old.join("Models")).unwrap();
+        std::fs::write(old.join("Models/weights"), b"model").unwrap();
+        std::fs::write(old.join("local.json"), b"history").unwrap();
+        assert_eq!(
+            super::support_item(&home, "local.json"),
+            new.join("local.json")
+        );
+        assert_eq!(std::fs::read(new.join("local.json")).unwrap(), b"history");
+        assert_eq!(super::support_item(&home, "Models"), new.join("Models"));
+        assert_eq!(std::fs::read(new.join("Models/weights")).unwrap(), b"model");
+        std::fs::write(old.join("local.json"), b"older history").unwrap();
+        assert_eq!(
+            std::fs::read(super::support_item(&home, "local.json")).unwrap(),
+            b"history"
+        );
+        std::fs::remove_dir_all(home).unwrap();
+    }
 
     #[test]
     fn blank_owner_rename_preserves_bookmark_during_offline_refresh() {

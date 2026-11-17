@@ -19,7 +19,7 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         let cfg = Self {
-            bind: env("QUIPCALL_BIND").unwrap_or_else(|| "127.0.0.1:8080".into()),
+            bind: env("CUBIE_BIND").unwrap_or_else(|| "127.0.0.1:8080".into()),
             livekit_public_url: env("LIVEKIT_PUBLIC_URL")
                 .unwrap_or_else(|| "ws://127.0.0.1:7880".into()),
             livekit_api_url: env("LIVEKIT_API_URL")
@@ -27,17 +27,24 @@ impl Config {
             livekit_api_key: env("LIVEKIT_API_KEY").context("LIVEKIT_API_KEY is not set")?,
             livekit_api_secret: env("LIVEKIT_API_SECRET")
                 .context("LIVEKIT_API_SECRET is not set")?,
-            database_url: env("QUIPCALL_DATABASE_URL")
-                .unwrap_or_else(|| "sqlite://dev/data/quipcall.db".into()),
-            public_url: env("QUIPCALL_PUBLIC_URL")
+            database_url: env("CUBIE_DATABASE_URL").unwrap_or_else(|| {
+                // Keep an existing development database together with its WAL.
+                let data = std::path::Path::new("dev/data");
+                if !data.join("cubie.db").exists() && data.join("quipcall.db").exists() {
+                    "sqlite://dev/data/quipcall.db".into()
+                } else {
+                    "sqlite://dev/data/cubie.db".into()
+                }
+            }),
+            public_url: env("CUBIE_PUBLIC_URL")
                 .unwrap_or_else(|| "http://127.0.0.1:5173".into())
                 .trim_end_matches('/')
                 .into(),
             resend_api_key: env("RESEND_API_KEY"),
-            mail_from: env("QUIPCALL_MAIL_FROM")
-                .unwrap_or_else(|| "Quipcall <login@quipcall.com>".into()),
-            bootstrap_email: env("QUIPCALL_BOOTSTRAP_EMAIL").map(|s| s.trim().to_lowercase()),
-            mail_dir: env("QUIPCALL_MAIL_DIR").map(Into::into),
+            mail_from: env("CUBIE_MAIL_FROM")
+                .unwrap_or_else(|| "Cubie <login@cubiecall.com>".into()),
+            bootstrap_email: env("CUBIE_BOOTSTRAP_EMAIL").map(|s| s.trim().to_lowercase()),
+            mail_dir: env("CUBIE_MAIL_DIR").map(Into::into),
         };
         if cfg.livekit_api_secret.len() < 32 {
             bail!("LIVEKIT_API_SECRET must be at least 32 characters");
@@ -45,7 +52,7 @@ impl Config {
         let url = url::Url::parse(&cfg.public_url)?;
         let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
         if url.scheme() != "https" && !(url.scheme() == "http" && local) {
-            bail!("QUIPCALL_PUBLIC_URL must use HTTPS (except localhost)");
+            bail!("CUBIE_PUBLIC_URL must use HTTPS (except localhost)");
         }
         if url.path() != "/"
             || url.query().is_some()
@@ -53,18 +60,23 @@ impl Config {
             || !url.username().is_empty()
             || url.password().is_some()
         {
-            bail!("QUIPCALL_PUBLIC_URL must be an origin without a path or credentials");
+            bail!("CUBIE_PUBLIC_URL must be an origin without a path or credentials");
         }
         if cfg.mail_dir.is_some() && !local {
-            bail!("QUIPCALL_MAIL_DIR is only allowed on localhost");
+            bail!("CUBIE_MAIL_DIR is only allowed on localhost");
         }
         if cfg.mail_dir.is_none() && cfg.resend_api_key.is_none() {
-            bail!("set RESEND_API_KEY, or QUIPCALL_MAIL_DIR for local development");
+            bail!("set RESEND_API_KEY, or CUBIE_MAIL_DIR for local development");
         }
         Ok(cfg)
     }
     pub fn secure_cookie(&self) -> bool {
         self.public_url.starts_with("https://")
+    }
+    pub fn trusts_origin(&self, origin: &str) -> bool {
+        origin == self.public_url
+            // Existing signed-in browsers keep their host-only session cookie here.
+            || (self.public_url == "https://cubiecall.com" && origin == "https://quipcall.com")
     }
 }
 fn env(key: &str) -> Option<String> {

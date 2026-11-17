@@ -7,14 +7,14 @@
 //! - **Recording**: what Record offers first, each voice in its own file too,
 //!   and the folder.
 
+use cubie_core::trial::{self, Trial, TrialEvent};
+use cubie_core::{ModelInfo, catalog};
 use gpui::prelude::*;
 use gpui::{
     App, Bounds, Context, Div, Entity, FontWeight, KeyBinding, PathPromptOptions, Stateful,
     Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, px,
     rgb, size,
 };
-use quipcall_core::trial::{self, Trial, TrialEvent};
-use quipcall_core::{ModelInfo, catalog};
 
 use crate::Shell;
 use crate::assets::Icon;

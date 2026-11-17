@@ -4,9 +4,9 @@
 
 use std::collections::HashMap;
 
+use cubie_core::models::{self, Download, Progress};
+use cubie_core::{ModelInfo, catalog};
 use gpui::{App, AppContext as _, Context, Entity, Global, Task};
-use quipcall_core::models::{self, Download, Progress};
-use quipcall_core::{ModelInfo, catalog};
 
 use crate::store;
 

@@ -1,6 +1,6 @@
 //! Two people speak (macOS `say`), and the transcript says who said what.
 //!
-//! Needs the models: `QUIPCALL_STT_MODELS=<dir> cargo test -p quipcall-stt
+//! Needs the models: `CUBIE_STT_MODELS=<dir> cargo test -p cubie-stt
 //! -- --ignored`, with the files named as in the catalog.
 
 use std::path::{Path, PathBuf};
@@ -8,7 +8,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use quipcall_stt::{Line, Options, Transcriber, catalog};
+use cubie_stt::{Line, Options, Transcriber, catalog};
 
 /// `say` into 48 kHz float samples.
 fn say(voice: &str, text: &str, dir: &Path) -> Vec<f32> {
@@ -33,10 +33,10 @@ fn say(voice: &str, text: &str, dir: &Path) -> Vec<f32> {
 }
 
 #[test]
-#[ignore = "needs models: QUIPCALL_STT_MODELS=<dir>"]
+#[ignore = "needs models: CUBIE_STT_MODELS=<dir>"]
 fn two_voices_in_order() {
-    let dir = PathBuf::from(std::env::var("QUIPCALL_STT_MODELS").expect("QUIPCALL_STT_MODELS"));
-    let tmp = std::env::temp_dir().join(format!("qc-stt-{}", std::process::id()));
+    let dir = PathBuf::from(std::env::var("CUBIE_STT_MODELS").expect("CUBIE_STT_MODELS"));
+    let tmp = std::env::temp_dir().join(format!("cubie-stt-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     let english = say(
         "Samantha",
@@ -123,10 +123,10 @@ fn two_voices_in_order() {
 }
 
 #[test]
-#[ignore = "needs models: QUIPCALL_STT_MODELS=<dir>"]
+#[ignore = "needs models: CUBIE_STT_MODELS=<dir>"]
 fn a_voice_back_from_mute_starts_afresh() {
-    let dir = PathBuf::from(std::env::var("QUIPCALL_STT_MODELS").expect("QUIPCALL_STT_MODELS"));
-    let tmp = std::env::temp_dir().join(format!("qc-stt-mute-{}", std::process::id()));
+    let dir = PathBuf::from(std::env::var("CUBIE_STT_MODELS").expect("CUBIE_STT_MODELS"));
+    let tmp = std::env::temp_dir().join(format!("cubie-stt-mute-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     let first = say("Samantha", "Let's look at the numbers first.", &tmp);
     let second = say("Samantha", "Sorry, I was muted. Can you hear me now?", &tmp);

@@ -503,7 +503,7 @@ section h2{font-size:16px;margin:0 0 4px;font-weight:650;letter-spacing:-.005em}
     <ol class="notes">
       <li><b>Two buttons, two jobs.</b> Transcribe makes text that everyone gets. Record makes a file on your Mac. Each starts and stops on its own. When both ran, Home plays the recording under the transcript (section 7).</li>
       <li><b>Audio is the default:</b> everyone's voices mixed into one .m4a, about 30 MB an hour. It reads the same per-person audio the transcriber already reads, so it costs next to nothing.</li>
-      <li><b>Audio and screen records your screen, not the call.</b> You pick a display or a window in the share picker, with the same presets (5 or 15 fps for text, 30 or 60 for motion). Quipcall's own windows are left out, as when sharing. It's one .mp4, up to about 1.4 GB an hour.</li>
+      <li><b>Audio and screen records your screen, not the call.</b> You pick a display or a window in the share picker, with the same presets (5 or 15 fps for text, 30 or 60 for motion). Cubie's own windows are left out, as when sharing. It's one .mp4, up to about 1.4 GB an hour.</li>
       <li><b>It costs about what sharing does:</b> the same ScreenCaptureKit capture into IOSurfaces, the same VideoToolbox H.264, plus writing to disk. If you're already sharing that screen, the recording reuses the share's capture instead of starting a second one.</li>
       <li><b>One recording per call, and only whoever started it can stop it.</b> While Anna records, Record is gone from everyone else's hover row, and the red button says whose Mac has it. If Anna leaves, the recording stops and stays on Anna's Mac, and anyone can start a new one.</li>
       <li><b>A crash loses almost nothing.</b> The file is written in fragments, so a crash or a full disk keeps everything up to the last few seconds.</li>
@@ -536,7 +536,7 @@ section h2{font-size:16px;margin:0 0 4px;font-weight:650;letter-spacing:-.005em}
         <i>Whisper Large v3 Turbo</i> (OpenAI): 99 languages, but slower, and it waits for pauses.
         <i>GigaAM v3</i> (Sber): Russian only, small, about 5–8% WER on FLEURS-ru.
         <i>Apple Speech</i>: built into macOS 26+, nothing to download, but the language list is up to macOS and Russian wasn't on it at launch.</li>
-      <li><b>Recording</b> sets what the Record panel picks first, whether each voice gets its own track, and the folder (Movies › Quipcall). The screen's frame rate is picked in the share picker, as when sharing.</li>
+      <li><b>Recording</b> sets what the Record panel picks first, whether each voice gets its own track, and the folder (Movies › Cubie). The screen's frame rate is picked in the share picker, as when sharing.</li>
       <li><b>Sizes are rough</b> (8-bit or 5-bit quantised), and the "behind your voice" times in Try are made up. The Stage 9 bake-off measures both.</li>
     </ol>
   </section>
@@ -559,7 +559,7 @@ section h2{font-size:16px;margin:0 0 4px;font-weight:650;letter-spacing:-.005em}
     <ol class="notes">
       <li><b>Decided in round 1:</b> you pick whose Mac transcribes, or ask someone. Anyone in the call can stop the transcript. The window opens for everyone (a switch in Settings turns that off). One model per call: Parakeet v3 first, Qwen3-ASR as the second choice. The transcript gets its own window, and I'll measure what that window costs.</li>
       <li><b>Decided in round 2:</b> Record is separate from Transcribe. "Audio and screen" records your own screen, picked in the share picker. One recording per call, and only whoever started it can stop it. Sharing the file with the room comes later, with the backend.</li>
-      <li><b>Quipcall's own windows in a screen recording:</b> left out, as when sharing (my pick), or kept, so the recording shows the widget with faces?</li>
+      <li><b>Cubie's own windows in a screen recording:</b> left out, as when sharing (my pick), or kept, so the recording shows the widget with faces?</li>
       <li><b>When the recorder leaves:</b> the recording just stops (my pick), or is someone asked to start a new one, the way the transcript asks for a new transcriber?</li>
     </ol>
   </section>
@@ -743,7 +743,7 @@ function recPopHTML(p) {
     + `<div class="pop-x">Saved on this Mac, in ${p.folder}. Only you get the file, and only you can stop it.</div><div class="pop-x">Everyone sees that you're recording.</div><div class="pop-f"><button class="lnk" data-act="recsettings">${ic('settings', 14)}Settings…</button>${go}</div>`;
 }
 const SCREENS = [['d1', 'Display 1', 'Built-in display', 'desk'], ['d2', 'Display 2', 'External display', 'desk2']];
-const WINS = [['w1', 'pricing.svelte — site', 'Editor', 'code'], ['w2', 'Pricing — quipcall.com', 'Browser', 'page'], ['w3', 'Standup notes', 'Notes', 'notes']];
+const WINS = [['w1', 'pricing.svelte — site', 'Editor', 'code'], ['w2', 'Pricing — cubiecall.com', 'Browser', 'page'], ['w3', 'Standup notes', 'Notes', 'notes']];
 const PRESETS = ['5 fps · text', '15 fps · text', '30 fps · motion', '60 fps · motion'];
 const srcName = id => [...SCREENS, ...WINS].find(x => x[0] === id)[1];
 function thumb(look) {
@@ -758,7 +758,7 @@ function thumb(look) {
 /* p: {sel, preset} */
 function pickerHTML(p) {
   const card = ([id, title, sub, look]) => `<button class="pk-card${p.sel === id ? ' sel' : ''}" data-act="pksel" data-v="${id}"><span class="pk-th">${thumb(look)}</span><span class="pk-t">${ic(id[0] === 'd' ? 'monitor' : 'appwin', 13)}<b>${title}</b></span><span class="pk-s">${sub}</span></button>`;
-  return `${LIGHTS}<div class="pk-h"><b>Record your screen</b><small>The call's audio is recorded too. Quipcall's own windows are left out, as when sharing.</small></div><div class="pk-b"><div class="pk-sec">Screens</div><div class="pk-g">${SCREENS.map(card).join('')}</div><div class="pk-sec">Windows</div><div class="pk-g">${WINS.map(card).join('')}</div></div><div class="pk-f">${PRESETS.map((l, i) => `<button class="pk-p${p.preset === i ? ' on' : ''}" data-act="pkpre" data-v="${i}">${l}</button>`).join('')}<span class="sp"></span><button class="pb sec" data-act="pkcancel">Cancel</button><button class="pb rec" data-act="pkgo">${ic('recring', 14)}Record</button></div>`;
+  return `${LIGHTS}<div class="pk-h"><b>Record your screen</b><small>The call's audio is recorded too. Cubie's own windows are left out, as when sharing.</small></div><div class="pk-b"><div class="pk-sec">Screens</div><div class="pk-g">${SCREENS.map(card).join('')}</div><div class="pk-sec">Windows</div><div class="pk-g">${WINS.map(card).join('')}</div></div><div class="pk-f">${PRESETS.map((l, i) => `<button class="pk-p${p.preset === i ? ' on' : ''}" data-act="pkpre" data-v="${i}">${l}</button>`).join('')}<span class="sp"></span><button class="pb sec" data-act="pkcancel">Cancel</button><button class="pb rec" data-act="pkgo">${ic('recring', 14)}Record</button></div>`;
 }
 const noteHTML = (who, text, buttons) => `<div class="note"><span class="nt">${who ? av(who, 22) : ''}<span>${text}</span></span><span class="nbs">${buttons}</span></div>`;
 
@@ -1073,7 +1073,7 @@ const MODELS = [
 ];
 const SUGGEST = {auto: 'qwen', en: 'parakeet', ru: 'gigaam', zh: 'qwen', de: 'parakeet', es: 'parakeet'};
 const TRY = {auto: 'Testing, one, two, three. А теперь по-русски.', en: 'Testing, one, two, three. Can you hear me?', ru: 'Раз, два, три. Проверка связи.', zh: '你好，这是一个测试。', de: 'Eins, zwei, drei. Hört ihr mich?', es: 'Uno, dos, tres. ¿Me oís?'};
-const SET = {rec: {kind: 'audio', tracks: false, folder: 'Movies › Quipcall'}, tab: 'tx', lang: 'auto', model: 'parakeet', have: {parakeet: true, nemotron: true, apple: true}, dl: {}, langOpen: false, allow: true, ask: 'ask', openWin: true, tryState: 0, tryText: '', after: {}};
+const SET = {rec: {kind: 'audio', tracks: false, folder: 'Movies › Cubie'}, tab: 'tx', lang: 'auto', model: 'parakeet', have: {parakeet: true, nemotron: true, apple: true}, dl: {}, langOpen: false, allow: true, ask: 'ask', openWin: true, tryState: 0, tryText: '', after: {}};
 const CSET = document.getElementById('cv-set');
 CSET.innerHTML = `<div class="win" id="swin" style="left:120px;top:30px;width:760px;height:940px"></div>`;
 const SW = document.getElementById('swin');
@@ -1137,7 +1137,7 @@ function setHTML() {
       <div class="srow"><div class="sl"><b>When someone asks</b><small>"Start right away" skips the prompt in your widget.</small></div><span class="seg2${SET.allow ? '' : ' dis'}"><button class="${SET.ask === 'ask' ? 'on' : ''}" data-act="sask" data-v="ask">Ask me</button><button class="${SET.ask === 'auto' ? 'on' : ''}" data-act="sask" data-v="auto">Start right away</button></span></div>
       <div class="srow"><div class="sl"><b>Open the transcript window</b><small>When a call you're in starts being transcribed. Otherwise only the red dot shows.</small></div>${sw('sopen', SET.openWin)}</div>
     </div>
-    <div class="sfoot">Models use ${(used / 1000).toFixed(1)} GB in <code>~/Library/Application Support/Quipcall/Models</code> · <a data-act="sfinder">Show in Finder</a></div>
+    <div class="sfoot">Models use ${(used / 1000).toFixed(1)} GB in <code>~/Library/Application Support/Cubie/Models</code> · <a data-act="sfinder">Show in Finder</a></div>
   </div>`;
 }
 function renderSet() {

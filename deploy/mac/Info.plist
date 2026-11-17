@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>Quipcall</string>
+	<string>Cubie</string>
 	<key>CFBundleDisplayName</key>
-	<string>Quipcall</string>
+	<string>Cubie</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.quipcall.desktop</string>
 	<key>CFBundleExecutable</key>
-	<string>Quipcall</string>
+	<string>Cubie</string>
 	<key>CFBundleIconFile</key>
 	<string>@ICON@.icns</string>
 	<key>CFBundlePackageType</key>
@@ -28,17 +28,18 @@
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Quipcall uses the microphone so people in your calls can hear you.</string>
+	<string>Cubie uses the microphone so people in your calls can hear you.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Quipcall uses the camera so people in your calls can see you.</string>
-	<!-- Call links: quipcall://join/<room> -->
+	<string>Cubie uses the camera so people in your calls can see you.</string>
+	<!-- Call links: cubie://join/<room> -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>Quipcall call link</string>
+			<string>Cubie call link</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
+				<string>cubie</string>
 				<string>quipcall</string>
 			</array>
 		</dict>
