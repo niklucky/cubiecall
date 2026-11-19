@@ -152,7 +152,8 @@ Started early (2026-11-03), ahead of Stages 3–6, with open room links. Invite-
 - [x] ~~Quby visual assets: macOS bundle icon, web favicon, transparent 1024px PNG, and editable SVG~~ — wired into packaging and the web build; assets prepared locally for the next release.
 - [x] ~~App icon: the cube alone on transparency, filling the icon, instead of the black tile~~ *`QubyTransparent.icns`; the black tile stays as `Quby.icns`, and `ICON` in `deploy/mac/package.sh` switches back.*
 - [ ] Updates keep their permissions: releases are signed with one self-signed certificate (`deploy/mac/signing.sh`), so macOS's requirement for the app stays the same across builds. *Built; needs two releases in a row to confirm.*
-- [ ] Notarization (Apple Developer ID), so a downloaded zip opens without the manual "Open"; simple update check
+- [x] ~~Mac auto-updates~~ — Sparkle checks signed feeds for Apple Silicon and Intel, installs on quit, and provides Check for Updates in the Cubie menu.
+- [ ] Notarization (Apple Developer ID), so a downloaded zip opens without the manual "Open"
 - [x] ~~Email-bound account invitations for friends~~
 - [x] ~~Session and handoff polish: preserve native identity on room links, return room names, renew active sessions and cookies, WAL admission reads, safe task registration, compact account controls, and idempotent secrets initialization~~
 - [x] ~~PR auth hardening: device-code approval, private queued email delivery, cancellable native sign-in and expired-session recovery, per-connection media identity, revoked direct slots and durable invitation return links~~

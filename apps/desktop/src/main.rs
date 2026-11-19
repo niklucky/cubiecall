@@ -25,6 +25,8 @@ mod theme;
 mod timeline;
 mod transcript;
 mod ui;
+#[cfg(target_os = "macos")]
+mod update;
 mod video_mac;
 
 use std::io::IsTerminal as _;
@@ -538,6 +540,8 @@ fn main() {
         })
         .detach();
 
+        #[cfg(target_os = "macos")]
+        update::start();
         #[cfg(feature = "snapshot")]
         snapshot::start(cx);
         cx.activate(true);

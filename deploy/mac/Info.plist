@@ -20,6 +20,20 @@
 	<string>@BUILD@</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>@MIN_MACOS@</string>
+	<key>SUFeedURL</key>
+	<string>https://cubiecall.com/download/current/appcast-@ARCH@.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>nD/dsXZ8NtuxUGQCLhsblljZ8WMsUfdpLcRe0JB6/Vw=</string>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUSignedFeedFailureExpirationInterval</key>
+	<integer>0</integer>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.social-networking</string>
 	<key>NSHighResolutionCapable</key>
