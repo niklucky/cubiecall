@@ -11,8 +11,11 @@ sparkle_key="$RUNNER_TEMP/cubie-sparkle-key"
 keychain_password=$(openssl rand -hex 32)
 echo "::add-mask::$keychain_password"
 # Record paths first so always() cleanup also handles import errors.
-printf 'CUBIE_SIGNING_KEYCHAIN=%s\n' "$keychain" >> "$GITHUB_ENV"
-printf 'CUBIE_NOTARY_KEYCHAIN=%s\n' "$keychain" >> "$GITHUB_ENV"
+{
+    printf 'CUBIE_SIGNING_KEYCHAIN=%s\n' "$keychain"
+    printf 'CUBIE_NOTARY_KEYCHAIN=%s\n' "$keychain"
+    printf 'CUBIE_SPARKLE_KEY_FILE=%s\n' "$sparkle_key"
+} >> "$GITHUB_ENV"
 printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$certificate"
 printf '%s' "$SPARKLE_PRIVATE_KEY" > "$sparkle_key"
 security create-keychain -p "$keychain_password" "$keychain"
@@ -28,4 +31,4 @@ sparkle=$(deploy/mac/sparkle.sh)
 # GitHub masks it in logs and the temporary runner is isolated. Never enable tracing.
 xcrun notarytool store-credentials cubie-notary --keychain "$keychain" \
     --apple-id "$APPLE_ID" --team-id 8BSJZG6B89 --password "$APPLE_NOTARY_PASSWORD"
-rm -f "$certificate" "$sparkle_key"
+rm -f "$certificate"

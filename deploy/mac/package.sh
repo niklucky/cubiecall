@@ -165,7 +165,13 @@ for pair in $pairs; do
 	if [ -n "$mode" ]; then
 		# Sparkle selects by build number, so generate each feed from only its architecture.
 		ln "$OUT/$zip" "$OUT/$name/$zip"
-		"$sparkle/bin/generate_appcast" --account "$account" --maximum-deltas 0 \
+		set -- --account "$account"
+		if [ -n "${CUBIE_SPARKLE_KEY_FILE:-}" ]; then
+			# CI uses a protected temporary file to avoid a Keychain access dialog
+			# when generate_appcast reads an item created by generate_keys.
+			set -- --ed-key-file "$CUBIE_SPARKLE_KEY_FILE"
+		fi
+		"$sparkle/bin/generate_appcast" "$@" --maximum-deltas 0 \
 			--download-url-prefix "$DOWNLOAD_URL/releases/$BUILD/" -o "$OUT/appcast-$name.xml" "$OUT/$name"
 		rm "$OUT/$name/$zip"
 	fi
