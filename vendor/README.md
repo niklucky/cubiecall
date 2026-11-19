@@ -35,14 +35,17 @@ then showed stretched (or squashed) to the new size until the display link's
 next frame. The request now asks for presentation, which GPUI never
 throttles.
 
-The display link also skips a drawable whose size doesn't match the layer's,
-up to four in a row (`MetalFrames::skip_stale`). The link acquires drawables
-ahead of time, so the first after a resize can have the old size. Drawn
-into, it shows stretched until the next frame, and an idle window may not
-draw again for seconds. A unit test in `src/display_link.rs` covers it; run it
+The display link also skips drawables whose sizes don't match the layer's.
+The link acquires them ahead of time, so it can hand out a drawable from
+before the resize. Presenting one leaves a stretched frame until the next
+draw, and an idle window may stay that way for seconds. After five misses
+in a row, AppKit's display pass takes a fresh drawable with the link detached.
+If the restarted Metal link still misses five times at that size, the window
+switches to the shared CVDisplayLink and acquires its own drawables. The
+backend tests cover the retry limit and AppKit's delivery of the redraw. Run them
 with `MACOSX_DEPLOYMENT_TARGET=12.3 CARGO_TARGET_DIR=target/vendor-test cargo
 test --manifest-path vendor/gpui-pre-macos/Cargo.toml --features
-test-support,runtime_shaders --lib display_link`.
+test-support,runtime_shaders --lib --test frame_recovery`.
 
 To update: copy the new version from `~/.cargo/registry/src/*/gpui-pre-macos-<version>`,
 re-apply every marked patch (including the module and test target), and bump

@@ -1,10 +1,10 @@
 // cubie patch: use a fixed accessibility content view class.
 use crate::accessibility::AccessibleContentView;
 use crate::{
-    BoolExt, MacDisplay, MetalFrames, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
-    TISGetInputSourceProperty, WindowFrameSource, events::platform_input_from_native,
-    kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
-    ns_string, renderer,
+    BoolExt, DrawableAction, MacDisplay, MetalFrames, NSRange, NSStringExt,
+    TISCopyCurrentKeyboardInputSource, TISGetInputSourceProperty, WindowFrameSource,
+    events::platform_input_from_native, kTISPropertyInputSourceIsASCIICapable,
+    kTISPropertyInputSourceType, kTISTypeKeyboardInputMode, ns_string, renderer,
 };
 use anyhow::Result;
 use block2::RcBlock;
@@ -640,12 +640,12 @@ unsafe fn apply_simple_fullscreen_plan(
     }
 }
 
-/// What paces a window's frames. The choice depends only on the OS version,
-/// so it is made once per window.
+/// What paces a window's frames.
 enum FrameSource {
     /// macOS 14+: a `CAMetalDisplayLink` that hands out each frame's drawable.
     Metal(Rc<MetalFrames>),
-    /// Earlier systems: the shared `CVDisplayLink` registry, joined on first start.
+    /// The shared `CVDisplayLink` registry. Used on earlier systems or if a
+    /// restarted Metal link keeps handing out drawables of the wrong size.
     DisplayLink(Option<WindowFrameSource>),
 }
 
@@ -981,7 +981,7 @@ pub(crate) struct MacWindow(
     Rc<Mutex<MacWindowState>>,
     MainThreadMarker,
     /// The Metal link's frame waker, kept outside the lock so waking never
-    /// waits on it. `None` when a `CVDisplayLink` paces frames.
+    /// waits on it. It does nothing if there is no Metal link attached.
     Option<Rc<MetalFrames>>,
 );
 
@@ -3395,6 +3395,12 @@ extern "C" fn display_layer(this: &AnyObject, _: Sel, _: *mut AnyObject) {
         lock.request_frame_callback = Some(callback);
         lock.renderer.set_presents_with_transaction(false);
         lock.start_display_link(&window_state);
+    } else {
+        // cubie patch: distinguish a missed AppKit draw from stale drawables.
+        log::debug!(
+            "window {:?}: displayLayer: called without a frame callback",
+            lock.handle
+        );
     }
 }
 
@@ -3432,20 +3438,45 @@ fn metal_frame(
         return;
     };
     let metal_frames = metal_frames.clone();
-    // cubie patch: skip a drawable the link acquired before a resize (see
-    // `MetalFrames::skip_stale`).
+    // cubie patch: the link may hand out drawables acquired before a resize.
+    // Presenting one lets AppKit scale it to the new window size and clears
+    // GPUI's pending redraw, so a squashed frame can outlast the resize.
     let drawable = update.drawable();
     let (width, height): (usize, usize) = unsafe {
         let texture: *mut AnyObject = msg_send![&*drawable, texture];
         (msg_send![texture, width], msg_send![texture, height])
     };
-    let stale = lock.renderer.layer().is_some_and(|layer| {
-        let wanted = layer.drawableSize();
-        wanted.width as usize != width || wanted.height as usize != height
-    });
-    if metal_frames.skip_stale(stale) {
-        // The link keeps running and the window keeps its pending frame.
+    let Some(layer) = lock.renderer.layer() else {
         return;
+    };
+    let wanted = layer.drawableSize();
+    let wanted = (wanted.width as usize, wanted.height as usize);
+    let actual = (width, height);
+    match metal_frames.drawable_action(wanted, actual) {
+        DrawableAction::Draw => {}
+        DrawableAction::Skip => return,
+        action @ (DrawableAction::Redraw | DrawableAction::UseCvDisplayLink) => {
+            if action == DrawableAction::UseCvDisplayLink {
+                log::warn!(
+                    "window {:?}: Metal still returned {actual:?} for {wanted:?} after requesting a redraw, using CVDisplayLink",
+                    lock.handle
+                );
+                lock.stop_display_link();
+                lock.frame_source = FrameSource::DisplayLink(None);
+                lock.start_display_link(window_state);
+            } else {
+                log::debug!(
+                    "window {:?}: requesting an AppKit draw after Metal returned {actual:?} for {wanted:?}",
+                    lock.handle
+                );
+            }
+            // SAFETY: the link callback runs on the main thread while this
+            // window and its view are alive. AppKit may call back into GPUI.
+            let view = unsafe { &*lock.native_view.as_ptr().cast::<NSView>() };
+            drop(lock);
+            view.setNeedsDisplay(true);
+            return;
+        }
     }
     let Some(mut callback) = lock.request_frame_callback.take() else {
         return;

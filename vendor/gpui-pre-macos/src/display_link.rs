@@ -1,8 +1,9 @@
 //! Frame pacing for macOS windows.
 //!
-//! On macOS 14 and later a window is paced by a `CAMetalDisplayLink` on its
-//! layer ([`gpui_apple::display_link::MetalFrameSource`]). Earlier systems use
-//! the shared `CVDisplayLink` registry described below ([`WindowFrameSource`]).
+//! On macOS 14 and later a window normally uses a `CAMetalDisplayLink` on its
+//! layer ([`gpui_apple::display_link::MetalFrameSource`]). Earlier systems and
+//! windows with persistent drawable size mismatches use the shared
+//! `CVDisplayLink` registry ([`WindowFrameSource`]).
 //!
 //! CVDisplayLink has no safe teardown: `CVDisplayLinkStop` merely flags the
 //! link's io thread to exit "soon" and returns immediately, and there is no
@@ -308,15 +309,27 @@ pub struct MetalFrames {
     woken: Cell<bool>,
     /// Updates skipped in a row for a drawable of the wrong size.
     stale: Cell<u8>,
+    /// Layer size for which AppKit has already been asked to redraw.
+    retry_size: Cell<Option<(usize, usize)>>,
 }
 
-/// Wrong-size drawables skipped in a row before drawing into one anyway, in
-/// case a layer's size and its drawables' never match.
-const MAX_STALE_SKIPS: u8 = 4;
+/// Give the display link a few updates to catch up to the new layer size
+/// before asking AppKit for a synchronous draw.
+const STALE_DRAW_RETRY: u8 = 5;
+
+// cubie patch: what to do with a drawable from CAMetalDisplayLink.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DrawableAction {
+    Draw,
+    Skip,
+    Redraw,
+    UseCvDisplayLink,
+}
 
 impl MetalFrames {
     pub fn replace(&self, source: Option<MetalFrameSource>) {
         *self.source.borrow_mut() = source;
+        self.stale.set(0);
     }
 
     pub fn is_attached(&self) -> bool {
@@ -337,15 +350,29 @@ impl MetalFrames {
         self.woken.set(false);
     }
 
-    /// Whether to skip an update whose drawable doesn't have the layer's size
-    /// (cubie patch). The link acquires drawables ahead of time, so the
-    /// first after a resize can have the old size. Drawn into, one shows
-    /// stretched to the new size until the next frame, and an idle window
-    /// may not have one for seconds.
-    pub fn skip_stale(&self, stale: bool) -> bool {
-        let skip = stale && self.stale.get() < MAX_STALE_SKIPS;
-        self.stale.set(if skip { self.stale.get() + 1 } else { 0 });
-        skip
+    /// Discard old-size drawables (cubie patch). Ask AppKit for a fresh frame,
+    /// then fall back to CVDisplayLink if the mismatch persists.
+    pub fn drawable_action(
+        &self,
+        wanted: (usize, usize),
+        actual: (usize, usize),
+    ) -> DrawableAction {
+        if wanted == actual {
+            self.stale.set(0);
+            self.retry_size.set(None);
+            return DrawableAction::Draw;
+        }
+        let count = self.stale.get() + 1;
+        if count < STALE_DRAW_RETRY {
+            self.stale.set(count);
+            return DrawableAction::Skip;
+        }
+        self.stale.set(0);
+        if self.retry_size.replace(Some(wanted)) == Some(wanted) {
+            DrawableAction::UseCvDisplayLink
+        } else {
+            DrawableAction::Redraw
+        }
     }
 
     /// Ends an update, pausing the link if GPUI neither used its drawable nor
@@ -638,15 +665,27 @@ mod tests {
 
     // cubie patch.
     #[test]
-    fn wrong_size_drawables_are_skipped_a_few_in_a_row() {
+    fn retries_stale_drawables_once_per_size_without_a_good_frame() {
         let frames = MetalFrames::default();
-        for _ in 0..MAX_STALE_SKIPS {
-            assert!(frames.skip_stale(true));
-        }
-        assert!(!frames.skip_stale(true), "draws once too many were skipped");
-        assert!(frames.skip_stale(true), "and counts again from there");
-        assert!(!frames.skip_stale(false), "a drawable of the right size draws");
-        assert!(frames.skip_stale(true), "and resets the count");
+        let actual = (100, 60);
+        let wanted = (100, 52);
+        let misses = |wanted| {
+            for _ in 1..STALE_DRAW_RETRY {
+                assert_eq!(frames.drawable_action(wanted, actual), DrawableAction::Skip);
+            }
+            frames.drawable_action(wanted, actual)
+        };
+
+        assert_eq!(frames.drawable_action(wanted, actual), DrawableAction::Skip);
+        frames.replace(None);
+        assert_eq!(misses(wanted), DrawableAction::Redraw);
+        frames.replace(None);
+        assert_eq!(misses(wanted), DrawableAction::UseCvDisplayLink);
+
+        assert_eq!(frames.drawable_action(wanted, wanted), DrawableAction::Draw);
+        assert_eq!(misses(wanted), DrawableAction::Redraw);
+        frames.replace(None);
+        assert_eq!(misses((100, 90)), DrawableAction::Redraw);
     }
 
     #[test]

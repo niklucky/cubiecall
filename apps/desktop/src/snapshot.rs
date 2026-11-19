@@ -8,7 +8,8 @@
 //!   the buttons at the given second: `regular`, `minimal`, `leave`, `quick`
 //!   (quick call from home), `mic`, `camera`, `share` (opens the picker),
 //!   `hover` / `stack` (the capsule opens its row of controls, or of the
-//!   people in its stack, as if hovered), `unhover` (closes it), `top`
+//!   people in its stack, as if hovered), `hover-name` (shows your name card),
+//!   `unhover` (closes the card), `top`
 //!   (moves it to the top of its screen), `panel` / `people`
 //!   (the call window's side panel, on the transcript or people tab),
 //!   `share-own` / `share-own-60` (shares one of Cubie's own windows with
@@ -149,6 +150,7 @@ fn act(action: &str, cx: &mut App) {
     if matches!(
         action,
         "hover"
+            | "hover-name"
             | "stack"
             | "unhover"
             | "hover-rec"
