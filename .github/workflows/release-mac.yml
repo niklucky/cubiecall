@@ -28,9 +28,12 @@ jobs:
           persist-credentials: false
       - name: Validate release tag and resolve shared build number
         id: release
-        env:
-          GITHUB_EVENT_NAME: ${{ github.ref_type == 'tag' && github.event_name || 'workflow_dispatch' }}
-        run: python3 deploy/mac/ci-metadata.py
+        run: |
+          if [[ "$GITHUB_REF" == refs/heads/* ]]; then
+            GITHUB_EVENT_NAME=workflow_dispatch python3 deploy/mac/ci-metadata.py
+          else
+            python3 deploy/mac/ci-metadata.py
+          fi
       - name: Test release validation
         run: python3 -m unittest discover -s deploy/mac -p 'test_ci*.py'
       - name: Test atomic website publication
