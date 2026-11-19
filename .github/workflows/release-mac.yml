@@ -59,6 +59,7 @@ jobs:
       CUBIE_BUILD: ${{ needs.metadata.outputs.build }}
       CUBIE_SERVER: https://cubiecall.com
       MACOSX_DEPLOYMENT_TARGET: '12.3'
+      CARGO_BUILD_JOBS: '2'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -76,6 +77,8 @@ jobs:
       - name: Prepare native dependencies
         run: |
           command -v cmake >/dev/null || brew install cmake
+          brew list --versions openssl@3 >/dev/null 2>&1 || brew install openssl@3
+          echo "$(brew --prefix openssl@3)/bin" >> "$GITHUB_PATH"
           dev/vendor-webrtc-sys.sh
           deploy/mac/sparkle.sh
       - name: Configure temporary signing Keychain
