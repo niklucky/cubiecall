@@ -3,12 +3,18 @@
 set -eu
 publisher=$(cd "$(dirname "$0")" && pwd)/publish.sh
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-download=$tmp/download
-stage=$tmp/stage
+trap 'chmod u+w "$tmp/cubie"; rm -rf "$tmp"' EXIT
+download=$tmp/cubie/download
+stage=$tmp/cubie/mac-staging/release
 archives='Cubie-apple-silicon.zip Cubie-intel.zip'
 feeds='appcast-apple-silicon.xml appcast-intel.xml'
-mkdir "$download"
+mkdir -p "$download" "$tmp/cubie/mac-staging"
+# Match the release account: writable download/staging, read-only parent.
+chmod 555 "$tmp/cubie"
+if [ -w "$tmp/cubie" ]; then
+    echo 'Run publish tests as an unprivileged user to check directory permissions.' >&2
+    exit 1
+fi
 for file in $archives; do
     echo "legacy-$file" >"$download/$file"
 done
