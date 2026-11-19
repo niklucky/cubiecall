@@ -450,7 +450,7 @@ fn main() {
     let args = parse_args();
     tracing::info!(
         "cubie {} ({}), server {}",
-        env!("CARGO_PKG_VERSION"),
+        option_env!("CUBIE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")),
         std::env::consts::ARCH,
         args.server
     );

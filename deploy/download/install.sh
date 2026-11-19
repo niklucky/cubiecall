@@ -1,8 +1,6 @@
 #!/bin/sh
 # Install or update Cubie:
 #   curl -fsSL https://cubiecall.com/download/install.sh | sh
-# Downloaded with curl, the app carries no quarantine flag, so macOS opens it
-# without the "unidentified developer" detour.
 set -eu
 # hw.optional.arm64 is 1 on Apple Silicon, even in a Terminal running under Rosetta.
 if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
