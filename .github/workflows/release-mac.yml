@@ -1,0 +1,186 @@
+name: Release Mac app
+run-name: Mac app · ${{ github.ref_name }} · attempt ${{ github.run_attempt }}
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-mac-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      build: ${{ steps.release.outputs.build }}
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Validate release tag and resolve shared build number
+        id: release
+        run: python3 deploy/mac/ci-metadata.py
+      - name: Test release validation
+        run: python3 -m unittest discover -s deploy/mac -p 'test_ci*.py'
+      - name: Test atomic website publication
+        run: deploy/mac/test-publish.sh
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: apple-silicon
+            target: aarch64-apple-darwin
+            runner: macos-15
+          - arch: intel
+            target: x86_64-apple-darwin
+            runner: macos-15-intel
+    env:
+      CUBIE_VERSION: ${{ needs.metadata.outputs.version }}
+      CUBIE_BUILD: ${{ needs.metadata.outputs.build }}
+      CUBIE_SERVER: https://cubiecall.com
+      MACOSX_DEPLOYMENT_TARGET: '12.3'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: 1.99.0
+          targets: ${{ matrix.target }}
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: mac-release-${{ matrix.target }}
+          cache-on-failure: false
+      - name: Prepare native dependencies
+        run: |
+          command -v cmake >/dev/null || brew install cmake
+          brew list --versions openssl@3 >/dev/null 2>&1 || brew install openssl@3
+          echo "$(brew --prefix openssl@3)/bin" >> "$GITHUB_PATH"
+          dev/vendor-webrtc-sys.sh
+          deploy/mac/sparkle.sh
+      - name: Configure temporary signing Keychain
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: deploy/mac/ci-signing.sh
+      - name: Test notarization failure handling
+        run: deploy/mac/test-notarize.sh
+      - name: Build, sign, notarize, staple and sign update feed
+        run: deploy/mac/package.sh --appcast --arch "$ARCH"
+        env:
+          ARCH: ${{ matrix.arch }}
+      - name: Verify final archive and update feed
+        run: |
+          python3 deploy/mac/verify-release.py target/mac --arch "$ARCH" --version "$CUBIE_VERSION" --build "$CUBIE_BUILD"
+          mkdir -p "$RUNNER_TEMP/extracted-release"
+          ditto -x -k "target/mac/Cubie-$ARCH.zip" "$RUNNER_TEMP/extracted-release"
+          codesign --verify --deep --strict --check-notarization -R=notarized "$RUNNER_TEMP/extracted-release/Cubie.app"
+          xcrun stapler validate "$RUNNER_TEMP/extracted-release/Cubie.app"
+          syspolicy_check distribution "$RUNNER_TEMP/extracted-release/Cubie.app"
+        env:
+          ARCH: ${{ matrix.arch }}
+      - name: Upload verified release files
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: mac-${{ matrix.arch }}
+          path: |
+            target/mac/Cubie-*.zip
+            target/mac/appcast-*.xml
+            target/mac/version.txt
+            target/mac/*-notary*.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Upload notarization diagnostics
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: notary-diagnostics-${{ matrix.arch }}
+          path: target/mac/*-notary*.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Remove temporary credentials
+        if: always()
+        run: |
+          security default-keychain -d user -s "$HOME/Library/Keychains/login.keychain-db" || true
+          security delete-keychain "$RUNNER_TEMP/cubie-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/cubie-signing.p12" "$RUNNER_TEMP/cubie-sparkle-key"
+
+  publish:
+    name: Publish both Mac apps
+    needs: [metadata, build]
+    if: needs.metadata.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    # Serialize even different tags. The host also rejects an older build number.
+    concurrency:
+      group: mac-website-publication
+      cancel-in-progress: false
+    env:
+      CUBIE_VERSION: ${{ needs.metadata.outputs.version }}
+      CUBIE_BUILD: ${{ needs.metadata.outputs.build }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Download verified archives
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: mac-*
+          path: target/mac
+          merge-multiple: true
+      - name: Verify both archives before deployment
+        run: python3 deploy/mac/verify-release.py target/mac --version "$CUBIE_VERSION" --build "$CUBIE_BUILD" --write-checksums
+      - name: Configure website deployment key
+        env:
+          DEPLOY_KEY: ${{ secrets.MACOS_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.MACOS_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          : "${DEPLOY_KEY:?Missing MACOS_DEPLOY_KEY}" "${KNOWN_HOSTS:?Missing MACOS_DEPLOY_KNOWN_HOSTS}"
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/cubie-release.key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/cubie-known-hosts"
+          printf 'Host *\n  IdentityFile %s\n  IdentitiesOnly yes\n  UserKnownHostsFile %s\n  StrictHostKeyChecking yes\n  BatchMode yes\n' \
+            "$RUNNER_TEMP/cubie-release.key" "$RUNNER_TEMP/cubie-known-hosts" > "$HOME/.ssh/config"
+      - name: Publish website archives and update feeds together
+        env:
+          CUBIE_HOST: ${{ vars.CUBIE_RELEASE_HOST }}
+          CUBIE_STAGING_ROOT: /opt/cubie/mac-staging
+        run: |
+          : "${CUBIE_HOST:?Missing CUBIE_RELEASE_HOST variable}"
+          deploy/mac/upload.sh target/mac
+      - name: Verify public downloads
+        run: python3 deploy/mac/check-live.py target/mac
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" --verify-tag --title "Cubie $CUBIE_VERSION" --generate-notes \
+            target/mac/Cubie-*.zip target/mac/SHA256SUMS
+          printf 'Published **%s (build %s)** to https://cubiecall.com/download/\n' "$CUBIE_VERSION" "$CUBIE_BUILD" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove deployment credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/cubie-release.key" "$RUNNER_TEMP/cubie-known-hosts" "$HOME/.ssh/config"

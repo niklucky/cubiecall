@@ -1,4 +1,6 @@
 #!/bin/sh
+# Legacy development helper only. Releases use an Apple Developer ID identity
+# from the login Keychain; package.sh never creates or uses this certificate.
 # Make the identity Cubie.app is signed with: a self-signed certificate in
 # a keychain of its own (no password, not in the search list).
 #

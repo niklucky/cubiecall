@@ -55,7 +55,7 @@ fmt: vendor
 deploy: vendor
 	deploy/deploy.sh
 
-# The Mac app (Apple Silicon + Intel, signed, see deploy/mac/signing.sh) → target/mac/Cubie-*.zip.
+# The Mac app (Apple Silicon + Intel, Developer ID signed and notarized) → target/mac/Cubie-*.zip.
 mac-app: vendor
 	deploy/mac/package.sh
 

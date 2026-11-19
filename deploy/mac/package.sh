@@ -1,24 +1,41 @@
 #!/bin/sh
-# Build Cubie.app for Apple Silicon and for Intel, signed and zipped:
+# Build Cubie.app for Apple Silicon and for Intel, signed, notarized and zipped:
 # target/mac/Cubie-apple-silicon.zip and target/mac/Cubie-intel.zip.
 # One app per architecture to keep the downloads small.
 #
-#   deploy/mac/package.sh            build only
+#   deploy/mac/package.sh            build and notarize only
 #   deploy/mac/package.sh --appcast  build and sign the update feeds locally
 #   deploy/mac/package.sh --upload   build and publish at https://cubiecall.com/download/
 #
 # CUBIE_BUILD overrides the commit-count build number for an uncommitted release.
 # CUBIE_SERVER picks the server the app talks to (default https://cubiecall.com).
-# The signing identity lives in CUBIE_SIGNING_KEYCHAIN (made on first use,
-# see signing.sh).
+# CUBIE_SIGNING_IDENTITY overrides the Developer ID certificate fingerprint.
+# CUBIE_SIGNING_KEYCHAIN optionally selects a keychain (default: search list).
+# CUBIE_NOTARY_PROFILE selects notarytool credentials (default: cubie-notary).
+# CUBIE_VERSION sets the displayed app version (CI uses the release tag).
+# --arch apple-silicon|intel builds one architecture for a CI job.
 set -eu
 cd "$(dirname "$0")/../.."
 
-mode=${1:-}
-case "$mode" in
-    ''|--appcast|--upload) ;;
-    *) echo "usage: $0 [--appcast|--upload]" >&2; exit 1 ;;
+mode=
+architecture=all
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --appcast|--upload) [ -z "$mode" ] || exit 1; mode=$1; shift ;;
+        --arch) architecture=${2:?missing architecture}; shift 2 ;;
+        *) echo "usage: $0 [--appcast|--upload] [--arch apple-silicon|intel]" >&2; exit 1 ;;
+    esac
+done
+case "$architecture" in
+    all) pairs='aarch64-apple-darwin:apple-silicon x86_64-apple-darwin:intel' ;;
+    apple-silicon) pairs=aarch64-apple-darwin:apple-silicon ;;
+    intel) pairs=x86_64-apple-darwin:intel ;;
+    *) echo "Unknown Mac architecture: $architecture" >&2; exit 1 ;;
 esac
+if [ "$mode" = --upload ] && [ "$architecture" != all ]; then
+    echo 'Publishing requires both architectures.' >&2
+    exit 1
+fi
 
 HOST=${CUBIE_HOST:-${QUIPCALL_HOST:-root@testron.dev}}
 PRODUCTION_SERVER=https://cubiecall.com
@@ -30,8 +47,16 @@ export MACOSX_DEPLOYMENT_TARGET=12.3
 
 # Protect target/mac through the upload. Concurrent calls wait for the same lock.
 mkdir -p target
-exec 9>target/.mac-package.lock
-lockf 9
+if [ -z "${CUBIE_PACKAGE_LOCKED:-}" ]; then
+    set --
+    [ -z "$mode" ] || set -- "$mode"
+    exec perl -MFcntl=:flock -e '
+        open(my $lock, ">>", shift) or die "lock: $!";
+        flock($lock, LOCK_EX) or die "lock: $!";
+        system(@ARGV);
+        exit($? == -1 ? 1 : ($? & 127 ? 128 + ($? & 127) : $? >> 8));
+    ' target/.mac-package.lock env CUBIE_PACKAGE_LOCKED=1 "$0" "$@" --arch "$architecture"
+fi
 
 sparkle=
 if [ "${CUBIE_SERVER%/}" = "$PRODUCTION_SERVER" ]; then
@@ -41,9 +66,27 @@ elif [ -n "$mode" ]; then
     exit 1
 fi
 account=com.quipcall.desktop
-# SHA-1 fingerprint used by codesign to select the certificate in the shipping
-# app's designated requirement.
-shipping_identity=7792AB4735B4F5DE6EB9A909C597E169863E4860
+identity=${CUBIE_SIGNING_IDENTITY:-FB9D41EDF844DF368B68B049D8A9895D5C5F0B96}
+team=8BSJZG6B89
+profile=${CUBIE_NOTARY_PROFILE:-cubie-notary}
+# Refuse a missing, development or self-signed identity before building.
+set --
+if [ -n "${CUBIE_SIGNING_KEYCHAIN:-}" ]; then
+    set -- "$CUBIE_SIGNING_KEYCHAIN"
+fi
+identities=$(security find-identity -v -p codesigning "$@")
+if ! printf '%s\n' "$identities" | awk -v identity="$identity" -v team="$team" '
+    $2 == identity && index($0, "\"Developer ID Application: ") && index($0, "(" team ")\"") { found = 1 }
+    END { exit !found }
+'; then
+    echo "No valid Developer ID Application identity $identity for team $team. See docs/DEPLOY.md." >&2
+    exit 1
+fi
+set -- --keychain-profile "$profile"
+if [ -n "${CUBIE_NOTARY_KEYCHAIN:-}" ]; then
+    set -- "$@" --keychain "$CUBIE_NOTARY_KEYCHAIN"
+fi
+xcrun notarytool history "$@" --output-format json >/dev/null
 if [ -n "$mode" ]; then
     public_key=$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' deploy/mac/Info.plist)
     if ! signing_key=$("$sparkle/bin/generate_keys" --account "$account" -p) ||
@@ -53,31 +96,18 @@ if [ -n "$mode" ]; then
     fi
 fi
 
-KEYCHAIN=${CUBIE_SIGNING_KEYCHAIN:-${QUIPCALL_SIGNING_KEYCHAIN:-}}
-if [ -z "$KEYCHAIN" ]; then
-    KEYCHAIN=$HOME/Library/Keychains/cubie-signing.keychain-db
-    # Keep the shipping certificate and its designated requirement on upgrades.
-    old_keychain=$HOME/Library/Keychains/quipcall-signing.keychain-db
-    [ ! -f "$old_keychain" ] || KEYCHAIN=$old_keychain
-fi
-if [ ! -f "$KEYCHAIN" ]; then
-    if [ -n "$mode" ]; then
-        echo "Restore the shipping Cubie code-signing keychain (see docs/DEPLOY.md)." >&2
-        exit 1
+sign_code() {
+    if [ -n "${CUBIE_SIGNING_KEYCHAIN:-}" ]; then
+        set -- --keychain "$CUBIE_SIGNING_KEYCHAIN" "$@"
     fi
-    deploy/mac/signing.sh "$KEYCHAIN"
-fi
-security unlock-keychain -p "" "$KEYCHAIN"
-identities=$(security find-identity -p codesigning "$KEYCHAIN")
-if [ -n "$mode" ]; then
-    identity=$(printf '%s\n' "$identities" | awk -v shipping="$shipping_identity" '$2 == shipping { print $2; exit }')
-    [ -n "$identity" ] || { echo "No shipping Cubie code-signing identity in $KEYCHAIN (see docs/DEPLOY.md)." >&2; exit 1; }
-else
-    identity=$(printf '%s\n' "$identities" | awk '/"(Quipcall|Cubie) Signing"/ { print $2; exit }')
-    [ -n "$identity" ] || { echo "No Cubie signing identity in $KEYCHAIN" >&2; exit 1; }
-fi
+    codesign --force --sign "$identity" --options runtime --timestamp "$@"
+}
 
-VERSION=$(cargo pkgid -p cubie-desktop | sed 's/.*@//')
+export CUBIE_VERSION="${CUBIE_VERSION:-$(cargo pkgid -p cubie-desktop | sed 's/.*@//')}"
+VERSION=$CUBIE_VERSION
+printf '%s\n' "$VERSION" | LC_ALL=C grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || {
+    echo 'CUBIE_VERSION must be X.Y.Z.' >&2; exit 1;
+}
 BUILD=${CUBIE_BUILD:-${QUIPCALL_BUILD:-$(git rev-list --count HEAD)}}
 case "$BUILD" in
     ''|*[!0-9]*) echo "error: CUBIE_BUILD must be a positive integer" >&2; exit 1 ;;
@@ -89,10 +119,10 @@ OUT=target/mac
 ICON=QubyTransparent
 rm -rf "$OUT"
 
-for pair in aarch64-apple-darwin:apple-silicon x86_64-apple-darwin:intel; do
+for pair in $pairs; do
 	target=${pair%%:*}
 	name=${pair##*:}
-	cargo build --release -p cubie-desktop --target "$target"
+	cargo build --locked --release -p cubie-desktop --target "$target"
 
 	app=$OUT/$name/Cubie.app
 	mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
@@ -114,19 +144,34 @@ for pair in aarch64-apple-darwin:apple-silicon x86_64-apple-darwin:intel; do
 		exit 1
 	fi
 
-	# Keep Cubie's certificate and Sparkle's upstream helper signatures.
-	codesign --force --keychain "$KEYCHAIN" --sign "$identity" "$app"
+	# Sign nested code from the inside out, with the same team as the app.
+	# Do not use --deep for signing: helpers need their own entitlements.
+	if [ -n "$sparkle" ]; then
+		framework=$app/Contents/Frameworks/Sparkle.framework
+		sign_code "$framework/Versions/B/XPCServices/Installer.xpc"
+		sign_code --preserve-metadata=entitlements "$framework/Versions/B/XPCServices/Downloader.xpc"
+		sign_code "$framework/Versions/B/Autoupdate"
+		sign_code "$framework/Versions/B/Updater.app"
+		sign_code "$framework"
+	fi
+	sign_code --entitlements deploy/mac/entitlements.plist "$app"
 	codesign --verify --deep --strict "$app"
-	codesign -d -r- "$app" 2>&1 | grep -q 'certificate leaf' || {
-		echo "error: $app isn't signed with the Cubie certificate" >&2
+	codesign -dv "$app" 2>&1 | grep -qx "TeamIdentifier=$team" || {
+		echo "error: $app isn't signed by the Cubie Apple developer team" >&2
 		exit 1
 	}
 	zip=Cubie-$name.zip
-	ditto -c -k --keepParent "$app" "$OUT/$zip"
+	deploy/mac/notarize.sh "$app" "$OUT/$zip" "$profile"
 	if [ -n "$mode" ]; then
 		# Sparkle selects by build number, so generate each feed from only its architecture.
 		ln "$OUT/$zip" "$OUT/$name/$zip"
-		"$sparkle/bin/generate_appcast" --account "$account" --maximum-deltas 0 \
+		set -- --account "$account"
+		if [ -n "${CUBIE_SPARKLE_KEY_FILE:-}" ]; then
+			# CI uses a protected temporary file to avoid a Keychain access dialog
+			# when generate_appcast reads an item created by generate_keys.
+			set -- --ed-key-file "$CUBIE_SPARKLE_KEY_FILE"
+		fi
+		"$sparkle/bin/generate_appcast" "$@" --maximum-deltas 0 \
 			--download-url-prefix "$DOWNLOAD_URL/releases/$BUILD/" -o "$OUT/appcast-$name.xml" "$OUT/$name"
 		rm "$OUT/$name/$zip"
 	fi
@@ -136,12 +181,7 @@ echo "$VERSION ($BUILD)" >"$OUT/version.txt"
 ls -lh "$OUT"/*.zip
 
 if [ "$mode" = "--upload" ]; then
-	stage=$(ssh "$HOST" 'install -d -m 755 /opt/cubie /opt/cubie/download && mktemp -d /opt/cubie/.mac-release.XXXXXXXX')
-	trap 'ssh "$HOST" "rm -rf -- $stage" || true' EXIT
-	trap 'exit 1' HUP INT TERM
-	scp -q "$OUT"/Cubie-*.zip "$OUT"/appcast-*.xml "$OUT/version.txt" "$HOST:$stage/"
-	# The staging path and numeric build are evaluated here.
-	# shellcheck disable=SC2029
-	ssh "$HOST" "sh -s -- /opt/cubie/download $stage $BUILD" < deploy/mac/publish.sh
+	python3 deploy/mac/verify-release.py "$OUT" --write-checksums
+	CUBIE_HOST="$HOST" deploy/mac/upload.sh "$OUT"
 	echo "published $VERSION (build $BUILD): $DOWNLOAD_URL/"
 fi
