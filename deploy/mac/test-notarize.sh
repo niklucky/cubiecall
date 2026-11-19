@@ -27,7 +27,8 @@ case "$tool" in
                 ;;
             'notarytool log')
                 [ "$MOCK_SCENARIO" != log-failure ] || exit 1
-                echo '{"issues":null}' >"$6"
+                for last do :; done
+                echo '{"issues":null}' >"$last"
                 ;;
             'stapler staple')
                 [ "$MOCK_SCENARIO" != staple-failure ] || exit 1
@@ -49,7 +50,7 @@ for scenario in invalid pending network missing-id log-failure staple-failure va
     out="$tmp/$scenario with spaces"
     mkdir -p "$out/Cubie.app"
     result=0
-    MOCK_SCENARIO=$scenario TRACE_FILE="$out/trace" PATH="$tmp/bin:$PATH" \
+    CUBIE_NOTARY_KEYCHAIN="$tmp/keychain with spaces" MOCK_SCENARIO=$scenario TRACE_FILE="$out/trace" PATH="$tmp/bin:$PATH" \
         sh "$notarize" "$out/Cubie.app" "$out/Cubie.zip" cubie-notary >"$out/output" 2>&1 || result=$?
     if [ "$scenario" = accepted ]; then
         [ "$result" = 0 ]
