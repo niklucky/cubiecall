@@ -1744,6 +1744,9 @@ impl Capsule {
             _ => {}
         }
         self.open = match which {
+            "hover-name" => Some(Drawer::Name(
+                self.call.read(cx).me.read(cx).identity.clone(),
+            )),
             "people" => Some(Drawer::People),
             "recording" => Some(Drawer::Recording),
             "record-choice" => Some(Drawer::RecordChoice),

@@ -60,6 +60,11 @@ name = "accessibility"
 path = "tests/accessibility.rs"
 harness = false
 
+[[test]]
+name = "frame_recovery"
+path = "tests/frame_recovery.rs"
+harness = false
+
 [dependencies.gpui]
 version = "=0.3.11"
 default-features = false
