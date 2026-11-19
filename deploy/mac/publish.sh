@@ -7,7 +7,7 @@ stage=$2
 build=$3
 mkdir -p "$download/releases"
 chmod 755 "$download/releases"
-exec 9>"$download/../.mac-release.lock"
+exec 9>"$download/.mac-release.lock"
 flock 9
 
 build_number() {
@@ -42,7 +42,8 @@ done
 }
 chmod 755 "$stage"
 
-links=$(mktemp -d "$download/../.mac-links.XXXXXXXX")
+# The release account can write download/, but not its parent /opt/cubie.
+links=$(mktemp -d "$download/.mac-links.XXXXXXXX")
 trap 'rm -rf "$links"' EXIT
 trap 'exit 1' HUP INT TERM
 
