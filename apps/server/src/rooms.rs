@@ -240,7 +240,12 @@ pub async fn redeem(
     if used.is_some() {
         return Err(AppError::forbidden("This invitation has already been used"));
     }
-    if kind == "member" && (p.kind != "user" || p.email != email) {
+    // A private room is for accounts. Someone new makes theirs with the
+    // invitation (`auth::verify_link`); a name alone doesn't get in.
+    if p.kind != "user" {
+        return Err(AppError::forbidden("Sign in to accept this invitation"));
+    }
+    if kind == "member" && p.email != email {
         return Err(AppError::forbidden(
             "Sign in with the invited email to accept membership",
         ));
@@ -345,10 +350,11 @@ pub async fn entry(
             } else {
                 "private"
             }
-        } else if kind == "member"
-            && p.as_ref()
-                .is_none_or(|p| p.kind != "user" || p.email != *email)
+        } else if p
+            .as_ref()
+            .is_none_or(|p| p.kind != "user" || (kind == "member" && p.email != *email))
         {
+            // An account first: any, or the one the invitation names.
             "signin"
         } else {
             "invite"

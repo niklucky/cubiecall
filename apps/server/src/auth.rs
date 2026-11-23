@@ -383,6 +383,30 @@ pub struct LinkRequest {
     #[serde(default)]
     pub app: bool,
 }
+/// Whether a sign-in email may go to `email`: it has an account, or
+/// `invite` (a hash) is an invitation it can register with: one to Cubie, or
+/// one to a private room, since whoever is invited to a room may make their
+/// account from it.
+async fn may_sign_in(s: &AppState, email: &str, invite: Option<&str>) -> Result<bool> {
+    if s.config.bootstrap_email.as_deref() == Some(email) {
+        return Ok(true);
+    }
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM identities WHERE provider='email' AND subject=?2)
+         OR EXISTS(SELECT 1 FROM account_invites WHERE hash=?1 AND email=?2 AND expires>?3)
+         OR EXISTS(SELECT 1 FROM room_invites i JOIN rooms r ON r.id=i.room
+            WHERE i.hash=?1 AND i.used_by IS NULL AND i.expires>?3 AND r.closed=0
+            AND (i.email IS NULL OR i.email=?2))",
+    )
+    .bind(invite)
+    .bind(email)
+    .bind(now())
+    .fetch_one(&s.db)
+    .await?)
+}
+/// Addresses one requester may be told nobody invited, an hour: a typo or
+/// three, not a list of addresses to try.
+const UNKNOWN_EMAILS_AN_HOUR: i64 = 20;
 pub async fn request_link(
     State(s): State<AppState>,
     h: HeaderMap,
@@ -390,6 +414,27 @@ pub async fn request_link(
 ) -> Result<Json<Value>> {
     let email = email(&req.email)?;
     let requester = client_ip(&h);
+    let invite = req.invite.as_deref().map(hash);
+    // Said plainly: someone waiting for a code that will never come has no
+    // way to find out why. It tells a stranger who has an account, so it is
+    // counted.
+    if !may_sign_in(&s, &email, invite.as_deref()).await? {
+        rate(
+            &s,
+            &format!("unknown-email:{requester}"),
+            UNKNOWN_EMAILS_AN_HOUR,
+            3600,
+        )
+        .await?;
+        return Err(AppError::new(
+            StatusCode::NOT_FOUND,
+            if invite.is_some() {
+                "This invitation doesn't work for this email. Use the address it was sent to, or ask for a new one."
+            } else {
+                "No Cubie account uses this email. Cubie is invite-only for now: ask someone on Cubie to invite you."
+            },
+        ));
+    }
     let origin = h.get(header::ORIGIN).and_then(|v| v.to_str().ok());
     // The code in the email only works together with this, so reading
     // someone's code off their screen or guessing it from elsewhere is no use.
@@ -399,7 +444,7 @@ pub async fn request_link(
     )
     .bind(email)
     .bind(requester)
-    .bind(req.invite.as_deref().map(hash))
+    .bind(invite)
     .bind(now())
     .bind(origin.filter(|origin| s.config.trusts_origin(origin)))
     .bind(&challenge)
@@ -407,7 +452,7 @@ pub async fn request_link(
     .execute(&s.db)
     .await?;
     s.mail_ready.notify_one();
-    // Delivery, eligibility and suppression never affect the public response.
+    // Delivery and suppression never affect the response.
     Ok(Json(json!({"ok":true,"id":challenge})))
 }
 
@@ -495,26 +540,9 @@ async fn deliver_link(s: &AppState, mail: &QueuedMail) -> Result<()> {
     let requester = &mail.requester;
     let invite = mail.invite.as_deref();
     let attempts = mail.attempts;
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM identities WHERE provider='email' AND subject=?)",
-    )
-    .bind(email)
-    .fetch_one(&s.db)
-    .await?;
-    // An invitation to Cubie, or one to a private room: whoever is invited
-    // to a room may make their account from it.
-    let allowed: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM account_invites WHERE hash=?1 AND email=?2 AND expires>?3)
-         OR EXISTS(SELECT 1 FROM room_invites i JOIN rooms r ON r.id=i.room
-            WHERE i.hash=?1 AND i.used_by IS NULL AND i.expires>?3 AND r.closed=0
-            AND (i.email IS NULL OR i.email=?2))",
-    )
-    .bind(invite)
-    .bind(email)
-    .bind(now())
-    .fetch_one(&s.db)
-    .await?;
-    if !exists && !allowed && s.config.bootstrap_email.as_deref() != Some(email) {
+    // Asked again at delivery: an invitation can be used or cancelled while
+    // its email waits for a retry.
+    if !may_sign_in(s, email, invite).await? {
         return Ok(());
     }
     // One requester cannot use up the whole recipient allowance. The second
@@ -656,7 +684,7 @@ const CODE_TRIES: i64 = 5;
 /// that leaves a guesser one chance in fifty thousand a day. Links still work.
 const WRONG_CODES_A_DAY: i64 = 20;
 /// One answer for every way a code fails (wrong, used up, expired, never
-/// sent), so it can't be used to learn which emails have accounts.
+/// sent): which of them it was is nobody's to learn by guessing.
 fn wrong_code() -> AppError {
     AppError::bad("That code isn't right, or it has expired. Check it, or ask for a new one.")
 }

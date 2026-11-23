@@ -12,7 +12,7 @@ A Mac without an account opens on a small window (400 × 500): Quby, "Welcome to
 
 A new account has no name yet, so a second window asks what people should call you, with your avatar updating as you type and the name on this Mac's account as a first guess. Then Home opens, or the call a link asked for. `--name` skips sign-in and opens Home without an account (development and tests).
 
-Cubie is invite-only: a code is sent only to an email that has an account or an invitation, and accounts are made on the web, from an invitation to Cubie or to a private room. The session stays in Keychain. Apple and other OAuth providers are planned.
+Cubie is invite-only: a code is sent only to an email that has an account or an invitation, and any other is told so under the field at once ("No Cubie account uses this email…"), on the web and in the apps. Accounts are made on the web, from an invitation to Cubie or to a private room. The session stays in Keychain. Apple and other OAuth providers are planned.
 
 ## Home
 

@@ -9,6 +9,7 @@
 
   // Email, then the six digits from it. Signing in and signing up are the
   // same two screens: an invitation decides which it is, not the person.
+  // An address with no account and no invitation is told so on the first.
   let { title, sub, foot = 'No password needed.', invite = '', pending = {}, hero, onsignedin }:
     { title: string; sub: string; foot?: string; invite?: string; pending?: Pending; hero?: Snippet;
       onsignedin: (principal: Principal) => void } = $props();
@@ -88,7 +89,7 @@
       · <button class="lk" type="button" disabled={busy} onclick={() => { step = 'email'; error = ''; }}>Use a different email</button>
     </p>
     <details class="help"><summary>Didn’t get it?</summary>
-      <p>Look in spam, and check the address above. Cubie is invite-only for now: a code is sent only to an email that has an account or was invited.</p>
+      <p>Look in spam, and check the address above. If several codes came, the newest is the one that works.</p>
     </details>
   </section>
 {/if}

@@ -218,9 +218,10 @@ impl Client {
         format!("{}/?room={room}", self.web.trim_end_matches('/'))
     }
 
-    /// Start signing in: the server emails a 6-digit code to `email`, if it
-    /// has an account or an invitation (it answers the same either way).
-    /// Then [`Client::sign_in_code`] with what the person types.
+    /// Start signing in: the server emails a 6-digit code to `email`. An
+    /// address without an account is an error that says so (the app can't
+    /// register one). Then [`Client::sign_in_code`] with what the person
+    /// types.
     pub async fn sign_in_start(&self, email: String) -> Result<(), AppError> {
         let sent = request(
             &self.server,

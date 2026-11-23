@@ -211,7 +211,7 @@ body:not(.standalone) .toc a.on{background:var(--secondary,rgba(128,128,128,.16)
     <ol class="notes">
       <li><b>Home is one button and a list.</b> Start a call makes a link to send; the people who open it are in flow 1.</li>
       <li><b>A room's page</b> keeps what the old page did (rename, invite, people, close) as a plain list. A private room has one Invite action.</li>
-      <li><b>No account?</b> The page says the same thing either way, as today, so nobody can test which emails have accounts. “Didn't get it?” explains that Cubie is invite-only.</li>
+      <li><b>No account?</b> The page says so under the field as soon as Continue is pressed: “No Cubie account uses this email. Cubie is invite-only for now: ask someone on Cubie to invite you.” Nobody waits for an email that isn't coming. (It does tell a stranger which emails have accounts; they get twenty tries an hour.)</li>
     </ol>
   </section>
 
@@ -239,7 +239,8 @@ body:not(.standalone) .toc a.on{background:var(--secondary,rgba(128,128,128,.16)
     <ol class="notes">
       <li><b>Sign-in email:</b> a 6-digit code (five tries, 15 minutes) next to today's link. The link's page keeps its one button (mail scanners open links, and a link that signed in by itself could be used up before you see it), restyled as “Continue to Cubie”, and then goes on to the call you were invited to.</li>
       <li><b>Private invitations create accounts.</b> A room invitation counts as an invitation to Cubie for one person. Admin invitations stay for inviting someone without a room.</li>
-      <li><b>Private rooms need an account.</b> No more name-only guests in private rooms; people who already joined that way keep their access.</li>
+      <li><b>Private rooms need an account.</b> The server refuses a name-only guest an invitation; people who already joined that way keep their access.</li>
+      <li><b>An email nobody invited is told so</b> when it asks for a code, instead of the same “check your email” as everyone else.</li>
       <li><b>The join page learns who invited you</b> (the owner's first name), only where the room's name is already shown.</li>
       <li><b>Apps sign in with email and code.</b> The browser approval stays on the server for builds already installed.</li>
       <li><b>New accounts start without a name</b> (today it is the part of the email before @) and are asked once.</li>
@@ -418,7 +419,7 @@ const flows = {
   ] },
   signin: { label: '3 · Sign in on the web', kind: 'web', steps: [
     { id: 'email', cap: 'cubiecall.com, signed out.', why: '', r: c => emailStep(c, { title: 'Sign in to Cubie', sub: 'Enter your email and we’ll send you a code.', foot: 'No password needed. Cubie is invite-only for now.' }) },
-    { id: 'code', cap: 'The code from the email.', why: 'The button in the email does the same in one click.', r: (c, s) => codeStep(c, { value: s.code, help: 'Didn’t get it? Check spam. Cubie is invite-only: if nobody has invited this email yet, no code is sent.' }) },
+    { id: 'code', cap: 'The code from the email.', why: 'The button in the email does the same in one click.', r: (c, s) => codeStep(c, { value: s.code, help: 'Didn’t get it? Look in spam, and check the address above.' }) },
     { id: 'home', cap: 'Home: one button and your rooms.', why: 'Try Start a call, or open Family.', r: c => home({ ...c, name: c.name || 'Mom' }, { start: 'start', room: 'room' }) },
     { id: 'start', cap: 'Start a call: a link to send, then the call.', why: 'Whoever opens the link is in flow 1.', r: c => startSheet({ ...c, name: c.name || 'Mom' }) },
     { id: 'call', cap: 'In the call, waiting for someone to open the link.', why: '', r: c => call({ ...c, name: c.name || 'Mom' }) },

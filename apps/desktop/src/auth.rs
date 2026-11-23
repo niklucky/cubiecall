@@ -166,8 +166,8 @@ impl SignInAttempt {
     }
 }
 /// Ask the server to email a sign-in code. The answer is the challenge the
-/// code goes with; it comes whether or not an email follows, so it says
-/// nothing about who has an account.
+/// code goes with. An address with no account is refused, in words for the
+/// person to read.
 pub async fn request_code(server: &str, email: &str) -> anyhow::Result<String> {
     let sent = request(
         server,

@@ -50,10 +50,10 @@
     if (!capable) return 'unsupported';
     if (!entry) return loading ? 'loading' : 'offline';
     switch (entry.state) {
-      // A room invitation made for one email: that account, or none yet.
+      // An invitation wants an account first: any, or the one email it names.
       case 'signin': return account ? 'another' : 'signin';
       case 'private': return account ? 'uninvited' : 'signin';
-      case 'invite': return room?.kind === 'private' && !account ? 'signin' : wantsAccount ? 'account' : 'door';
+      case 'invite': return 'door';
       case 'ready': return wantsAccount && !account ? 'account' : 'door';
       default: return entry.state;
     }

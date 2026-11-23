@@ -212,6 +212,19 @@ impl Test {
         let link = mail.split("#magic=").nth(1).map(|s| s.trim().to_owned());
         (id, code, link)
     }
+    /// Asking for a sign-in email: what the server says to an address that
+    /// has no account and no invitation that fits, if it refuses.
+    async fn refused(&self, email: &str, invite: Option<&str>) -> Option<String> {
+        let (status, v, _) = self
+            .req(
+                "POST",
+                "/api/auth/request",
+                "",
+                json!({"email":email,"invite":invite}),
+            )
+            .await;
+        (status == StatusCode::NOT_FOUND).then(|| v["error"].as_str().unwrap().to_owned())
+    }
     async fn admin(&self) -> String {
         let magic = self.magic("admin@example.com", None).await;
         let (status, v, token) = self
@@ -219,6 +232,21 @@ impl Test {
             .await;
         assert_eq!(status, StatusCode::OK, "{v}");
         token.unwrap()
+    }
+    /// Someone with an account: an admin's invitation to Cubie, then the
+    /// emailed link. Their session and their id.
+    async fn user(&self, admin: &str, email: &str) -> (String, String) {
+        let (status, v, _) = self
+            .req("POST", "/api/auth/invites", admin, json!({"email":email}))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{v}");
+        let invite = v["url"].as_str().unwrap().split('=').nth(1).unwrap();
+        let magic = self.magic(email, Some(invite)).await;
+        let (status, v, token) = self
+            .req("POST", "/api/auth/verify", "", json!({"token":magic}))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{v}");
+        (token.unwrap(), v["id"].as_str().unwrap().into())
     }
     async fn guest(&self, name: &str) -> (String, String) {
         let (status, v, token) = self
@@ -271,7 +299,15 @@ async fn invite_only_magic_links_sessions_and_admin() {
             json!({"email":"stranger@example.com"}),
         )
         .await;
-    assert_eq!(s, StatusCode::OK);
+    // Said plainly, so nobody waits for an email that isn't coming.
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM mail_requests")
+            .fetch_one(&t.state.db)
+            .await
+            .unwrap(),
+        0
+    );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM magic_links")
             .fetch_one(&t.state.db)
@@ -342,8 +378,8 @@ async fn private_guest_claim_return_remove_and_cached_media_token() {
     let t = Test::new().await;
     let admin = t.admin().await;
     let room = t.room(&admin, "private").await;
-    let (g, gid) = t.guest("Guest").await;
-    let (other, _) = t.guest("Other").await;
+    let (g, gid) = t.user(&admin, "guest@example.com").await;
+    let (other, _) = t.user(&admin, "other@example.com").await;
     assert_eq!(t.join(&g, &room).await.0, StatusCode::FORBIDDEN);
     assert_eq!(
         t.req(
@@ -735,30 +771,29 @@ async fn csrf_and_email_rate_limits() {
             expected
         );
     }
-    for _ in 0..3 {
-        assert_eq!(
-            t.req(
-                "POST",
-                "/api/auth/request",
-                "",
-                json!({"email":"unknown@example.com"})
-            )
+    // An address nobody invited is told so, twenty times an hour from one
+    // place: enough for typos, not for trying a list of addresses.
+    let ask = async |ip: &str, email: &str| {
+        t.req_from(ip, "POST", "/api/auth/request", "", json!({"email":email}))
             .await
-            .0,
-            StatusCode::OK
+            .0
+    };
+    for i in 0..20 {
+        assert_eq!(
+            ask("curious", &format!("unknown{i}@example.com")).await,
+            StatusCode::NOT_FOUND
         );
     }
     assert_eq!(
-        t.req(
-            "POST",
-            "/api/auth/request",
-            "",
-            json!({"email":"unknown@example.com"})
-        )
-        .await
-        .0,
-        StatusCode::OK
+        ask("curious", "unknown20@example.com").await,
+        StatusCode::TOO_MANY_REQUESTS
     );
+    // Someone else, and an address that does have an account, are unaffected.
+    assert_eq!(
+        ask("elsewhere", "unknown@example.com").await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(ask("curious", "admin@example.com").await, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -788,7 +823,8 @@ async fn entry_preview_never_claims_access_and_hides_private_metadata() {
         let (_, entry, _) = t
             .req("POST", "/api/entry", "", json!({"invite":invite}))
             .await;
-        assert_eq!(entry["state"], "invite");
+        // Whose room and which, to someone who has to sign in before it's theirs.
+        assert_eq!(entry["state"], "signin");
         assert_eq!(entry["room"]["name"], "Project");
         assert!(entry["room"].get("owner").is_none());
     }
@@ -797,8 +833,30 @@ async fn entry_preview_never_claims_access_and_hides_private_metadata() {
         .await
         .unwrap();
     assert_eq!(count, 1, "preview must not create guest identities");
-    let (guest, id) = t.guest("Guest").await;
+    // A name alone doesn't open a private room, and trying uses nothing up.
+    let (nameless, _) = t.guest("Guest").await;
+    let (_, entry, _) = t
+        .req("POST", "/api/entry", &nameless, json!({"invite":invite}))
+        .await;
+    assert_eq!(entry["state"], "signin");
+    assert_eq!(
+        t.req(
+            "POST",
+            "/api/invites/redeem",
+            &nameless,
+            json!({"token":invite})
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(t.join(&nameless, &private).await.0, StatusCode::FORBIDDEN);
+    let (guest, id) = t.user(&owner, "guest@example.com").await;
     assert_eq!(t.join(&guest, &private).await.0, StatusCode::FORBIDDEN);
+    let (_, entry, _) = t
+        .req("POST", "/api/entry", &guest, json!({"invite":invite}))
+        .await;
+    assert_eq!(entry["state"], "invite");
     assert_eq!(
         t.req(
             "POST",
@@ -966,7 +1024,7 @@ async fn desktop_polling_does_not_starve_shared_ip_signin_or_approval() {
             "POST",
             "/api/auth/request",
             "",
-            json!({"email":"someone@example.com"})
+            json!({"email":"admin@example.com"})
         )
         .await
         .0,
@@ -1150,7 +1208,12 @@ async fn email_abuse_is_scoped_and_delivered_links_still_work() {
             )
             .await
             .0,
-            StatusCode::OK
+            // Told so at first, then not even that.
+            if i < 20 {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::TOO_MANY_REQUESTS
+            }
         );
     }
     assert_eq!(
@@ -1209,20 +1272,39 @@ async fn email_abuse_is_scoped_and_delivered_links_still_work() {
 }
 
 #[tokio::test]
-async fn mail_eligibility_and_delivery_failure_are_off_the_response_path() {
+async fn delivery_failure_and_late_ineligibility_are_off_the_response_path() {
     let t = Test::new().await;
-    // Make the local provider fail; neither known nor unknown requests touch it.
+    // Make the local provider fail; asking never touches it.
     std::fs::write(t.dir.path().join("mail"), "not a directory").unwrap();
-    for email in ["admin@example.com", "unknown@example.com"] {
-        let (status, value, _) = t
-            .req("POST", "/api/auth/request", "", json!({"email":email}))
-            .await;
+    // Invited when asking, not by the time the email would go out.
+    sqlx::query(
+        "INSERT INTO principals VALUES ('inviter','user','Inviter','inviter@example.com',0)",
+    )
+    .execute(&t.state.db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO account_invites VALUES (?,'later@example.com',?,'inviter')")
+        .bind(auth::hash("invitation"))
+        .bind(auth::now() + 600)
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    for body in [
+        json!({"email":"admin@example.com"}),
+        json!({"email":"later@example.com","invite":"invitation"}),
+    ] {
+        let (status, value, _) = t.req("POST", "/api/auth/request", "", body).await;
         assert_eq!(status, StatusCode::OK);
-        // The same shape whether or not an email will follow.
         assert_eq!(value["ok"], true);
         assert_eq!(value["id"].as_str().unwrap().len(), 64);
         assert_eq!(value.as_object().unwrap().len(), 2);
     }
+    sqlx::query("DELETE FROM account_invites")
+        .execute(&t.state.db)
+        .await
+        .unwrap();
+    // An address nobody invited queues nothing.
+    assert!(t.refused("unknown@example.com", None).await.is_some());
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM mail_requests")
             .fetch_one(&t.state.db)
@@ -1353,7 +1435,7 @@ async fn claimed_invite_survives_expiry_and_cleanup_without_restoring_removed_ac
     let t = Test::new().await;
     let owner = t.admin().await;
     let room = t.room(&owner, "private").await;
-    let (guest, id) = t.guest("Guest").await;
+    let (guest, id) = t.user(&owner, "guest@example.com").await;
     let link = t
         .req(
             "POST",
@@ -1618,7 +1700,7 @@ async fn owners_and_existing_members_do_not_consume_guest_invitations() {
             StatusCode::OK
         );
     }
-    let (guest, guest_id) = t.guest("Actual guest").await;
+    let (guest, guest_id) = t.user(&owner, "actual@example.com").await;
     assert_eq!(
         t.req(
             "POST",
@@ -1684,8 +1766,8 @@ async fn claims_are_atomic_with_multiple_connections_and_zero_row_updates_are_de
         .unwrap();
     t.app = router(t.state.clone());
     let owner = t.admin().await;
-    let (a, _) = t.guest("A").await;
-    let (b, _) = t.guest("B").await;
+    let (a, _) = t.user(&owner, "a@example.com").await;
+    let (b, _) = t.user(&owner, "b@example.com").await;
     let direct = t.room(&owner, "direct").await;
     let (first, second) = tokio::join!(t.join(&a, &direct), t.join(&b, &direct));
     let mut statuses = [first.0, second.0];
@@ -2432,9 +2514,14 @@ async fn sign_in_codes_need_their_challenge_and_work_once_a_few_tries() {
     // A wrong code, and the right code with someone else's challenge.
     let (status, miss, _) = verify(json!({"id":id,"code":wrong})).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (other, nothing, _) = t.code("nobody@example.com", None, false).await;
-    assert_eq!(nothing, None, "no email for an address nobody invited");
-    let (status, unknown, _) = verify(json!({"id":other,"code":code})).await;
+    assert!(
+        t.refused("nobody@example.com", None)
+            .await
+            .unwrap()
+            .starts_with("No Cubie account uses this email"),
+        "an address nobody invited is told so"
+    );
+    let (status, unknown, _) = verify(json!({"id":"0".repeat(64),"code":code})).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(
         miss, unknown,
@@ -2583,7 +2670,7 @@ async fn a_private_room_invitation_registers_one_account() {
     let (_, entry, _) = t
         .req("POST", "/api/entry", "", json!({"invite":link}))
         .await;
-    assert_eq!(entry["state"], "invite");
+    assert_eq!(entry["state"], "signin");
     assert_eq!(entry["room"]["host"], "Anna Petrova");
 
     // Two people ask with the same link before either finishes: the first to
@@ -2613,8 +2700,13 @@ async fn a_private_room_invitation_registers_one_account() {
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{v}");
     assert_eq!(users().await, 2);
-    // The link is used: nobody else gets an email from it.
-    assert_eq!(t.code("late@example.com", Some(&link), false).await.1, None);
+    // The link is used: nobody else gets an email from it, and is told so.
+    assert!(
+        t.refused("late@example.com", Some(&link))
+            .await
+            .unwrap()
+            .starts_with("This invitation doesn't work for this email")
+    );
     // Until she says her name, people see the start of her email.
     let (_, detail, _) = t
         .req("GET", &format!("/api/rooms/{room}"), &admin, json!({}))
@@ -2623,7 +2715,7 @@ async fn a_private_room_invitation_registers_one_account() {
 
     // An invitation made for one email registers only that email.
     let bound = invite(json!({"kind":"member","email":"max@example.com"})).await;
-    assert_eq!(t.code("eve@example.com", Some(&bound), false).await.1, None);
+    assert!(t.refused("eve@example.com", Some(&bound)).await.is_some());
     let (id, code, _) = t.code("max@example.com", Some(&bound), true).await;
     let (status, v, _) = t
         .req(
@@ -2664,6 +2756,6 @@ async fn a_private_room_invitation_registers_one_account() {
     // A closed room invites nobody.
     t.req("DELETE", &format!("/api/rooms/{room}"), &admin, json!({}))
         .await;
-    assert_eq!(t.code("new@example.com", Some(&third), false).await.1, None);
+    assert!(t.refused("new@example.com", Some(&third)).await.is_some());
     assert_eq!(users().await, 3);
 }

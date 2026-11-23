@@ -101,7 +101,7 @@ Design: [UI.md](UI.md).
 
 - [x] ~~SQLite via sqlx, with migrations~~
 - [x] ~~Accounts: invite-only registration, email magic links through Resend, session tokens~~ *Web cookies, desktop Keychain/browser approval, bootstrap admin, separate provider identities ready for future OAuth.*
-- [x] ~~Sign-in codes: the email carries six digits that work only with the asking client's challenge (five tries, twenty wrong a day per email); an app asks for a code-only email and gets a provisional credential; a private room's invitation registers one account; new accounts start without a name~~
+- [x] ~~Sign-in codes: the email carries six digits that work only with the asking client's challenge (five tries, twenty wrong a day per email); an app asks for a code-only email and gets a provisional credential; a private room's invitation registers one account and only an account can redeem one; an address with no account and no invitation is told so at once; new accounts start without a name~~
 - [ ] `protocol`: REST request/response types and WebSocket messages, with TypeScript types generated for web
 - [ ] WebSocket hub: authenticated connection, presence (online / away / in call)
 - [ ] LiveKit token minting for calls; LiveKit webhooks (joined / left / room finished) → call records
