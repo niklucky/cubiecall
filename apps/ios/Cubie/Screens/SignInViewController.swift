@@ -11,6 +11,8 @@ final class SignInViewController: UIViewController, UITextFieldDelegate {
     }
 
     private var step = Step.email
+    /// Where it opens: the name alone, for an account that has none yet.
+    private let first: Step
     /// The address the code went to.
     private var email = ""
     /// When: another code can be asked for half a minute later.
@@ -30,6 +32,16 @@ final class SignInViewController: UIViewController, UITextFieldDelegate {
 
     private static let codeLength = 6
     private static let resendAfter: TimeInterval = 30
+
+    /// `askingName`: already signed in, with an account that was closed
+    /// before it said what to be called.
+    init(askingName: Bool = false) {
+        first = askingName ? .name : .email
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -99,7 +111,7 @@ final class SignInViewController: UIViewController, UITextFieldDelegate {
             field.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
             button.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
-        show(.email)
+        show(first)
     }
 
     override func viewDidAppear(_ animated: Bool) {
