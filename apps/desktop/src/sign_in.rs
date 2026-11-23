@@ -278,15 +278,15 @@ impl SignInWindow {
 
     fn email_step(&self, cx: &mut Context<Self>) -> Div {
         let ready = plausible(self.email.read(cx).text()) && !self.busy();
-        // Why this window opened, when it wasn't asked for: an expired session.
-        let why = Shell::global(cx).read(cx).auth_message.clone();
+        // This window opened by itself: say why.
+        let expired = Shell::global(cx).read(cx).auth_message == auth::SESSION_EXPIRED;
         column()
             .child(img(QUBY).size(px(84.0)))
             .child(title("Welcome to Cubie"))
-            .child(sub(if why.is_empty() {
-                "Sign in with your email. No password needed.".into()
+            .child(sub(if expired {
+                auth::SESSION_EXPIRED
             } else {
-                why
+                "Sign in with your email. No password needed."
             }))
             .child(
                 div()

@@ -139,6 +139,8 @@ impl<T> Generation<T> {
         self.payload.is_some()
     }
 }
+/// Why the sign-in window opened without being asked for.
+pub const SESSION_EXPIRED: &str = "Your session expired. Sign in to continue.";
 /// A sign-in on its way: the window is open. `room`: the call a link asked
 /// for, joined once signed in.
 #[derive(Default)]
@@ -270,7 +272,7 @@ impl Shell {
             },
         );
         self.store.save();
-        self.auth_message = "Your session expired. Sign in to continue.".into();
+        self.auth_message = SESSION_EXPIRED.into();
         cx.notify();
         true
     }
@@ -372,7 +374,10 @@ impl Shell {
                         s.auth_message.clear();
                     }
                     Err(e) if unauthorized(&e) => {
-                        s.expire_session(expected.as_deref(), cx);
+                        // Home has nothing to show without an account.
+                        if s.expire_session(expected.as_deref(), cx) {
+                            s.sign_in(None, cx);
+                        }
                     }
                     Err(e) => {
                         s.auth_message = e.to_string();
