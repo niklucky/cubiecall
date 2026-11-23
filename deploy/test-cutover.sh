@@ -139,5 +139,32 @@ import sqlite3
 with sqlite3.connect('/var/lib/cubie/cubie.db') as db:
     assert db.execute('SELECT COUNT(*) FROM accounts').fetchone() == (2,)
 PY
+
+# A routine deploy keeps what it replaced: the server, and the database as it
+# was. A retry after a failed deploy must not replace that with the failed
+# attempt's own state.
+rows() {
+    rm -rf /tmp/check && mkdir /tmp/check && cp "$1"/cubie.db* /tmp/check/
+    python3 -c "import sqlite3; print(sqlite3.connect('/tmp/check/cubie.db').execute('SELECT COUNT(*) FROM accounts').fetchone()[0])"
+}
+add() { python3 -c "import sqlite3; db = sqlite3.connect('/var/lib/cubie/cubie.db'); db.execute(\"INSERT INTO accounts VALUES ('$1')\"); db.commit()"; }
+test "$(stat -c %a /opt/cubie/previous)" = 700
+test "$(rows /opt/cubie/previous)" = 2
+echo 'server two' >/bundle/cubie-server
+add 'before server two'
+touch /mock/fail-api
+must_fail
+rm /mock/fail-api
+test ! -s /opt/cubie/previous/cubie-server
+test "$(rows /opt/cubie/previous)" = 3
+add 'written by the failed attempt'
+install_app
+test ! -s /opt/cubie/previous/cubie-server
+test "$(rows /opt/cubie/previous)" = 3
+grep -qx 'server two' /opt/cubie/bin/cubie-server
+# The deploy that finished is the next one's rollback point.
+install_app
+grep -qx 'server two' /opt/cubie/previous/cubie-server
+test "$(rows /opt/cubie/previous)" = 4
 echo 'Cutover, rollback, and retry checks passed.'
 CONTAINER

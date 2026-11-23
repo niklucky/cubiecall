@@ -10,6 +10,30 @@ make mac-app       # build only → target/mac/
 
 Set `CUBIE_HOST=user@host` to deploy somewhere else.
 
+## Order of a release
+
+1. **Server and web first, together**: `make deploy`. The installer swaps the web client and restarts the server, which migrates its database as it starts. Apps already installed keep working with a newer server.
+2. **Check it**: `https://cubiecall.com/api/health`, sign in on the web, open a room link in a private window.
+3. **Then the Mac app**: push a `vX.Y.Z` tag on a commit the server already runs (see below). Never tag first: a Mac build can need what an older server doesn't have (signing in with a code needs migration 0007), and Sparkle hands it to everyone.
+4. **The iPhone app** isn't distributed yet (`make release-ios` uploads for TestFlight when it is).
+
+`make deploy` ships the working tree as it is and runs no tests: run `make check`, `cargo test -p cubie-server` and `pnpm test` in `apps/web` first. `deploy/test-cutover.sh` (Docker) exercises the installer itself.
+
+## Rolling back
+
+Every deploy keeps what it replaced in `/opt/cubie/previous` (root only): the server, the web client, and the database copied while the old server was stopped. A server refuses a database migrated by a newer one ("migration N was previously applied but is missing"), so going back means all three together, and loses what was written since the deploy:
+
+```sh
+systemctl stop cubie-server
+rm -f /var/lib/cubie/cubie.db-wal /var/lib/cubie/cubie.db-shm
+cp -p /opt/cubie/previous/cubie.db* /var/lib/cubie/
+install -m 755 /opt/cubie/previous/cubie-server /opt/cubie/bin/cubie-server
+rm -rf /opt/cubie/web && cp -R /opt/cubie/previous/web /opt/cubie/web
+systemctl start cubie-server
+```
+
+A retry after a failed deploy leaves `previous` alone: it is only replaced once a deploy has finished. Rolling the Mac app back is a new release with a higher version from the older code; Sparkle doesn't downgrade.
+
 ## First deployment under the Cubie name
 
 1. Point `cubiecall.com`, `cubycall.com` and `quipcall.com` to the VPS. Certbot must reach the HTTP challenge on all three domains. The installer also requests certificates for their resolving `www` names. To enable a missing `www` alias later, add its DNS record and rerun the deployment.
