@@ -138,7 +138,7 @@ pub async fn detail(
             kind: String,
             revoked: bool,
         }
-        let members: Vec<Member> = sqlx::query_as("SELECT p.id,p.name,p.kind,m.revoked FROM memberships m JOIN principals p ON p.id=m.principal WHERE m.room=?").bind(&id).fetch_all(&mut *db).await?;
+        let members: Vec<Member> = sqlx::query_as(&format!("SELECT p.id,{} AS name,p.kind,m.revoked FROM memberships m JOIN principals p ON p.id=m.principal WHERE m.room=?", auth::SHOWN_NAME)).bind(&id).fetch_all(&mut *db).await?;
         #[derive(Serialize, FromRow)]
         struct Invite {
             hash: String,
@@ -365,7 +365,16 @@ pub async fn entry(
     };
     let mut value = json!({"state":state});
     if matches!(state, "ready" | "invite" | "signin") {
-        value["room"] = json!({"id":r.id,"name":r.name,"kind":r.kind});
+        // Whose room it is: "Anna invited you" says more than a room's kind.
+        let host: Option<String> = sqlx::query_scalar(&format!(
+            "SELECT {} FROM principals p WHERE p.id=?",
+            auth::SHOWN_NAME
+        ))
+        .bind(&r.owner)
+        .fetch_optional(&mut *db)
+        .await?;
+        let mine = p.as_ref().is_some_and(|p| p.id == r.owner);
+        value["room"] = json!({"id":r.id,"name":r.name,"kind":r.kind,"host":host,"mine":mine});
         if let Some((kind, _, _)) = invitation {
             value["inviteKind"] = json!(kind);
         }
@@ -423,7 +432,7 @@ pub async fn join(
     let identity = format!("{}:{}", p.id, random());
     let token = AccessToken::with_api_key(&s.config.livekit_api_key, &s.config.livekit_api_secret)
         .with_identity(&identity)
-        .with_name(&p.name)
+        .with_name(&auth::shown_name(&p.name, p.email.as_deref()))
         .with_ttl(Duration::from_secs(120))
         .with_grants(VideoGrants {
             room_join: true,

@@ -158,6 +158,20 @@ fn signed_in(s: &AppState, token: &str, p: &Principal) -> Response {
 pub async fn me(State(s): State<AppState>, h: HeaderMap) -> Result<Json<Principal>> {
     Ok(Json(current(&s, &h).await?))
 }
+/// A new account has no name until its owner gives one; until then people
+/// see the part of its email before the @.
+pub fn shown_name(name: &str, email: Option<&str>) -> String {
+    if !name.is_empty() {
+        return name.into();
+    }
+    email
+        .and_then(|email| email.split('@').next())
+        .filter(|local| !local.is_empty())
+        .unwrap_or("Guest")
+        .into()
+}
+/// [`shown_name`] in SQL, for a `principals` row called `p`.
+pub const SHOWN_NAME: &str = "CASE WHEN p.name='' THEN COALESCE(substr(p.email,1,instr(p.email,'@')-1),'Guest') ELSE p.name END";
 pub fn clean_name(name: &str) -> String {
     name.trim()
         .chars()
@@ -342,9 +356,9 @@ pub async fn match_contacts(
     )
     .await?;
     let wanted: std::collections::HashSet<&str> = req.hashes.iter().map(String::as_str).collect();
-    let users: Vec<(String, String)> = sqlx::query_as(
-        "SELECT email,name FROM principals WHERE kind='user' AND email IS NOT NULL AND id!=?",
-    )
+    let users: Vec<(String, String)> = sqlx::query_as(&format!(
+        "SELECT p.email,{SHOWN_NAME} FROM principals p WHERE p.kind='user' AND p.email IS NOT NULL AND p.id!=?",
+    ))
     .bind(&p.id)
     .fetch_all(&s.db)
     .await?;
@@ -362,7 +376,12 @@ pub async fn match_contacts(
 #[derive(Deserialize)]
 pub struct LinkRequest {
     pub email: String,
+    /// An invitation that lets a new person register: one to Cubie, or one
+    /// to a private room.
     pub invite: Option<String>,
+    /// Asked from an app, which can only take the code.
+    #[serde(default)]
+    pub app: bool,
 }
 pub async fn request_link(
     State(s): State<AppState>,
@@ -372,19 +391,24 @@ pub async fn request_link(
     let email = email(&req.email)?;
     let requester = client_ip(&h);
     let origin = h.get(header::ORIGIN).and_then(|v| v.to_str().ok());
+    // The code in the email only works together with this, so reading
+    // someone's code off their screen or guessing it from elsewhere is no use.
+    let challenge = random();
     sqlx::query(
-        "INSERT INTO mail_requests(email,requester,invite,created,origin) VALUES (?,?,?,?,?)",
+        "INSERT INTO mail_requests(email,requester,invite,created,origin,challenge,app) VALUES (?,?,?,?,?,?,?)",
     )
     .bind(email)
     .bind(requester)
     .bind(req.invite.as_deref().map(hash))
     .bind(now())
     .bind(origin.filter(|origin| s.config.trusts_origin(origin)))
+    .bind(&challenge)
+    .bind(req.app)
     .execute(&s.db)
     .await?;
     s.mail_ready.notify_one();
     // Delivery, eligibility and suppression never affect the public response.
-    Ok(Json(json!({"ok":true})))
+    Ok(Json(json!({"ok":true,"id":challenge})))
 }
 
 #[derive(FromRow)]
@@ -395,13 +419,15 @@ struct QueuedMail {
     invite: Option<String>,
     attempts: i64,
     origin: Option<String>,
+    challenge: Option<String>,
+    app: bool,
 }
 
 /// One bounded worker drains the durable queue; never hold an HTTP request open
 /// for delivery or expose a provider failure to an account-enumeration probe.
 pub async fn deliver_pending(s: &AppState) -> Result<usize> {
     let requests: Vec<QueuedMail> = sqlx::query_as(
-        "SELECT id,email,requester,invite,attempts,origin FROM mail_requests WHERE created>? AND available<=? ORDER BY id LIMIT 100",
+        "SELECT id,email,requester,invite,attempts,origin,challenge,app FROM mail_requests WHERE created>? AND available<=? ORDER BY id LIMIT 100",
     )
     .bind(now() - 900)
     .bind(now())
@@ -475,8 +501,13 @@ async fn deliver_link(s: &AppState, mail: &QueuedMail) -> Result<()> {
     .bind(email)
     .fetch_one(&s.db)
     .await?;
+    // An invitation to Cubie, or one to a private room: whoever is invited
+    // to a room may make their account from it.
     let allowed: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM account_invites WHERE hash=? AND email=? AND expires>?)",
+        "SELECT EXISTS(SELECT 1 FROM account_invites WHERE hash=?1 AND email=?2 AND expires>?3)
+         OR EXISTS(SELECT 1 FROM room_invites i JOIN rooms r ON r.id=i.room
+            WHERE i.hash=?1 AND i.used_by IS NULL AND i.expires>?3 AND r.closed=0
+            AND (i.email IS NULL OR i.email=?2))",
     )
     .bind(invite)
     .bind(email)
@@ -508,13 +539,18 @@ async fn deliver_link(s: &AppState, mail: &QueuedMail) -> Result<()> {
     }
     tx.commit().await?;
     let token = random();
-    sqlx::query("INSERT INTO magic_links VALUES (?, ?, ?, ?)")
-        .bind(hash(&token))
-        .bind(email)
-        .bind(invite)
-        .bind(now() + 15 * 60)
-        .execute(&s.db)
-        .await?;
+    let code = sign_in_code();
+    sqlx::query(
+        "INSERT INTO magic_links(hash,email,invite,expires,challenge,code_hash) VALUES (?,?,?,?,?,?)",
+    )
+    .bind(hash(&token))
+    .bind(email)
+    .bind(invite)
+    .bind(now() + 15 * 60)
+    .bind(&mail.challenge)
+    .bind(mail.challenge.as_deref().map(|id| code_hash(id, &code)))
+    .execute(&s.db)
+    .await?;
     // Verification must set the host-only cookie on the waiting tab's origin.
     let origin = mail
         .origin
@@ -523,7 +559,7 @@ async fn deliver_link(s: &AppState, mail: &QueuedMail) -> Result<()> {
         .unwrap_or(&s.config.public_url);
     // This landing path also works when the legacy tab has no cookie yet.
     let url = format!("{origin}/signin#magic={token}");
-    if let Err(e) = send(s, email, &url).await {
+    if let Err(e) = send(s, email, &code, (!mail.app).then_some(url.as_str())).await {
         // A timeout can happen after provider acceptance. Keep this token
         // valid, and count the attempt, so a late email works and ambiguous
         // failures cannot bypass the recipient cap. Retries mint a fresh link.
@@ -535,7 +571,47 @@ async fn deliver_link(s: &AppState, mail: &QueuedMail) -> Result<()> {
     }
     Ok(())
 }
-async fn send(s: &AppState, email: &str, url: &str) -> anyhow::Result<()> {
+/// Six digits, each as likely as the next.
+fn sign_in_code() -> String {
+    loop {
+        let mut b = [0u8; 4];
+        getrandom::fill(&mut b).expect("OS randomness unavailable");
+        let n = u32::from_le_bytes(b);
+        // The top of the range would favour the low codes.
+        if n < 4_294_000_000 {
+            return format!("{:06}", n % 1_000_000);
+        }
+    }
+}
+fn code_hash(challenge: &str, code: &str) -> String {
+    hash(&format!("{challenge}:{code}"))
+}
+/// The email: its code, and for a browser the link too.
+fn mail_text(code: &str, url: Option<&str>) -> String {
+    match url {
+        Some(url) => format!(
+            "Your Cubie code: {code}\n\nType it on the page that asked for it. Or, on the same device, open this link:\n{url}\n\nBoth work once, for 15 minutes. If you didn't ask for this, you can ignore this email."
+        ),
+        None => format!(
+            "Your Cubie code: {code}\n\nType it in the Cubie app. It works once, for 15 minutes. If you didn't ask for this, you can ignore this email."
+        ),
+    }
+}
+fn mail_html(code: &str, url: Option<&str>) -> String {
+    let spaced = format!("{} {}", &code[..3], &code[3..]);
+    let link = url.map_or(String::new(), |url| format!(
+        "<p style=\"margin:0 0 12px\">Reading this on the device you're signing in on?</p><p style=\"margin:0 0 20px\"><a href=\"{url}\" style=\"display:inline-block;background:#2f6feb;color:#ffffff;text-decoration:none;font-weight:600;padding:11px 20px;border-radius:10px\">Continue to Cubie</a></p>"
+    ));
+    let place = if url.is_some() {
+        "on the page that asked for it"
+    } else {
+        "in the Cubie app"
+    };
+    format!(
+        "<div style=\"font:16px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#16181d;max-width:420px\"><p style=\"margin:0 0 6px\">Your Cubie code. Type it {place}:</p><p style=\"margin:0 0 20px;font-size:34px;font-weight:700;letter-spacing:.12em\">{spaced}</p>{link}<p style=\"margin:0;color:#6b7280;font-size:13px\">It works once, for 15 minutes. If you didn't ask for this, you can ignore this email.</p></div>"
+    )
+}
+async fn send(s: &AppState, email: &str, code: &str, url: Option<&str>) -> anyhow::Result<()> {
     if let Some(dir) = &s.config.mail_dir {
         use std::io::Write;
         std::fs::create_dir_all(dir)?;
@@ -547,11 +623,15 @@ async fn send(s: &AppState, email: &str, url: &str) -> anyhow::Result<()> {
             options.mode(0o600);
         }
         let mut file = options.open(dir.join(format!("{}.txt", hash(email))))?;
-        writeln!(file, "Sign in to Cubie (expires in 15 minutes):\n{url}")?;
+        // The link stays last: local tools read it off the end of the file.
+        writeln!(file, "Your Cubie code: {code}")?;
+        if let Some(url) = url {
+            writeln!(file, "Sign in to Cubie (expires in 15 minutes):\n{url}")?;
+        }
         return Ok(());
     }
     s.http.post("https://api.resend.com/emails").bearer_auth(s.config.resend_api_key.as_deref().unwrap_or_default())
-        .json(&json!({"from":s.config.mail_from,"to":[email],"subject":"Sign in to Cubie","text":format!("Sign in to Cubie:\n{url}\n\nThis link expires in 15 minutes and can only be used once. If you did not request it, ignore this email.")}))
+        .json(&json!({"from":s.config.mail_from,"to":[email],"subject":format!("{code} is your Cubie code"),"text":mail_text(code, url),"html":mail_html(code, url)}))
         .send().await?.error_for_status()?;
     Ok(())
 }
@@ -559,35 +639,114 @@ async fn send(s: &AppState, email: &str, url: &str) -> anyhow::Result<()> {
 pub struct Token {
     pub token: String,
 }
-pub async fn verify_link(State(s): State<AppState>, Json(req): Json<Token>) -> Result<Response> {
-    let mut tx = s.db.begin().await?;
-    let (email, invite): (String, Option<String>) = sqlx::query_as(
-        "DELETE FROM magic_links WHERE hash=? AND expires>? RETURNING email, invite",
+/// What proves the email is yours: the link in it, or its code together with
+/// the challenge the asking browser or app was given.
+#[derive(Deserialize)]
+pub struct Verify {
+    pub token: Option<String>,
+    pub id: Option<String>,
+    pub code: Option<String>,
+    /// An app: it gets a credential to keep instead of a cookie.
+    #[serde(default)]
+    pub app: bool,
+}
+/// Wrong codes one challenge takes before it stops working.
+const CODE_TRIES: i64 = 5;
+/// Wrong codes one email takes in a day, across challenges: with six digits
+/// that leaves a guesser one chance in fifty thousand a day. Links still work.
+const WRONG_CODES_A_DAY: i64 = 20;
+/// One answer for every way a code fails (wrong, used up, expired, never
+/// sent), so it can't be used to learn which emails have accounts.
+fn wrong_code() -> AppError {
+    AppError::bad("That code isn't right, or it has expired. Check it, or ask for a new one.")
+}
+/// The email a code proves, and the invitation it was asked with.
+async fn verify_code(
+    tx: &mut SqliteConnection,
+    challenge: &str,
+    code: &str,
+) -> Result<Option<(String, Option<String>)>> {
+    let code: String = code.chars().filter(char::is_ascii_digit).collect();
+    #[derive(FromRow)]
+    struct Link {
+        hash: String,
+        email: String,
+        invite: Option<String>,
+        code_hash: Option<String>,
+        attempts: i64,
+    }
+    // Every link of this challenge: a retried delivery mints another.
+    let links: Vec<Link> = sqlx::query_as(
+        "SELECT hash,email,invite,code_hash,attempts FROM magic_links WHERE challenge=? AND expires>?",
     )
-    .bind(hash(&req.token))
+    .bind(challenge)
     .bind(now())
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::bad("This sign-in link is invalid or expired"))?;
+    .fetch_all(&mut *tx)
+    .await?;
+    let Some(email) = links.first().map(|link| link.email.clone()) else {
+        return Ok(None);
+    };
+    let budget = format!("wrong-code:{}", hash(&email));
+    let window = now() / 86_400;
+    let wrong_today: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(count),0) FROM rate_limits WHERE key=? AND window=?",
+    )
+    .bind(&budget)
+    .bind(window)
+    .fetch_one(&mut *tx)
+    .await?;
+    let expected = code_hash(challenge, &code);
+    let found = links
+        .iter()
+        .find(|link| link.code_hash.as_deref() == Some(expected.as_str()));
+    let spent =
+        wrong_today >= WRONG_CODES_A_DAY || links.iter().any(|link| link.attempts >= CODE_TRIES);
+    let Some(link) = found.filter(|_| !spent) else {
+        sqlx::query("UPDATE magic_links SET attempts=attempts+1 WHERE challenge=?")
+            .bind(challenge)
+            .execute(&mut *tx)
+            .await?;
+        // Counting past the limit changes nothing; the answer is the same.
+        let _ = spend(tx, &budget, 1, WRONG_CODES_A_DAY, 86_400).await;
+        return Ok(None);
+    };
+    sqlx::query("DELETE FROM magic_links WHERE hash=?")
+        .bind(&link.hash)
+        .execute(&mut *tx)
+        .await?;
+    Ok(Some((email, link.invite.clone())))
+}
+pub async fn verify_link(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Json(req): Json<Verify>,
+) -> Result<Response> {
+    let mut tx = s.db.begin_with("BEGIN IMMEDIATE").await?;
+    let (email, invite): (String, Option<String>) = if let Some(token) = &req.token {
+        sqlx::query_as("DELETE FROM magic_links WHERE hash=? AND expires>? RETURNING email, invite")
+            .bind(hash(token))
+            .bind(now())
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| AppError::bad("This sign-in link is invalid or expired"))?
+    } else {
+        let (Some(id), Some(code)) = (&req.id, &req.code) else {
+            return Err(AppError::bad("Enter the code from your email"));
+        };
+        let Some(proved) = verify_code(&mut tx, id, code).await? else {
+            // Keep the count of wrong tries.
+            tx.commit().await?;
+            return Err(wrong_code());
+        };
+        proved
+    };
     let mut p = sqlx::query_as::<_, Principal>("SELECT p.* FROM principals p JOIN identities i ON i.principal=p.id WHERE i.provider='email' AND i.subject=?").bind(&email).fetch_optional(&mut *tx).await?;
     if p.is_none() {
         let admin = s.config.bootstrap_email.as_deref() == Some(&email);
-        let used =
-            sqlx::query("DELETE FROM account_invites WHERE hash=? AND email=? AND expires>?")
-                .bind(invite)
-                .bind(&email)
-                .bind(now())
-                .execute(&mut *tx)
-                .await?
-                .rows_affected();
-        if !admin && used != 1 {
-            return Err(AppError::forbidden(
-                "Registration requires an unused invitation",
-            ));
-        }
+        // No name yet: the account's owner is asked for one, once.
         let new = Principal {
             id: random(),
-            name: email.split('@').next().unwrap().into(),
+            name: String::new(),
             kind: "user".into(),
             email: Some(email.clone()),
             admin,
@@ -604,10 +763,59 @@ pub async fn verify_link(State(s): State<AppState>, Json(req): Json<Token>) -> R
             .bind(&new.id)
             .execute(&mut *tx)
             .await?;
+        let mut invited = admin
+            || sqlx::query("DELETE FROM account_invites WHERE hash=? AND email=? AND expires>?")
+                .bind(&invite)
+                .bind(&email)
+                .bind(now())
+                .execute(&mut *tx)
+                .await?
+                .rows_affected()
+                == 1;
+        if !invited {
+            // A private room's invitation. It is theirs from here on, so one
+            // link makes one account.
+            let room: Option<String> = sqlx::query_scalar(
+                "UPDATE room_invites SET used_by=?1 WHERE hash=?2 AND used_by IS NULL AND expires>?3
+                 AND (email IS NULL OR email=?4)
+                 AND EXISTS(SELECT 1 FROM rooms r WHERE r.id=room_invites.room AND r.closed=0)
+                 RETURNING room",
+            )
+            .bind(&new.id)
+            .bind(&invite)
+            .bind(now())
+            .bind(&email)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if let Some(room) = room {
+                sqlx::query("INSERT INTO memberships VALUES (?,?,0) ON CONFLICT(room,principal) DO UPDATE SET revoked=0")
+                    .bind(room)
+                    .bind(&new.id)
+                    .execute(&mut *tx)
+                    .await?;
+                invited = true;
+            }
+        }
+        if !invited {
+            // Dropping the transaction takes the half-made account with it.
+            return Err(AppError::forbidden(
+                "Registration requires an unused invitation",
+            ));
+        }
         p = Some(new);
     }
     let p = p.unwrap();
     let token = session(&mut tx, &p).await?;
+    if req.app {
+        // As for an approved device: provisional until the app has saved it
+        // and used it once, which is also when its previous credential goes.
+        sqlx::query("UPDATE sessions SET pending=1,expires=?,replaces=? WHERE hash=?")
+            .bind(now() + 600)
+            .bind(credential(&h).map(hash))
+            .bind(hash(&token))
+            .execute(&mut *tx)
+            .await?;
+    }
     sqlx::query("DELETE FROM rate_limits WHERE key LIKE ?")
         .bind(format!("email:%:{}", hash(&email)))
         .execute(&mut *tx)
@@ -618,6 +826,9 @@ pub async fn verify_link(State(s): State<AppState>, Json(req): Json<Token>) -> R
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    if req.app {
+        return Ok(Json(json!({"token":token,"principal":p})).into_response());
+    }
     Ok(signed_in(&s, &token, &p))
 }
 pub async fn desktop_start(State(s): State<AppState>) -> Result<Json<Value>> {

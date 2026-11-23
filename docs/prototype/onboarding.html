@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cubie · joining and signing in</title>
+<style>
+:root{color-scheme:light dark}
+html,body{margin:0}
+body{font-family:var(--font-sans,-apple-system,BlinkMacSystemFont,"Inter",system-ui,sans-serif);color:var(--foreground,#1d1d1f);-webkit-font-smoothing:antialiased}
+body.standalone{background:#0e0f12;color:#e8e9ec;--foreground:#e8e9ec;--muted-foreground:#8f95a0;--border:rgba(255,255,255,.12);--secondary:rgba(255,255,255,.08);--background:#0e0f12}
+#board{max-width:1120px;margin:0 auto;padding:4px 0 32px}
+body.standalone #board{padding:32px 24px 64px}
+body:not(.standalone) .head h1{display:none}
+.head h1{font-size:20px;line-height:1.25;margin:0 0 6px;font-weight:650;letter-spacing:-.01em}
+.head p,.lede{margin:0;font-size:13.5px;line-height:1.55;color:var(--muted-foreground,#8a8f98);max-width:76ch}
+.lede{margin-top:4px}
+.knobs{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;font-size:12px;color:var(--muted-foreground,#8a8f98);margin-top:14px}
+.knobs>span{display:flex;align-items:center;gap:8px}
+.seg{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--border,rgba(128,128,128,.3));border-radius:8px;flex-wrap:wrap}
+.seg button{all:unset;cursor:pointer;padding:3px 10px;border-radius:6px;font-size:12px;line-height:18px;color:var(--muted-foreground,#8a8f98)}
+.seg button:hover{color:var(--foreground,#1d1d1f)}
+.seg button[aria-pressed="true"]{background:var(--secondary,rgba(128,128,128,.16));color:var(--foreground,#1d1d1f)}
+.toc{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.toc a{font-size:12px;color:var(--foreground,#1d1d1f);text-decoration:none;border:1px solid var(--border,rgba(128,128,128,.3));border-radius:999px;padding:3px 10px}
+.toc a:hover{background:var(--secondary,rgba(128,128,128,.12))}
+section{margin-top:44px;scroll-margin-top:12px}
+section h2{font-size:16px;margin:0;font-weight:650;letter-spacing:-.005em}
+.notes{margin:14px 0 0;padding-left:20px;font-size:13.5px;line-height:1.55;max-width:84ch}
+.notes li{margin:6px 0;padding-left:2px}
+.notes b{font-weight:600}
+.notes code{font-family:var(--font-mono,ui-monospace,Menlo,monospace);font-size:12px;background:var(--secondary,rgba(128,128,128,.14));padding:1px 4px;border-radius:4px}
+.row{display:flex;flex-wrap:wrap;gap:22px 16px;margin-top:14px;align-items:flex-start}
+.shot{width:332px;max-width:100%}
+.shot.wide{width:400px}
+.shot>p{margin:9px 2px 0;font-size:12.5px;line-height:1.5;color:var(--muted-foreground,#8a8f98)}
+.shot>p b{color:var(--foreground,#1d1d1f);font-weight:600}
+.still{pointer-events:none;user-select:none}
+body:not(.standalone) section{display:none;margin-top:22px}
+body:not(.standalone) section.on{display:block}
+body:not(.standalone) .row{flex-wrap:nowrap;overflow-x:auto;padding:2px 2px 14px}
+body:not(.standalone) .shot{flex:none}
+body:not(.standalone) .toc a.on{background:var(--secondary,rgba(128,128,128,.16))}
+#stage{margin-top:14px;display:flex;flex-direction:column;align-items:center;gap:12px;padding:22px 12px;border-radius:var(--radius,12px);background:radial-gradient(70% 60% at 8% 4%,rgba(93,111,224,.35) 0%,transparent 62%),radial-gradient(60% 70% at 96% 100%,rgba(194,87,143,.3) 0%,transparent 60%),var(--secondary,rgba(128,128,128,.12))}
+#cap{font-size:13px;line-height:1.5;text-align:center;max-width:60ch;min-height:40px;color:var(--foreground,#1d1d1f)}
+#cap small{display:block;color:var(--muted-foreground,#8a8f98);font-size:12px}
+.pbar{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:center;font-size:12px;color:var(--muted-foreground,#8a8f98)}
+.plain{all:unset;cursor:pointer;font-size:12px;color:var(--muted-foreground,#8a8f98);text-decoration:underline;text-underline-offset:3px}
+
+/* ───────── frames ───────── */
+.fr{position:relative;width:332px;max-width:100%;height:620px;border-radius:18px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 0 0 1px rgba(128,128,128,.28),0 18px 44px rgba(0,0,0,.28);text-align:left}
+.fr.desk{width:100%;max-width:860px;height:600px;border-radius:12px}
+.fr.mac{width:400px;height:500px;border-radius:12px}
+.fr.short{height:auto}
+.chrome{flex:none;height:34px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:11.5px;background:var(--w-chrome);color:var(--w-dim);border-bottom:1px solid var(--w-line)}
+.chrome i{position:absolute;left:14px;display:flex;gap:6px}.chrome i b{width:10px;height:10px;border-radius:50%;background:var(--w-line2)}
+.lights{position:absolute;left:14px;top:14px;display:flex;gap:8px;z-index:2}.lights b{width:12px;height:12px;border-radius:50%}
+.lights b:nth-child(1){background:#ff5f57}.lights b:nth-child(2){background:#febc2e}.lights b:nth-child(3){background:#28c840}
+
+/* ───────── the web pages (tokens follow the visitor's system setting) ───────── */
+.w{--w-bg:#111318;--w-chrome:#191b21;--w-field:#191c23;--w-raised:#23262f;--w-line:#2b2f3a;--w-line2:#3a3f4c;--w-text:#f2f3f5;--w-dim:#a4aab6;--w-faint:#737a87;--w-accent:#3d7bfa;--w-link:#8ab4ff;--w-on:#fff;--w-ok:#3fd07a;--w-bad:#ff8a80;--w-badbg:rgba(229,72,77,.14);--w-stage:#0b0c0f}
+#board[data-appearance="light"] .w:not(.mac){--w-bg:#f6f6f8;--w-chrome:#ececf0;--w-field:#fff;--w-raised:#e9eaee;--w-line:#dcdee4;--w-line2:#c4c7cf;--w-text:#16181d;--w-dim:#59606c;--w-faint:#8a909c;--w-accent:#2f6feb;--w-link:#2259c9;--w-bad:#c0392f;--w-badbg:rgba(229,72,77,.1)}
+.pg{flex:1;min-height:0;overflow:auto;background:var(--w-bg);color:var(--w-text);display:flex;flex-direction:column;align-items:center;padding:18px 24px 22px;font-size:16px;line-height:1.5}
+.brand{flex:none;display:flex;align-items:center;gap:7px;font-size:16px;font-weight:650;letter-spacing:-.02em;align-self:center}
+.col{width:100%;max-width:340px;margin:auto 0;display:flex;flex-direction:column;align-items:center;text-align:center;padding:14px 0 6px}
+.pg h1{font-size:25px;line-height:1.2;font-weight:680;letter-spacing:-.025em;margin:18px 0 0;text-wrap:balance}
+.pg .sub{margin:8px 0 0;color:var(--w-dim);font-size:15.5px;text-wrap:pretty}
+.pg .sub b{color:var(--w-text);font-weight:600}
+.in{width:100%;box-sizing:border-box;height:52px;margin-top:22px;padding:0 16px;border-radius:14px;border:1.5px solid var(--w-line2);background:var(--w-field);color:var(--w-text);font:inherit;font-size:17px;text-align:center;outline:none}
+.in::placeholder{color:var(--w-faint)}
+.in:focus{border-color:var(--w-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--w-accent) 28%,transparent)}
+.btn{all:unset;box-sizing:border-box;cursor:pointer;width:100%;height:52px;margin-top:10px;border-radius:14px;background:var(--w-accent);color:var(--w-on);font-size:17px;font-weight:620;text-align:center}
+.btn:hover{filter:brightness(1.07)}.btn[disabled]{opacity:.42;cursor:default;filter:none}
+.btn.quiet{background:var(--w-raised);color:var(--w-text)}
+.btn.red{background:#e5484d}
+.foot{margin:16px 0 0;font-size:13.5px;color:var(--w-faint);text-wrap:pretty}
+.lk{all:unset;cursor:pointer;color:var(--w-link);font-weight:550}
+.lk:hover{text-decoration:underline}
+.face{flex:none;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:600;letter-spacing:-.02em;overflow:hidden;position:relative}
+.face.none{background:var(--w-raised);color:var(--w-faint)}
+.face.cam{background:radial-gradient(60% 55% at 50% 38%,#c9a48c 0 38%,transparent 39%),radial-gradient(90% 60% at 50% 100%,#40527a 0 60%,transparent 61%),linear-gradient(#8fa3bd,#5f7088)}
+.tg{display:flex;gap:26px;margin-top:14px}
+.t{all:unset;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;font-size:12px;color:var(--w-dim)}
+.t>span:first-child{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;background:var(--w-raised);color:var(--w-dim)}
+.t.on>span:first-child{background:var(--w-text);color:var(--w-bg)}
+.t.on{color:var(--w-text)}
+.ic{stroke:currentColor;stroke-width:1.9;fill:none;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.code{position:relative;display:flex;gap:6px;margin-top:22px}
+.code>b{width:40px;height:54px;border-radius:12px;border:1.5px solid var(--w-line2);background:var(--w-field);display:grid;place-items:center;font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}
+.code>b.cur{border-color:var(--w-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--w-accent) 28%,transparent)}
+.code.bad>b{border-color:var(--w-bad)}
+.code>b:nth-child(3){margin-right:8px}
+.code input{position:absolute;inset:0;width:100%;height:100%;opacity:0;font-size:16px;border:0;padding:0}
+.err{margin:12px 0 0;padding:9px 12px;border-radius:10px;background:var(--w-badbg);color:var(--w-bad);font-size:14px}
+.mark{width:84px;height:84px;border-radius:50%;display:grid;place-items:center;background:var(--w-raised);color:var(--w-dim)}
+.mark.ok{background:color-mix(in srgb,var(--w-ok) 20%,transparent);color:var(--w-ok)}
+.top{flex:none;width:100%;max-width:520px;display:flex;align-items:center;justify-content:space-between}
+.chip{all:unset;cursor:pointer;display:flex;align-items:center;gap:7px;font-size:13.5px;color:var(--w-dim)}
+.home{width:100%;max-width:520px;margin-top:22px;text-align:left}
+.home h1{margin:0}
+.home h3{display:flex;justify-content:space-between;font-size:12.5px;font-weight:600;letter-spacing:.02em;color:var(--w-faint);margin:26px 0 4px}
+.fr.tall{height:auto;min-height:620px}.fr.tall .pg{overflow:visible}
+.li{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--w-line)}
+.li>div:not(.face){flex:1;min-width:0}.li b,.li small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.li b{font-size:15.5px;font-weight:600}.li small{font-size:13px;color:var(--w-dim)}
+.sm{all:unset;cursor:pointer;height:34px;padding:0 14px;border-radius:999px;background:var(--w-raised);font-size:13.5px;font-weight:600;white-space:nowrap}
+.sm.pri{background:var(--w-accent);color:#fff}
+.linkbox{width:100%;box-sizing:border-box;margin-top:18px;padding:13px 14px;border-radius:14px;border:1.5px dashed var(--w-line2);font-size:14px;color:var(--w-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.callph{flex:1;min-height:0;background:var(--w-stage);color:#f2f3f5;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center}
+.callph .tiles{display:flex;gap:14px}.callph p{margin:0;font-size:13px;color:#8f95a0;max-width:26ch}
+.sheet{position:absolute;inset:34px 0 0;background:rgba(0,0,0,.5);display:flex;align-items:flex-end}
+.sheet>div{width:100%;box-sizing:border-box;background:var(--w-bg);color:var(--w-text);border-radius:22px 22px 0 0;padding:8px 24px 24px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.fr.desk .sheet{align-items:center;justify-content:center}.fr.desk .sheet>div{max-width:400px;border-radius:22px}
+
+/* ───────── email ───────── */
+.mail{background:#fff;color:#16181d;border-radius:14px;padding:16px 18px 20px;font-size:14px;line-height:1.5;box-shadow:0 0 0 1px rgba(128,128,128,.28)}
+.mail .hd{font-size:12px;color:#6b7280;border-bottom:1px solid #e5e7eb;padding-bottom:10px;margin-bottom:14px}.mail .hd b{display:block;font-size:14.5px;color:#16181d}
+.mail .big{font-size:32px;font-weight:700;letter-spacing:.14em;margin:8px 0 12px;font-variant-numeric:tabular-nums}
+.mail a{display:inline-block;background:#2f6feb;color:#fff;text-decoration:none;font-weight:600;padding:10px 18px;border-radius:10px}
+.mail small{display:block;margin-top:14px;color:#6b7280;font-size:12.5px}
+
+/* ───────── Mac app (dark only, as today) ───────── */
+.mac .pg{padding:64px 40px 22px;font-size:13px;background:#141519}
+.mac .col{margin:0;padding:0;max-width:none;flex:1}
+.mac h1{font-size:19px;font-weight:700;letter-spacing:-.01em;margin:18px 0 6px}
+.mac .sub{font-size:13px;margin:0;color:#9ba1ac}
+.mac .in{height:38px;border-radius:9px;font-size:13px;margin-top:22px;background:#0f1013;border:1px solid #4f8cff;text-align:left;padding:0 12px}
+.mac .btn{height:38px;border-radius:9px;font-size:13px;background:#4f8cff}
+.mac .foot{margin-top:auto;font-size:12px;color:#676d78}
+.mac .code>b{width:40px;height:48px;border-radius:9px;font-size:20px;background:#0f1013}
+.mac .lk{color:#4f8cff}
+.pop{align-self:stretch;margin-top:auto;border-radius:12px;background:#1b1c22;box-shadow:0 0 0 1px rgba(255,255,255,.08),0 16px 40px rgba(0,0,0,.5);padding:6px;text-align:left}
+.pop>div{padding:8px 10px;border-radius:7px;font-size:13px}.pop>div:hover{background:rgba(255,255,255,.06)}.pop hr{border:0;border-top:1px solid rgba(255,255,255,.08);margin:5px 0}
+.pop .who{display:flex;gap:10px;align-items:center}.pop .who small{display:block;color:#9ba1ac;font-size:12px}
+
+/* ───────── iPhone app (the system's look) ───────── */
+.ios{--i-bg:#000;--i-fill:#1c1c1e;--i-text:#fff;--i-dim:#98989f;--i-tint:#0a84ff;font-family:-apple-system,"SF Pro Text",system-ui,sans-serif}
+#board[data-appearance="light"] .ios{--i-bg:#fff;--i-fill:#f2f2f7;--i-text:#000;--i-dim:#6c6c70;--i-tint:#007aff}
+.ios .pg{background:var(--i-bg);color:var(--i-text);padding:14px 28px 0;font-size:17px}
+.ios .sb{align-self:stretch;display:flex;justify-content:space-between;font-size:14px;font-weight:600;padding:0 6px}
+.ios h1{font-size:30px;font-weight:700;letter-spacing:-.02em;margin:8px 0 0}
+.ios .sub{color:var(--i-dim);font-size:16px}
+.ios .in{background:var(--i-fill);border:0;border-radius:12px;height:50px;text-align:left}
+.ios .btn{background:var(--i-tint);border-radius:14px;height:50px;font-weight:600}
+.ios .code>b{background:var(--i-fill);border:0}
+.ios .lk{color:var(--i-tint);font-weight:400}
+.ios .foot{color:var(--i-dim)}
+.kb{align-self:stretch;margin:auto -28px 0;background:var(--i-fill);padding:9px 0 54px;text-align:center;font-size:15px;border-top:1px solid rgba(128,128,128,.25)}
+.kb small{display:block;font-size:11.5px;color:var(--i-dim)}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<path id="qb" d="M 575,252 C 609,232 641,232 676,252 L 925,397 C 966,421 980,452 980,504 L 980,770 C 980,818 968,844 929,868 L 678,1000 C 643,1020 610,1021 575,1003 L 327,861 C 288,839 273,811 273,763 L 273,501 C 273,453 286,423 326,399 Z"/>
+<clipPath id="qbc"><use href="#qb"/></clipPath>
+<linearGradient id="qg1" x1="626" y1="237" x2="626" y2="1016" gradientUnits="userSpaceOnUse"><stop stop-color="#cbdcff"/><stop offset=".43" stop-color="#e2e3f4"/><stop offset="1" stop-color="#ffe7f5"/></linearGradient>
+<radialGradient id="qg2" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(283 509) scale(437 449)"><stop offset=".05" stop-color="#ffffe9"/><stop offset="1" stop-color="#ffffe9" stop-opacity="0"/></radialGradient>
+<radialGradient id="qg3" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(977 839) scale(475 471)"><stop stop-color="#ffe0cf"/><stop offset="1" stop-color="#ffe0cf" stop-opacity="0"/></radialGradient>
+<g id="quby"><use href="#qb" fill="url(#qg1)"/><g clip-path="url(#qbc)"><path d="M273 237H981V1017H273Z" fill="url(#qg2)"/><path d="M273 237H981V1017H273Z" fill="url(#qg3)"/></g>
+<path fill="#0a0a0b" d="M 358,520 L 551,631 C 575,645 586,666 586,696 L 586,820 C 586,862 561,882 531,864 L 347,759 C 323,745 311,724 311,694 L 311,559 C 311,525 331,507 358,520 Z"/>
+<g fill="#ffffeb"><path d="M 391,605 C 403,610 413,627 413,644 L 413,695 C 413,716 404,726 392,719 C 380,713 372,699 372,682 L 372,629 C 372,609 380,599 391,605 Z"/><path d="M 490,656 C 503,662 512,677 512,695 L 512,745 C 512,765 503,776 491,769 C 479,763 471,748 471,731 L 471,679 C 471,660 479,650 490,656 Z"/></g></g>
+</defs></svg>
+
+<div id="board" data-appearance="dark">
+  <header class="head">
+    <h1>Cubie · joining and signing in · round 1</h1>
+    <p>Every screen asks for one thing and has one button. No passwords, no tabs to go back to, no words like “guest”, “member” or “session”. Click through the four flows in the player, then see every screen side by side below. Nothing here is built yet: tell me what to change and I'll redraw it.</p>
+    <div class="knobs">
+      <span>Web and iPhone appearance <span class="seg" id="appearance"><button aria-pressed="true" data-v="dark">Dark</button><button aria-pressed="false" data-v="light">Light</button></span></span>
+    </div>
+    <nav class="toc"><a href="#play">Try it</a><a href="#f1">1 · Public link</a><a href="#f2">2 · Private invitation</a><a href="#f3">3 · Sign in on the web</a><a href="#f4">4 · Sign in in the app</a><a href="#other">5 · Everything else</a><a href="#under">What changes underneath</a></nav>
+  </header>
+
+  <section id="play">
+    <h2>Try it</h2>
+    <p class="lede">Type a name, press the buttons, type any six digits for the code.</p>
+    <div id="stage">
+      <div class="pbar"><span class="seg" id="flows"></span><span class="seg" id="size"><button aria-pressed="true" data-v="phone">Phone</button><button aria-pressed="false" data-v="desk">Computer</button></span><button class="plain" id="restart">Start over</button></div>
+      <div id="device"></div>
+      <div id="cap"></div>
+    </div>
+  </section>
+
+  <section id="f1">
+    <h2>1 · A link to a public call</h2>
+    <p class="lede">Someone sends a link. The page asks for a name and nothing else. It never offers the app and never tries to open it.</p>
+    <div class="row" id="sb1"></div>
+    <ol class="notes">
+      <li><b>One field, one button.</b> The face fills in as the name is typed, as on the Mac's first launch. The headline says who invited you, not a room type.</li>
+      <li><b>Microphone on, camera off</b> when the page opens. The browser asks for the microphone when Join is pressed; if the answer is no, the call still opens, muted, with a line saying how to allow it. Turning the camera on shows it in the circle first.</li>
+      <li><b>Gone from this page:</b> Open in the Mac app, Get the Mac app, the device pickers, the microphone meter, the “1-to-1 call / public room” label, the note about claiming a link, Back to Cubie. A second microphone or camera gets one quiet “Change microphone or camera” line, only when there is more than one.</li>
+      <li><b>Coming back</b> is one tap: the name is remembered in this browser.</li>
+    </ol>
+  </section>
+
+  <section id="f2">
+    <h2>2 · An invitation to a private call</h2>
+    <p class="lede">Private calls need an account, so the invitation is also the way to get one. Email, six digits, name, in.</p>
+    <div class="row" id="sb2"></div>
+    <ol class="notes">
+      <li><b>The invitation is the registration.</b> Today a private room invitation needs a second, separate account invitation from an admin. Here whoever is invited to a private call can make their account from that link. Cubie stays invite-only: there is still no way to sign up without someone inviting you.</li>
+      <li><b>A code typed where you asked for it.</b> No “return to the tab you came from”. The email also has a button for people reading it on the same device; it lands on the same next screen.</li>
+      <li><b>The name is asked once</b>, on the screen with the Join button, and only if the account has none. Someone who already has an account goes email, code, Join.</li>
+      <li><b>One kind of invitation to explain:</b> “Each link works for one person.” An invitation made for a particular email only accepts that email.</li>
+    </ol>
+  </section>
+
+  <section id="f3">
+    <h2>3 · Signing in on the website</h2>
+    <p class="lede">cubiecall.com with no link: the same two screens, then your rooms.</p>
+    <div class="row" id="sb3"></div>
+    <ol class="notes">
+      <li><b>Home is one button and a list.</b> Start a call makes a link to send; the people who open it are in flow 1.</li>
+      <li><b>A room's page</b> keeps what the old page did (rename, invite, people, close) as a plain list. A private room has one Invite action.</li>
+      <li><b>No account?</b> The page says the same thing either way, as today, so nobody can test which emails have accounts. “Didn't get it?” explains that Cubie is invite-only.</li>
+    </ol>
+  </section>
+
+  <section id="f4">
+    <h2>4 · Signing in in the app</h2>
+    <p class="lede">The app stops sending people to the browser. Email and a code, in the app's own window. On iPhone the code fills itself in from Mail.</p>
+    <div class="row" id="sb4"></div>
+    <ol class="notes">
+      <li><b>Today:</b> the app opens a browser, the browser needs its own sign-in (email, a link in a new tab, back to the first tab), then an 8-character code is read off the app and typed into the page. <b>New:</b> two screens in the app.</li>
+      <li><b>The email for the app has only the code</b>, no button: a button would sign in the browser, not the app.</li>
+      <li><b>The name window</b> stays as it is and shows only for a new account.</li>
+      <li><b>Home's account row</b> opens a small menu (your name, email, Change name, Sign out) instead of the buttons and the code that sit in the sidebar today.</li>
+      <li><b>Apps already installed</b> keep working: their browser page stays, restyled (see 5).</li>
+    </ol>
+  </section>
+
+  <section id="other">
+    <h2>5 · Everything else</h2>
+    <p class="lede">The cases around the four flows. Each is one sentence and one button.</p>
+    <div class="row" id="sb5"></div>
+  </section>
+
+  <section id="under">
+    <h2>What changes underneath</h2>
+    <ol class="notes">
+      <li><b>Sign-in email:</b> a 6-digit code (five tries, 15 minutes) next to today's link. The link's page keeps its one button (mail scanners open links, and a link that signed in by itself could be used up before you see it), restyled as “Continue to Cubie”, and then goes on to the call you were invited to.</li>
+      <li><b>Private invitations create accounts.</b> A room invitation counts as an invitation to Cubie for one person. Admin invitations stay for inviting someone without a room.</li>
+      <li><b>Private rooms need an account.</b> No more name-only guests in private rooms; people who already joined that way keep their access.</li>
+      <li><b>The join page learns who invited you</b> (the owner's first name), only where the room's name is already shown.</li>
+      <li><b>Apps sign in with email and code.</b> The browser approval stays on the server for builds already installed.</li>
+      <li><b>New accounts start without a name</b> (today it is the part of the email before @) and are asked once.</li>
+    </ol>
+  </section>
+</div>
+
+<script>
+if (!getComputedStyle(document.documentElement).getPropertyValue('--background').trim()) document.body.classList.add('standalone');
+const P = {
+  mic:'<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/>',
+  micoff:'<path d="m2 2 20 20"/><path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2"/><path d="M5 10v2a7 7 0 0 0 12 5"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12"/><path d="M12 19v3"/>',
+  cam:'<path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
+  camoff:'<path d="M10.66 6H14a2 2 0 0 1 2 2v2.5l5.248-3.062A.5.5 0 0 1 22 7.87v8.196"/><path d="M16 16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2"/><path d="m2 2 20 20"/>',
+  user:'<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  check:'<path d="M20 6 9 17l-5-5"/>', lock:'<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  clock:'<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>', off:'<path d="M12 20h.01"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M5 12.859a10 10 0 0 1 5.17-2.69"/><path d="M19 12.859a10 10 0 0 0-2.007-1.523"/><path d="M2 8.82a15 15 0 0 1 4.177-2.643"/><path d="M22 8.82a15 15 0 0 0-11.288-3.764"/><path d="m2 2 20 20"/>',
+  left:'<path d="m15 18-6-6 6-6"/>', users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  globe:'<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>', wave:'<path d="M18 11V6a2 2 0 0 0-4 0"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
+  laptop:'<path d="M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2z"/><path d="M20.054 15.987H3.946"/>'
+};
+const ic = (n, s = 20) => `<svg class="ic" width="${s}" height="${s}" viewBox="0 0 24 24">${P[n]}</svg>`;
+const quby = s => `<svg width="${s}" height="${s}" viewBox="207 207 840 840"><use href="#quby"/></svg>`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// The same colour as the apps: FNV-1a of the name picks the hue.
+function hue(seed) { let h = 2166136261; for (const b of new TextEncoder().encode(seed.toLowerCase())) h = Math.imul(h ^ b, 16777619) >>> 0; return h % 360; }
+const initials = n => n.trim().split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
+function face(name, size, cam) {
+  const st = `width:${size}px;height:${size}px;font-size:${Math.round(size * .38)}px`;
+  if (cam) return `<div class="face cam" style="${st}"></div>`;
+  if (!name.trim()) return `<div class="face none" style="${st}">${ic('user', Math.round(size * .4))}</div>`;
+  const h = hue(name.trim());
+  return `<div class="face" style="${st};background:linear-gradient(135deg,hsl(${h} 55% 52%),hsl(${(h + 29) % 360} 60% 38%))">${esc(initials(name))}</div>`;
+}
+const brand = `<div class="brand">${quby(26)}Cubie</div>`;
+
+/* ── web screens ── */
+function prejoin(c, o) {
+  return `${brand}<form class="col" data-go="${o.go || 'next'}">
+    <div data-face="104">${face(c.name, 104, c.cam)}</div>
+    <div class="tg">
+      <button type="button" class="t ${c.mic ? 'on' : ''}" data-toggle="mic"><span>${ic(c.mic ? 'mic' : 'micoff')}</span>${c.mic ? 'Mic on' : 'Mic off'}</button>
+      <button type="button" class="t ${c.cam ? 'on' : ''}" data-toggle="cam"><span>${ic(c.cam ? 'cam' : 'camoff')}</span>${c.cam ? 'Camera on' : 'Camera off'}</button>
+    </div>
+    <h1>${o.title}</h1>${o.sub ? `<p class="sub">${o.sub}</p>` : ''}
+    <input class="in" data-bind="name" value="${esc(c.name)}" placeholder="Your name" autocomplete="name" maxlength="64" aria-label="Your name">
+    <button class="btn" data-needs="name">Join call</button>
+    <p class="foot">${o.foot ?? `Have a Cubie account? <button type="button" class="lk" data-go="${o.signin || ''}">Sign in</button>`}</p>
+  </form>`;
+}
+function emailStep(c, o) {
+  return `${brand}<form class="col" data-go="next">
+    ${o.face ?? quby(88)}
+    <h1>${o.title}</h1><p class="sub">${o.sub}</p>
+    <input class="in" type="email" data-bind="email" value="${esc(c.email)}" placeholder="Your email" autocomplete="email" aria-label="Your email">
+    <button class="btn" data-needs="email">Continue</button>
+    <p class="foot">${o.foot ?? 'No password needed.'}</p>
+  </form>`;
+}
+function codeBoxes(v, bad) { return `<div class="code ${bad ? 'bad' : ''}">${[0, 1, 2, 3, 4, 5].map(i => `<b class="${i === v.length ? 'cur' : ''}">${v[i] ?? ''}</b>`).join('')}<input data-code inputmode="numeric" autocomplete="one-time-code" maxlength="6" aria-label="6-digit code" value="${v}"></div>`; }
+function codeStep(c, o = {}) {
+  return `${o.brand ?? brand}<div class="col">
+    <div class="mark">${ic('mail' in P ? 'mail' : 'check', 34)}</div>
+    <h1>Check your email</h1><p class="sub">We sent a 6-digit code to <b>${esc(c.email || 'mom@gmail.com')}</b>.</p>
+    ${codeBoxes(o.value ?? '', o.bad)}
+    ${o.bad ? `<p class="err">That code isn't right. Check the email and try again.</p>` : ''}
+    <p class="foot"><button class="lk" type="button">Send a new code</button> · <button class="lk" type="button" data-go="back">Use a different email</button></p>
+    ${o.help ? `<p class="foot" style="margin-top:8px">${o.help}</p>` : ''}
+  </div>`;
+}
+P.mail = '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>';
+function dead(o) {
+  return `${brand}<div class="col"><div class="mark ${o.ok ? 'ok' : ''}">${ic(o.icon, 34)}</div><h1>${o.title}</h1><p class="sub">${o.text}</p>
+    ${o.primary ? `<button class="btn" style="margin-top:24px" data-go="${o.go || ''}">${o.primary}</button>` : ''}
+    ${o.second ? `<button class="btn quiet" data-go="${o.go2 || ''}">${o.second}</button>` : ''}
+    ${o.foot ? `<p class="foot">${o.foot}</p>` : ''}</div>`;
+}
+function call(c) {
+  return `<div class="callph"><div class="tiles">${face('Anna Petrova', 92)}${face(c.name || 'You', 92, c.cam)}</div>
+    <b>In the call with Anna</b><p>The call screen itself isn't part of this round.</p>
+    <button class="btn red" style="width:160px;height:46px" data-go="next">Leave</button></div>`;
+}
+const rooms = [['Family', 'lock', 'Private · Anna, Max and you'], ['Friday dinner club', 'globe', 'Anyone with the link'], ['Max', 'users', 'Just the two of you']];
+function home(c, o = {}) {
+  return `<div class="top">${brand}<button class="chip" data-go="${o.account || ''}">${esc(c.name || 'Mom')}${face(c.name || 'Mom', 28)}</button></div>
+  <div class="home"><h1>Hi, ${esc((c.name || 'Mom').split(' ')[0])}</h1>
+    <button class="btn" style="margin-top:18px" data-go="${o.start || ''}">Start a call</button>
+    <p class="foot" style="margin-top:10px">You get a link to send. Anyone can join it with just their name.</p>
+    <h3>Your rooms<button class="lk" style="font-size:13px">+ New room</button></h3>
+    ${rooms.map(r => `<div class="li">${face(r[0], 40)}<div><b>${r[0]}</b><small>${r[2]}</small></div><button class="sm" data-go="${r[0] === 'Family' ? (o.room || '') : ''}">${r[0] === 'Family' ? 'Open' : 'Join'}</button></div>`).join('')}
+    <p class="foot">Cubie for <button class="lk">Mac</button> and <button class="lk">iPhone</button></p></div>`;
+}
+function startSheet(c) {
+  return `${home(c)}<div class="sheet"><div>
+    <div class="mark ok" style="margin-top:18px">${ic('check', 34)}</div><h1>Your call is ready</h1>
+    <p class="sub">Send this link to anyone. They join with just their name.</p>
+    <div class="linkbox">cubiecall.com/?room=7f3a9c…</div>
+    <button class="btn" data-go="next">Copy link and join</button><button class="btn quiet" data-go="home">Not now</button></div></div>`;
+}
+function room(c) {
+  return `<div class="top"><button class="chip" data-go="home">${ic('left', 18)}Rooms</button><button class="chip">${face(c.name || 'Mom', 28)}</button></div>
+  <div class="home"><div class="li" style="border:0;padding:0">${face('Family', 52)}<div><h1 style="font-size:22px">Family</h1><small style="color:var(--w-dim);font-size:13.5px">Private · only people you invite</small></div></div>
+    <button class="btn" style="margin-top:16px">Join call</button>
+    <button class="btn quiet">Invite someone</button>
+    <p class="foot" style="margin-top:10px">Each invitation link works for one person. They sign up with their email, then they're in.</p>
+    <h3>People</h3>
+    ${[['Anna Petrova', 'anna@example.com'], ['Max Weber', 'max@example.com']].map(p => `<div class="li">${face(p[0], 36)}<div><b>${p[0]}</b><small>${p[1]}</small></div><button class="sm">Remove</button></div>`).join('')}
+    <div class="li"><div class="face none" style="width:36px;height:36px">${ic('clock', 16)}</div><div><b style="font-weight:500">Invitation not opened yet</b><small>Expires 30 November</small></div><button class="sm">Cancel</button></div>
+    <p class="foot"><button class="lk">Rename</button> · <button class="lk" style="color:var(--w-bad)">Close this room</button></p></div>`;
+}
+function mailCard(o) {
+  return `<div class="mail"><div class="hd"><b>${o.subject}</b>Cubie &lt;hello@cubiecall.com&gt;</div>
+    <div>${o.lead}</div><div class="big">482 913</div>
+    ${o.button ? `<div>Reading this on the device you're signing in on?</div><p><a>${o.button}</a></p>` : ''}
+    <small>The code works for 15 minutes. If you didn't ask for it, you can ignore this email.</small></div>`;
+}
+/* ── app screens ── */
+function macWelcome(c) {
+  return `<form class="col" data-go="next">${quby(84)}<h1>Welcome to Cubie</h1><p class="sub">Sign in with your email. No password needed.</p>
+    <input class="in" type="email" data-bind="email" value="${esc(c.email)}" placeholder="Your email"><button class="btn" data-needs="email">Continue</button>
+    <p class="foot">Cubie is invite-only for now.</p></form>`;
+}
+function macCode(c, v = '') {
+  return `<div class="col"><div class="mark" style="width:84px;height:84px">${ic('mail', 34)}</div><h1>Check your email</h1><p class="sub">Enter the 6-digit code we sent to ${esc(c.email || 'mom@gmail.com')}.</p>
+    ${codeBoxes(v)}<p class="foot" style="margin-top:16px;color:#9ba1ac"><button class="lk" type="button">Send a new code</button> · <button class="lk" type="button" data-go="back">Use a different email</button></p>
+    <p class="foot">The code works for 15 minutes.</p></div>`;
+}
+function macName(c) {
+  return `<form class="col" data-go="next"><div data-face="84">${face(c.name, 84)}</div><h1>What should people call you?</h1><p class="sub">Shown on your face in calls and in transcripts.</p>
+    <input class="in" data-bind="name" value="${esc(c.name)}" placeholder="Your name"><button class="btn" data-needs="name">Continue</button>
+    <p class="foot">You can change it later.</p></form>`;
+}
+function macHome(c) {
+  const n = c.name || 'Mom';
+  return `<div class="col" style="align-items:stretch;text-align:left"><p class="sub" style="text-align:center">Home opens. The account row at the foot of the sidebar opens this menu:</p>
+    <div class="pop"><div class="who">${face(n, 34)}<span><b>${esc(n)}</b><small>${esc(c.email || 'mom@gmail.com')}</small></span></div><hr><div>Change name…</div><div>Settings…</div><hr><div>Sign out</div></div>
+    <div class="li" style="border:0;padding:12px 2px 0">${face(n, 28)}<div><b style="font-size:13px">${esc(n)}</b></div></div></div>`;
+}
+const sb = `<div class="sb"><span>9:41</span><span>􀙇 􀛨</span></div>`.replace(/[􀙇􀛨]/g, '');
+function iosWelcome(c) {
+  return `${sb}<form class="col" data-go="next" style="margin:auto 0">${quby(104)}<h1>Cubie</h1><p class="sub">Sign in with your email.<br>No password needed.</p>
+    <input class="in" type="email" data-bind="email" value="${esc(c.email)}" placeholder="Email"><button class="btn" data-needs="email">Continue</button>
+    <p class="foot">Cubie is invite-only for now.</p></form>`;
+}
+function iosCode(c, v = '') {
+  return `${sb}<div class="col" style="margin:28px 0 0"><h1>Enter the code</h1><p class="sub">We emailed a 6-digit code to ${esc(c.email || 'mom@gmail.com')}.</p>
+    ${codeBoxes(v)}<p class="foot"><button class="lk" type="button">Send a new code</button></p></div>
+    <div class="kb">482913<small>From Mail</small></div>`;
+}
+function iosName(c) {
+  return `${sb}<form class="col" data-go="next" style="margin:28px 0 0"><div data-face="96">${face(c.name, 96)}</div><h1 style="font-size:26px;margin-top:16px">What should people call you?</h1>
+    <input class="in" data-bind="name" value="${esc(c.name)}" placeholder="Your name"><button class="btn" data-needs="name">Continue</button></form>`;
+}
+
+/* ── frames ── */
+const web = (html, url = 'cubiecall.com', cls = '') => `<div class="fr w ${cls}"><div class="chrome">${ic('lock', 11)}${url}</div>${html.startsWith('<div class="callph"') ? html : `<div class="pg">${html}</div>`}</div>`;
+const mac = html => `<div class="fr w mac"><div class="lights"><b></b><b></b><b></b></div><div class="pg">${html}</div></div>`;
+const ios = html => `<div class="fr ios"><div class="pg">${html}</div></div>`;
+
+/* ── flows for the player ── */
+const base = () => ({ name: '', email: '', mic: true, cam: false });
+const signinFoot = 'Have a Cubie account? <button type="button" class="lk">Sign in</button>';
+const flows = {
+  public: { label: '1 · Public link', kind: 'web', steps: [
+    { id: 'join', cap: 'Mom opens the link Anna sent.', why: 'Nothing was created or claimed by opening the page.', r: c => prejoin(c, { title: 'Anna invited you to a call', foot: signinFoot }) },
+    { id: 'call', cap: 'The browser asks for the microphone, and she is in.', why: 'Her name is remembered in this browser for next time.', r: call },
+    { id: 'left', cap: 'After the call.', why: 'No sign-up pitch, no app pitch.', r: c => dead({ icon: 'wave', title: 'You left the call', text: 'You can come back while it lasts.', primary: 'Join again', go: 'join' }) },
+  ] },
+  private: { label: '2 · Private invitation', kind: 'web', steps: [
+    { id: 'email', cap: 'Mom opens Anna’s invitation to a private room.', why: 'The invitation is not used up until she joins.', r: c => emailStep(c, { face: face('Family', 88), title: 'Anna invited you to Family', sub: 'This call is private. Enter your email and we’ll send you a code to get in.' }) },
+    { id: 'code', cap: 'She types the six digits from the email. The page moves on by itself.', why: 'Her account is made here, from the invitation.', r: (c, s) => codeStep(c, { value: s.code }) },
+    { id: 'join', cap: 'New account, so the name is asked, on the same screen as Join.', why: 'Someone with an account already sees their name filled in.', r: c => prejoin(c, { title: 'You’re in. What’s your name?', sub: 'Anna and the others will see it in Family.', foot: `Signed in as ${esc(c.email || 'mom@gmail.com')}` }) },
+    { id: 'call', cap: 'In the call.', why: 'Next time the room’s link goes straight to Join.', r: call },
+    { id: 'left', cap: 'After the call.', why: '', r: c => dead({ icon: 'wave', title: 'You left the call', text: 'You can come back while it lasts.', primary: 'Join again', go: 'join', second: 'Your rooms' }) },
+  ] },
+  signin: { label: '3 · Sign in on the web', kind: 'web', steps: [
+    { id: 'email', cap: 'cubiecall.com, signed out.', why: '', r: c => emailStep(c, { title: 'Sign in to Cubie', sub: 'Enter your email and we’ll send you a code.', foot: 'No password needed. Cubie is invite-only for now.' }) },
+    { id: 'code', cap: 'The code from the email.', why: 'The button in the email does the same in one click.', r: (c, s) => codeStep(c, { value: s.code, help: 'Didn’t get it? Check spam. Cubie is invite-only: if nobody has invited this email yet, no code is sent.' }) },
+    { id: 'home', cap: 'Home: one button and your rooms.', why: 'Try Start a call, or open Family.', r: c => home({ ...c, name: c.name || 'Mom' }, { start: 'start', room: 'room' }) },
+    { id: 'start', cap: 'Start a call: a link to send, then the call.', why: 'Whoever opens the link is in flow 1.', r: c => startSheet({ ...c, name: c.name || 'Mom' }) },
+    { id: 'call', cap: 'In the call, waiting for someone to open the link.', why: '', r: c => call({ ...c, name: c.name || 'Mom' }) },
+    { id: 'room', cap: 'A room’s page: join, invite, people.', why: '', r: c => room({ ...c, name: c.name || 'Mom' }), detached: true },
+  ] },
+  app: { label: '4 · Sign in in the app', kind: 'mac', steps: [
+    { id: 'email', cap: 'First launch of Cubie on the Mac.', why: 'No browser opens.', r: macWelcome },
+    { id: 'code', cap: 'The code from the email, typed or pasted.', why: '', r: (c, s) => macCode(c, s.code) },
+    { id: 'name', cap: 'Only for a new account.', why: 'This window exists today.', r: macName },
+    { id: 'home', cap: 'Signed in.', why: '', r: macHome },
+  ] },
+};
+let cur = 'public', step = 0, size = 'phone', ctx = base(), st = { code: '' };
+const $ = id => document.getElementById(id);
+function draw(focus) {
+  const f = flows[cur], s = f.steps[step];
+  const html = s.r(ctx, st);
+  $('device').innerHTML = f.kind === 'mac' ? mac(html) : web(html, 'cubiecall.com', size === 'desk' ? 'desk' : '');
+  $('cap').innerHTML = `${s.cap}<small>${s.why || '&nbsp;'}</small>`;
+  $('size').style.display = f.kind === 'mac' ? 'none' : '';
+  $('flows').innerHTML = Object.entries(flows).map(([k, v]) => `<button data-v="${k}" aria-pressed="${k === cur}">${v.label}</button>`).join('');
+  needs();
+  const el = $('device').querySelector(focus || '[data-code],input.in');
+  if (el && document.activeElement !== el && step > 0) { el.focus({ preventScroll: true }); if (el.setSelectionRange && el.type !== 'email') el.setSelectionRange(el.value.length, el.value.length); }
+}
+function needs() { $('device').querySelectorAll('[data-needs]').forEach(b => { const k = b.dataset.needs, v = ctx[k].trim(); b.disabled = k === 'email' ? !/^\S+@\S+\.\S+$/.test(v) : !v; }); }
+function go(to) {
+  const f = flows[cur];
+  if (!to) return;
+  if (to === 'next') { if (f.steps[step + 1] && !f.steps[step + 1].detached) step++; }
+  else if (to === 'back') step = Math.max(0, step - 1);
+  else { const i = f.steps.findIndex(s => s.id === to); if (i >= 0) step = i; }
+  st.code = '';
+  draw();
+}
+$('device').addEventListener('submit', e => { e.preventDefault(); if (!e.target.querySelector('[data-needs][disabled]')) go(e.target.dataset.go); });
+$('device').addEventListener('click', e => {
+  const t = e.target.closest('[data-toggle]'), g = e.target.closest('[data-go]');
+  if (t) { ctx[t.dataset.toggle] = !ctx[t.dataset.toggle]; draw('none'); }
+  else if (g && g.tagName !== 'FORM' && g.type !== 'submit' && !g.dataset.needs) { e.preventDefault(); go(g.dataset.go); }
+});
+$('device').addEventListener('input', e => {
+  const t = e.target;
+  if (t.dataset.bind) { ctx[t.dataset.bind] = t.value; needs(); $('device').querySelectorAll('[data-face]').forEach(el => { el.innerHTML = face(ctx.name, +el.dataset.face, ctx.cam); }); }
+  if ('code' in t.dataset) {
+    st.code = t.value = t.value.replace(/\D/g, '').slice(0, 6);
+    t.parentElement.querySelectorAll('b').forEach((b, i) => { b.textContent = st.code[i] ?? ''; b.className = i === st.code.length ? 'cur' : ''; });
+    if (st.code.length === 6) setTimeout(() => go('next'), 450);
+  }
+});
+$('flows').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { cur = b.dataset.v; step = 0; ctx = base(); st.code = ''; draw(); } });
+$('size').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { size = b.dataset.v; [...$('size').children].forEach(x => x.setAttribute('aria-pressed', x === b)); draw(); } });
+$('restart').addEventListener('click', () => { step = 0; ctx = base(); st.code = ''; draw(); });
+$('appearance').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { $('board').dataset.appearance = b.dataset.v; [...$('appearance').children].forEach(x => x.setAttribute('aria-pressed', x === b)); } });
+
+/* ── every screen, side by side ── */
+const shot = (frame, title, text, cls = '') => `<div class="shot ${cls}"><div class="still">${frame}</div><p><b>${title}</b> ${text}</p></div>`;
+const mom = { name: 'Mom', email: 'mom@gmail.com', mic: true, cam: false };
+$('sb1').innerHTML = [
+  shot(web(prejoin(base(), { title: 'Anna invited you to a call', foot: signinFoot })), '1a · First visit.', 'The button wakes up once there is a name.'),
+  shot(web(prejoin({ ...mom, cam: true }, { title: 'Anna invited you to a call', foot: 'Only you see your camera until you join.' })), '1b · Name typed, camera turned on.', 'The circle becomes the preview.'),
+  shot(web(prejoin(mom, { title: 'Friday dinner club', sub: 'Anna’s room', foot: 'Not Mom? Just change the name.' })), '1c · Coming back, a named room.', 'One tap. The room’s name is the headline when it has one.'),
+  shot(web(dead({ icon: 'wave', title: 'You left the call', text: 'You can come back while it lasts.', primary: 'Join again' })), '1d · After leaving.', 'Nothing to sign up for.'),
+].join('');
+$('sb2').innerHTML = [
+  shot(web(emailStep({ email: '' }, { face: face('Family', 88), title: 'Anna invited you to Family', sub: 'This call is private. Enter your email and we’ll send you a code to get in.' })), '2a · The invitation.', 'Opening it uses nothing up.'),
+  shot(web(codeStep(mom, { value: '482' })), '2b · The code.', 'Six boxes, one field underneath, so paste and autofill work. It moves on after the sixth digit.'),
+  shot(`<div class="fr short" style="box-shadow:none;overflow:visible">${mailCard({ subject: '482913 is your Cubie code', lead: 'Your code to join <b>Family</b> on Cubie:', button: 'Join Family' })}</div>`, '2c · The email.', 'The code is in the subject, so it shows in the notification. The button is for the same device.'),
+  shot(web(prejoin({ ...mom, name: '' }, { title: 'You’re in. What’s your name?', sub: 'Anna and the others will see it in Family.', foot: 'Signed in as mom@gmail.com' })), '2d · New account.', 'The name, and Join, on one screen.'),
+  shot(web(prejoin(mom, { title: 'Family', sub: 'Anna’s room', foot: 'Signed in as mom@gmail.com' })), '2e · Every time after.', 'The room’s link goes straight here.'),
+  shot(web(codeStep(mom, { value: '481913', bad: true })), '2f · Wrong code.', 'After five tries the code stops working and “Send a new code” is the way on.'),
+].join('');
+$('sb3').innerHTML = [
+  shot(web(emailStep({ email: '' }, { title: 'Sign in to Cubie', sub: 'Enter your email and we’ll send you a code.', foot: 'No password needed. Cubie is invite-only for now.' })), '3a · Sign in.', ''),
+  shot(web(home(mom)), '3b · Home.', 'Start a call, your rooms, where to get the apps.'),
+  shot(web(startSheet(mom)), '3c · Start a call.', 'A link to send.'),
+  shot(web(room(mom), 'cubiecall.com', 'tall'), '3d · A room you own.', 'Join, Invite someone, who has access.'),
+].join('');
+$('sb4').innerHTML = [
+  shot(mac(macWelcome({ email: '' })), '4a · Mac: welcome.', 'Also what an expired session comes back to, with the email filled in.', 'wide'),
+  shot(mac(macCode(mom, '4829')), '4b · Mac: the code.', 'Typed or pasted.', 'wide'),
+  shot(mac(macName({ name: 'Mom' })), '4c · Mac: name.', 'New accounts only. Today’s window.', 'wide'),
+  shot(mac(macHome(mom)), '4d · Mac: the account menu.', 'Replaces “Sign in / switch account”, “Cancel sign-in” and the code in the sidebar.', 'wide'),
+  shot(ios(iosWelcome({ email: '' })), '4e · iPhone: welcome.', 'The system’s field and button.'),
+  shot(ios(iosCode(mom, '')), '4f · iPhone: the code.', 'iOS offers the code from Mail above the keyboard.'),
+  shot(ios(iosName({ name: 'Mom' })), '4g · iPhone: name.', 'New accounts only.'),
+  shot(`<div class="fr short" style="box-shadow:none;overflow:visible">${mailCard({ subject: '482913 is your Cubie code', lead: 'Type this code in Cubie to sign in:' })}</div>`, '4h · The app’s email.', 'Only the code.'),
+].join('');
+$('sb5').innerHTML = [
+  shot(web(emailStep({ email: '' }, { face: `<div class="mark">${ic('lock', 34)}</div>`, title: 'This call is private', sub: 'Sign in to join it. Enter your email and we’ll send you a code.' })), 'A private room’s link, signed out.', 'Sign in first; then Join, or the next screen.'),
+  shot(web(dead({ icon: 'lock', title: 'You need an invitation', text: 'This call is private. Ask the person who sent the link to invite <b>mom@gmail.com</b>.', primary: 'Check again', foot: '<button class="lk">Use another account</button>' })), 'Signed in, not invited.', 'Says exactly what to ask for.'),
+  shot(web(dead({ icon: 'user', title: 'This invitation is for another email', text: 'You’re signed in as <b>mom@gmail.com</b>. Sign in with the email Anna invited.', primary: 'Use another email' })), 'An invitation made for a different email.', ''),
+  shot(web(dead({ icon: 'check', title: 'This invitation was already used', text: 'Each one works for one person. If that was you, sign in. If not, ask for a new one.', primary: 'Sign in' })), 'Invitation used.', ''),
+  shot(web(dead({ icon: 'clock', title: 'This invitation has expired', text: 'Ask the person who invited you for a new link.' })), 'Invitation expired or cancelled.', 'Nothing to press: the next step is a person.'),
+  shot(web(dead({ icon: 'users', title: 'This call is for two', text: 'Someone already joined it. If that was you, use the same browser, or sign in.', primary: 'Sign in', second: 'Check again' })), 'A call for two that is full.', ''),
+  shot(web(dead({ icon: 'lock', title: 'You no longer have access', text: 'The room’s owner removed you. Ask them if you need to come back.' })), 'Removed by the owner.', ''),
+  shot(web(dead({ icon: 'clock', title: 'This call has ended', text: 'Or the link is incomplete. Ask the person who invited you for a new one.' })), 'Closed room or a broken link.', ''),
+  shot(web(dead({ icon: 'off', title: 'Can’t reach Cubie', text: 'Check your internet connection and try again.', primary: 'Try again' })), 'Offline or the server is down.', ''),
+  shot(web(dead({ icon: 'globe', title: 'Open this link in Safari or Chrome', text: 'This app’s built-in browser can’t make calls.', primary: 'Copy link' })), 'A messenger’s built-in browser without calls.', 'Only when the browser really can’t.'),
+  shot(web(prejoin({ ...mom, mic: false }, { title: 'Anna invited you to a call', foot: '<span style="color:var(--w-bad)">The microphone is blocked. Allow it in the address bar, or join and listen.</span>' })), 'Microphone blocked.', 'Join still works.'),
+  shot(web(`${brand}<form class="col">${`<div class="mark">${ic('laptop', 34)}</div>`}<h1>Connect Cubie on your Mac</h1><p class="sub">Type the code Cubie shows on your Mac.</p><input class="in" placeholder="8-character code"><button class="btn" disabled>Connect as Mom</button><p class="foot">Signed in as mom@gmail.com. Don’t use a code someone sent you.</p></form>`), 'An app from before this change.', 'Its browser page stays, after the same email-and-code sign-in. It no longer offers to continue as a guest.'),
+  shot(web(emailStep({ email: '' }, { title: 'You’re invited to Cubie', sub: 'Enter your email and we’ll send you a code.' })), 'An invitation to Cubie without a room.', 'For friends an admin invites. Then the code, your name, and Home.'),
+].join('');
+draw();
+// In the thread: one section at a time, picked from the row of links.
+const tabs = [...document.querySelectorAll('.toc a')];
+function show(id) { document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === id)); tabs.forEach(a => a.classList.toggle('on', a.hash === '#' + id)); }
+if (!document.body.classList.contains('standalone')) { tabs.forEach(a => a.addEventListener('click', e => { e.preventDefault(); show(a.hash.slice(1)); })); show('play'); }
+</script>
+</body>
+</html>
