@@ -1,4 +1,5 @@
-//! Embedded assets: Lucide icons (ISC licence, see assets/icons/LICENSE).
+//! Embedded assets: Lucide icons (ISC licence, see assets/icons/LICENSE) and
+//! Quby, the mark on the sign-in window.
 
 use std::borrow::Cow;
 
@@ -33,6 +34,7 @@ icons! {
     Link => "link",
     LogIn => "log-in",
     LogOut => "log-out",
+    Mail => "mail",
     PanelRight => "panel-right",
     Pause => "pause",
     Play => "play",
@@ -62,10 +64,17 @@ icons! {
     Zap => "zap",
 }
 
+/// Quby in colour, for `gpui::img`: the web client's own file.
+pub const QUBY: &str = "quby.svg";
+static QUBY_SVG: &[u8] = include_bytes!("../../web/public/favicon.svg");
+
 pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
+        if path == QUBY {
+            return Ok(Some(Cow::Borrowed(QUBY_SVG)));
+        }
         Ok(FILES
             .iter()
             .find(|(p, _)| *p == path)

@@ -1,9 +1,5 @@
-//! First launch: what should people call you? Also how you change your name
-//! later (the pencil next to it on home).
-//!
-//! Signing in (email link, GitHub, Google, passkeys) joins this window once
-//! accounts exist; until then the name is all there is, and it stays on this
-//! Mac.
+//! What should people call you? Asked once, after a new account signs in
+//! (`sign_in.rs`), and how you change your name later (Account on home).
 
 use gpui::prelude::*;
 use gpui::{
@@ -16,13 +12,18 @@ use crate::text_input::{InputEvent, TextInput};
 use crate::theme::{ACCENT, BG, FIELD, TEXT, TEXT_DIM, TEXT_FAINT, white};
 use crate::ui::{Kind, avatar, button, icon};
 
-/// The window on first launch; home opens once you've said your name.
+/// For an account without a name yet; home (or the call a link asked for)
+/// opens once you've said it.
 pub fn open_first_run(cx: &mut App) {
     open(true, cx);
 }
 
 /// Change your name.
 pub fn open_profile(cx: &mut App) {
+    open(false, cx);
+}
+
+fn open(first_run: bool, cx: &mut App) {
     // One at a time.
     for handle in cx.windows() {
         if let Some(existing) = handle.downcast::<Onboarding>() {
@@ -30,10 +31,6 @@ pub fn open_profile(cx: &mut App) {
             return;
         }
     }
-    open(false, cx);
-}
-
-fn open(first_run: bool, cx: &mut App) {
     let bounds = Bounds::centered(None, size(px(400.0), px(500.0)), cx);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -52,6 +49,20 @@ fn open(first_run: bool, cx: &mut App) {
         .inspect_err(|e| tracing::warn!("open onboarding: {e:#}"));
 }
 
+/// Test scripts answer for the person.
+#[cfg(feature = "snapshot")]
+pub fn script_name(name: &str, cx: &mut App) {
+    for handle in cx.windows() {
+        if let Some(window) = handle.downcast::<Onboarding>() {
+            let _ = window.update(cx, |this, window, cx| {
+                this.input
+                    .update(cx, |input, cx| input.set_text(name.to_owned(), cx));
+                this.done(window, cx);
+            });
+        }
+    }
+}
+
 pub struct Onboarding {
     input: Entity<TextInput>,
     first_run: bool,
@@ -60,7 +71,11 @@ pub struct Onboarding {
 
 impl Onboarding {
     fn new(first_run: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let name = Shell::global(cx).read(cx).args.name.clone();
+        let mut name = Shell::global(cx).read(cx).args.name.clone();
+        if first_run && name.is_empty() {
+            // The name on this Mac's account is a fair first guess.
+            name = crate::default_name();
+        }
         let input = cx.new(|cx| TextInput::new(name, "Your name", cx));
         input.update(cx, |input, cx| input.focus(window, cx));
         let subscription =
@@ -89,7 +104,7 @@ impl Onboarding {
         Shell::global(cx).update(cx, |s, cx| {
             s.set_name(&name, cx);
             if first_run {
-                s.open_home(cx);
+                s.enter(cx);
             }
         });
         window.remove_window();
@@ -175,7 +190,7 @@ impl Render for Onboarding {
                 div()
                     .text_size(px(12.0))
                     .text_color(rgb(TEXT_FAINT))
-                    .child("Kept on this Mac. Accounts come later."),
+                    .child("You can change it later."),
             )
     }
 }

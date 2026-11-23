@@ -21,7 +21,7 @@ mod store;
 #[cfg(target_vendor = "apple")]
 mod video;
 
-pub use account::{Account, Client, ContactMatch, Room, RoomKind, SignIn};
+pub use account::{Account, Client, ContactMatch, Room, RoomKind};
 pub use call::{Call, CallEvent, CallListener, Quality};
 pub use store::{CallRecord, Moment, MomentKind};
 

@@ -163,7 +163,7 @@ body:not(.standalone) .toc a.on{background:var(--secondary,rgba(128,128,128,.16)
 <div id="board" data-appearance="dark">
   <header class="head">
     <h1>Cubie · joining and signing in · round 1</h1>
-    <p>Every screen asks for one thing and has one button. No passwords, no tabs to go back to, no words like “guest”, “member” or “session”. Click through the four flows in the player, then see every screen side by side below. Nothing here is built yet: tell me what to change and I'll redraw it.</p>
+    <p>Every screen asks for one thing and has one button. No passwords, no tabs to go back to, no words like “guest”, “member” or “session”. Click through the four flows in the player, then see every screen side by side below. Built from this round: the website, the server, and sign-in in the Mac and iPhone apps.</p>
     <div class="knobs">
       <span>Web and iPhone appearance <span class="seg" id="appearance"><button aria-pressed="true" data-v="dark">Dark</button><button aria-pressed="false" data-v="light">Light</button></span></span>
     </div>
@@ -223,7 +223,7 @@ body:not(.standalone) .toc a.on{background:var(--secondary,rgba(128,128,128,.16)
       <li><b>Today:</b> the app opens a browser, the browser needs its own sign-in (email, a link in a new tab, back to the first tab), then an 8-character code is read off the app and typed into the page. <b>New:</b> two screens in the app.</li>
       <li><b>The email for the app has only the code</b>, no button: a button would sign in the browser, not the app.</li>
       <li><b>The name window</b> stays as it is and shows only for a new account.</li>
-      <li><b>Home's account row</b> opens a small menu (your name, email, Change name, Sign out) instead of the buttons and the code that sit in the sidebar today.</li>
+      <li><b>Home's account row</b> shows your name and email, and opens Change name and Sign out, instead of the buttons and the code that sit in the sidebar today. <i>As built, they open in the sidebar where the old buttons were, not as a floating menu.</i></li>
       <li><b>Apps already installed</b> keep working: their browser page stays, restyled (see 5).</li>
     </ol>
   </section>
@@ -337,7 +337,8 @@ function startSheet(c) {
     <div class="mark ok" style="margin-top:18px">${ic('check', 34)}</div><h1>Your call is ready</h1>
     <p class="sub">Send this link to anyone. They join with just their name.</p>
     <div class="linkbox">cubiecall.com/?room=7f3a9c…</div>
-    <button class="btn" data-go="next">Copy link and join</button><button class="btn quiet" data-go="home">Not now</button></div></div>`;
+    <button class="btn">Copy link</button><button class="btn quiet" data-go="next">Join call</button>
+    <p class="foot"><button class="lk" data-go="home">Not now</button></p></div></div>`;
 }
 function room(c) {
   return `<div class="top"><button class="chip" data-go="home">${ic('left', 18)}Rooms</button><button class="chip">${face(c.name || 'Mom', 28)}</button></div>

@@ -15,6 +15,7 @@ mod rooms;
 mod screen_window;
 mod settings;
 mod share_picker;
+mod sign_in;
 #[cfg(feature = "snapshot")]
 mod snapshot;
 mod store;
@@ -121,7 +122,7 @@ fn parse_args() -> Args {
 }
 
 /// The account's full name ("Jane Appleseed"), else the login name.
-fn default_name() -> String {
+pub(crate) fn default_name() -> String {
     #[cfg(target_os = "macos")]
     {
         let full = objc2_foundation::NSFullUserName().to_string();
@@ -158,6 +159,8 @@ pub struct Shell {
     pub room_creation: auth::PendingOperation,
     pub auth_attempt: auth::SignInAttempt,
     pub auth_message: String,
+    /// The call a link asked for, joined once signed in and named.
+    pending_room: Option<String>,
     pub args: Args,
     pub store: Store,
     call: Option<(Entity<Call>, Subscription)>,
@@ -309,7 +312,10 @@ impl Shell {
             return;
         }
         if self.args.session.is_some() {
+            // Shown at once: a call that starts now already carries it.
+            self.args.name = name.to_owned();
             self.rename_profile(name, cx);
+            cx.notify();
             return;
         }
         self.args.name = name.to_owned();
@@ -466,7 +472,9 @@ fn main() {
     app.run(move |cx: &mut App| {
         let store = Store::load();
         let mut args = args.clone();
-        let first_run = store.name.is_none() && !args.name_given && args.room.is_none();
+        // A Mac without an account starts at sign-in. `--name` is how tests
+        // and development look at home without one.
+        let signed_out = args.session.is_none() && !args.name_given && args.room.is_none();
         if !args.name_given
             && let Some(name) = &store.name
         {
@@ -477,6 +485,7 @@ fn main() {
             room_creation: auth::PendingOperation::default(),
             auth_attempt: auth::SignInAttempt::default(),
             auth_message: String::new(),
+            pending_room: None,
             args,
             store,
             call: None,
@@ -502,7 +511,7 @@ fn main() {
                 },
                 cx,
             ),
-            None if first_run => cx.defer(onboarding::open_first_run),
+            None if signed_out => shell.sign_in(None, cx),
             None => shell.open_home(cx),
         });
 

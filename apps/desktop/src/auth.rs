@@ -1,5 +1,6 @@
-//! Browser approval keeps email/OAuth out of the native UI. Only the app that
-//! holds the polling secret can exchange an approved challenge for a session.
+//! The account on this Mac: its session in the Keychain, and signing in with
+//! a code the server emails. Only the app that asked for the code holds the
+//! challenge it goes with.
 use crate::{Shell, call::RoomRef, store::SavedRoom};
 use gpui::Context;
 use serde::Deserialize;
@@ -8,8 +9,11 @@ use serde_json::json;
 #[derive(Clone, Deserialize)]
 pub struct Principal {
     pub id: String,
+    /// Empty for a new account, until its owner has said what to be called.
     pub name: String,
     pub kind: String,
+    #[serde(default)]
+    pub email: Option<String>,
 }
 #[cfg(target_os = "macos")]
 const SESSION_SERVICE: &str = "com.cubiecall.session";
@@ -135,26 +139,72 @@ impl<T> Generation<T> {
         self.payload.is_some()
     }
 }
+/// A sign-in on its way: the window is open. `room`: the call a link asked
+/// for, joined once signed in.
 #[derive(Default)]
 pub struct SignIn {
-    pub code: Option<String>,
     room: Option<String>,
 }
 pub type SignInAttempt = Generation<SignIn>;
 pub type PendingOperation = Generation<()>;
 impl SignInAttempt {
-    fn request(&mut self, room: Option<String>) -> Option<u64> {
-        if self.pending() && room.is_none() {
-            return None;
+    /// One sign-in at a time: a link that arrives meanwhile changes where it
+    /// leads, not the window.
+    fn request(&mut self, room: Option<String>) -> u64 {
+        if !self.pending() {
+            return self.start(SignIn { room });
         }
-        Some(self.start(SignIn { code: None, room }))
-    }
-    pub fn code(&self) -> Option<String> {
-        self.payload.as_ref().and_then(|p| p.code.clone())
+        if room.is_some() {
+            self.payload.as_mut().unwrap().room = room;
+        }
+        self.generation
     }
     fn room(&self) -> Option<String> {
         self.payload.as_ref().and_then(|p| p.room.clone())
     }
+}
+/// Ask the server to email a sign-in code. The answer is the challenge the
+/// code goes with; it comes whether or not an email follows, so it says
+/// nothing about who has an account.
+pub async fn request_code(server: &str, email: &str) -> anyhow::Result<String> {
+    let sent = request(
+        server,
+        None,
+        "/auth/request",
+        Some(json!({"email":email,"app":true})),
+        "POST",
+    )
+    .await?;
+    sent["id"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("Update the server to sign in with a code"))
+}
+/// Exchange the emailed code for a session. The server keeps `previous`, this
+/// Mac's session until now, working until the new one has been used.
+pub async fn verify_code(
+    server: &str,
+    previous: Option<&str>,
+    challenge: &str,
+    code: &str,
+) -> anyhow::Result<(String, Principal)> {
+    let value = request(
+        server,
+        previous,
+        "/auth/verify",
+        Some(json!({"id":challenge,"code":code,"app":true})),
+        "POST",
+    )
+    .await?;
+    let token = value["token"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Missing session"))?
+        .to_owned();
+    Ok((token, serde_json::from_value(value["principal"].clone())?))
+}
+/// Sign a session out that this Mac won't keep after all.
+pub async fn discard(server: &str, token: &str) {
+    let _ = request(server, Some(token), "/auth/logout", Some(json!({})), "POST").await;
 }
 pub(crate) fn unauthorized(error: &anyhow::Error) -> bool {
     error
@@ -240,6 +290,7 @@ impl Shell {
         true
     }
 
+    /// Open the sign-in window. `room`: a call to join once signed in.
     pub fn sign_in(&mut self, room: Option<String>, cx: &mut Context<Self>) {
         if self.room_creation.pending() {
             if room.is_none() {
@@ -247,146 +298,48 @@ impl Shell {
             }
             self.room_creation.cancel();
         }
-        let Some(generation) = self.auth_attempt.request(room.clone()) else {
-            return;
-        };
-        self.auth_message = "Opening browser sign-in…".into();
+        self.auth_attempt.request(room);
+        cx.defer(crate::sign_in::open);
         cx.notify();
-        let args = self.args.clone();
-        cx.spawn(async move |this, cx| {
-            let start = request(
-                &args.server,
-                None,
-                "/auth/desktop/start",
-                Some(json!({})),
-                "POST",
-            )
-            .await;
-            let result: anyhow::Result<(String, Principal)> = async {
-                let start = start?;
-                let id = start["id"]
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid sign-in response"))?
-                    .to_owned();
-                let secret = start["secret"]
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid sign-in response"))?
-                    .to_owned();
-                let code = start["code"]
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("Update the server to use secure Mac sign-in"))?
-                    .to_owned();
-                let mut url = format!("{}/?desktop={id}", args.web.trim_end_matches('/'));
-                if let Some(room) = &room {
-                    url.push_str(&format!("&room={room}"));
-                }
-                let opened = this.update(cx, |s, cx| {
-                    if !s.auth_attempt.current(generation) {
-                        return false;
-                    }
-                    s.auth_attempt.payload.as_mut().unwrap().code = Some(code);
-                    s.auth_message = "Type this code in the browser on this Mac.".into();
-                    cx.open_url(&url);
-                    cx.notify();
-                    true
-                })?;
-                if !opened {
-                    anyhow::bail!("Sign-in cancelled");
-                }
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
-                let mut delay = std::time::Duration::from_secs(2);
-                while std::time::Instant::now() < deadline {
-                    if !this.update(cx, |s, _| s.auth_attempt.current(generation))? {
-                        anyhow::bail!("Sign-in cancelled");
-                    }
-                    cx.background_executor()
-                        .timer(
-                            delay
-                                .min(deadline.saturating_duration_since(std::time::Instant::now())),
-                        )
-                        .await;
-                    if std::time::Instant::now() >= deadline {
-                        break;
-                    }
-                    if !this.update(cx, |s, _| s.auth_attempt.current(generation))? {
-                        anyhow::bail!("Sign-in cancelled");
-                    }
-                    let value = request(
-                        &args.server,
-                        args.session.as_deref(),
-                        "/auth/desktop/poll",
-                        Some(json!({"id":id,"secret":secret})),
-                        "POST",
-                    )
-                    .await;
-                    let value = match value {
-                        Err(e) if cubie_core::http::transient(&e) => {
-                            delay = (delay * 2).min(std::time::Duration::from_secs(30));
-                            continue;
-                        }
-                        result => result?,
-                    };
-                    delay = std::time::Duration::from_secs(2);
-                    if value["pending"] == true {
-                        continue;
-                    }
-                    let token = value["token"]
-                        .as_str()
-                        .ok_or_else(|| anyhow::anyhow!("Missing session"))?
-                        .to_owned();
-                    let principal: Principal = serde_json::from_value(value["principal"].clone())?;
-                    return Ok((token, principal));
-                }
-                anyhow::bail!("Sign-in expired. Try again.")
-            }
-            .await;
-            let issued = result.as_ref().ok().map(|(token, _)| token.clone());
-            let installed = this
-                .update(cx, |s, cx| {
-                    let room = s.auth_attempt.room();
-                    if !s.auth_attempt.finish(generation) {
-                        return false;
-                    }
-                    match result {
-                        Ok((token, p)) => {
-                            if let Err(e) = save(&s.args.server, &token) {
-                                s.auth_message = format!("Cannot save session in Keychain: {e}");
-                                cx.notify();
-                                return false;
-                            }
-                            s.store.bind_rooms(Some(&p.id));
-                            s.store.save();
-                            s.args.session = Some(token);
-                            s.args.name = p.name.clone();
-                            s.principal = Some(p);
-                            s.auth_message.clear();
-                            s.refresh_account(cx);
-                            if let Some(room) = room {
-                                s.join_link(room, cx);
-                            }
-                        }
-                        Err(e) => {
-                            s.auth_message = e.to_string();
-                            cx.notify();
-                            return false;
-                        }
-                    }
-                    cx.notify();
-                    true
-                })
-                .unwrap_or(false);
-            if !installed && let Some(token) = issued {
-                let _ = request(
-                    &args.server,
-                    Some(&token),
-                    "/auth/logout",
-                    Some(json!({})),
-                    "POST",
-                )
-                .await;
-            }
-        })
-        .detach();
+    }
+    /// The code was right: keep the session, then go on to a name, the call
+    /// a link asked for, or home. An error is for the sign-in window to show;
+    /// its caller signs the unused session out.
+    pub fn signed_in(
+        &mut self,
+        token: String,
+        p: Principal,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if !self.auth_attempt.pending() {
+            return Err("Sign-in cancelled".into());
+        }
+        save(&self.args.server, &token)
+            .map_err(|e| format!("Cannot save session in Keychain: {e}"))?;
+        self.pending_room = self.auth_attempt.room();
+        self.auth_attempt.cancel();
+        self.store.bind_rooms(Some(&p.id));
+        self.store.save();
+        self.args.session = Some(token);
+        self.args.name = p.name.clone();
+        let named = !p.name.is_empty();
+        self.principal = Some(p);
+        self.auth_message.clear();
+        self.refresh_account(cx);
+        if named {
+            self.enter(cx);
+        } else {
+            cx.defer(crate::onboarding::open_first_run);
+        }
+        cx.notify();
+        Ok(())
+    }
+    /// Signed in, with a name: on to the call a link asked for, or home.
+    pub fn enter(&mut self, cx: &mut Context<Self>) {
+        match self.pending_room.take() {
+            Some(room) => self.join_link(room, cx),
+            None => self.open_home(cx),
+        }
     }
     pub fn refresh_account(&mut self, cx: &mut Context<Self>) {
         let args = self.args.clone();
@@ -407,6 +360,11 @@ impl Shell {
                 match result {
                     Ok((p, rooms)) => {
                         s.store.bind_rooms(Some(&p.id));
+                        // An account that never got its name (the app was
+                        // quit at the question) is asked again at launch.
+                        if p.name.is_empty() && s.principal.is_none() {
+                            cx.defer(crate::onboarding::open_first_run);
+                        }
                         s.args.name = p.name.clone();
                         s.principal = Some(p);
                         s.store.refresh_rooms(rooms);
@@ -425,12 +383,12 @@ impl Shell {
         })
         .detach();
     }
+    /// The sign-in window was closed before it was done.
     pub fn cancel_sign_in(&mut self, cx: &mut Context<Self>) {
         if !self.auth_attempt.pending() {
             return;
         }
         self.auth_attempt.cancel();
-        self.auth_message = "Sign-in cancelled".into();
         cx.notify();
     }
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
@@ -444,7 +402,15 @@ impl Shell {
             || clear(&args.server),
         );
         self.store.save();
-        self.auth_message = "Signed out".into();
+        self.auth_message.clear();
+        // Back to where a Mac without an account starts. The sign-in window
+        // opens before home closes, or the app would quit with no window.
+        self.sign_in(None, cx);
+        if let Some(home) = self.home.take() {
+            cx.defer(move |cx| {
+                let _ = home.update(cx, |_, window, _| window.remove_window());
+            });
+        }
         cx.notify();
         cx.spawn(async move |_, _| {
             let _ = request(
@@ -681,19 +647,21 @@ mod tests {
     }
 
     #[test]
-    fn room_handoff_restarts_pending_approval_and_rejects_old_results() {
+    fn a_link_during_sign_in_changes_where_it_leads_not_the_attempt() {
         let mut attempt = SignInAttempt::default();
-        let home = attempt.request(None).unwrap();
-        assert!(attempt.request(None).is_none());
-        let linked = attempt.request(Some("room-a".into())).unwrap();
-        assert!(!attempt.finish(home));
+        let home = attempt.request(None);
+        assert_eq!(attempt.request(None), home);
+        assert!(attempt.room().is_none());
+        assert_eq!(attempt.request(Some("room-a".into())), home);
         assert_eq!(attempt.room().as_deref(), Some("room-a"));
-        let newer = attempt.request(Some("room-b".into())).unwrap();
-        assert!(!attempt.finish(linked));
+        // Asking again without a link keeps the call that was asked for.
+        assert_eq!(attempt.request(None), home);
+        assert_eq!(attempt.request(Some("room-b".into())), home);
         assert_eq!(attempt.room().as_deref(), Some("room-b"));
-        assert!(attempt.current(newer));
+        assert!(attempt.current(home));
         attempt.cancel();
         assert!(attempt.room().is_none());
+        assert_ne!(attempt.request(None), home);
     }
     #[test]
     fn profile_and_rooms_refresh_are_in_flight_together() {
@@ -768,16 +736,14 @@ mod tests {
     }
 
     #[test]
-    fn cancelled_signin_cannot_open_browser_or_install_a_late_session() {
+    fn cancelled_signin_cannot_install_a_late_session() {
         let mut attempt = SignInAttempt::default();
         let old = attempt.start(SignIn::default());
-        attempt.payload.as_mut().unwrap().code = Some("1234ABCD".into());
         attempt.cancel();
         assert!(!attempt.pending());
-        assert!(attempt.code().is_none());
-        assert!(!attempt.current(old)); // delayed /start cannot open a browser
+        assert!(!attempt.current(old));
         let retry = attempt.start(SignIn::default());
-        assert!(!attempt.finish(old)); // delayed /poll cannot replace the retry
+        assert!(!attempt.finish(old)); // a delayed answer cannot replace the retry
         assert!(attempt.current(retry));
         assert!(attempt.finish(retry));
         assert!(!attempt.pending());
@@ -811,6 +777,7 @@ mod tests {
             id: "a".into(),
             name: "A".into(),
             kind: "user".into(),
+            email: None,
         });
         let mut store = crate::store::Store::default();
         store.bind_rooms(Some("a"));
@@ -830,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    fn throttled_non_json_response_keeps_status_for_poll_retry() {
+    fn throttled_non_json_response_keeps_its_status() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let server = format!("http://{}", listener.local_addr().unwrap());
         let task = std::thread::spawn(move || {
@@ -846,14 +813,9 @@ mod tests {
             }
             stream.write_all(b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 4\r\nConnection: close\r\n\r\nBusy").unwrap();
         });
-        let error = crate::test_support::block_on(request(
-            &server,
-            None,
-            "/auth/desktop/poll",
-            None,
-            "GET",
-        ))
-        .unwrap_err();
+        let error =
+            crate::test_support::block_on(request(&server, None, "/auth/verify", None, "GET"))
+                .unwrap_err();
         assert_eq!(error.downcast_ref::<RequestError>().unwrap().status, 429);
         task.join().unwrap();
     }

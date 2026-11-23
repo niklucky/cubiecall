@@ -101,6 +101,7 @@ Design: [UI.md](UI.md).
 
 - [x] ~~SQLite via sqlx, with migrations~~
 - [x] ~~Accounts: invite-only registration, email magic links through Resend, session tokens~~ *Web cookies, desktop Keychain/browser approval, bootstrap admin, separate provider identities ready for future OAuth.*
+- [x] ~~Sign-in codes: the email carries six digits that work only with the asking client's challenge (five tries, twenty wrong a day per email); an app asks for a code-only email and gets a provisional credential; a private room's invitation registers one account; new accounts start without a name~~
 - [ ] `protocol`: REST request/response types and WebSocket messages, with TypeScript types generated for web
 - [ ] WebSocket hub: authenticated connection, presence (online / away / in call)
 - [ ] LiveKit token minting for calls; LiveKit webhooks (joined / left / room finished) → call records
@@ -111,6 +112,7 @@ Design: [UI.md](UI.md).
 ## Stage 4 — Desktop app shell
 
 - [x] ~~Login, with the session stored in the macOS Keychain~~ *Browser approval with a private polling secret; refresh rooms, switch account and sign out.*
+- [x] ~~Sign in inside the app: a window for your email, then six boxes for the emailed code; a new account is asked its name; no browser~~ *Checked with the snapshot script against an isolated server: welcome, code, a wrong code, the name window and Home, for an account with and without a name.*
 - [ ] Menu-bar mode: runs in the background, stays connected for presence, small idle footprint. Check that GPUI's GPU memory (~90 MB with the call window open) is released when no window is open.
 - [ ] `core`: call state machine with no UI code
 - [ ] Contacts: add by username, see who's online
@@ -135,6 +137,7 @@ Design: [UI.md](UI.md).
 
 - [x] ~~Web magic-link login, room creation/joining and invitation/access management~~
 - [x] ~~Focused guest join flow: name, camera preview, mic level and input selection, permission recovery, invitation/access states, mobile layout and explicit Mac identity handoff~~ *Verified against an isolated LiveKit server with synthetic tracks; preview cleanup, enabled/disabled media, return visits, live removal and browser-to-Mac identity approval checked.*
+- [x] ~~Joining and signing in redesigned ([prototype/onboarding.html](prototype/onboarding.html)): a link asks for a name and nothing else (no app button, microphone on, camera off); a private invitation is email, code, name, in; the site is the same sign-in, then Start a call and your rooms; one sentence and one button for everything that can go wrong; light or dark as the system is set~~ *Clicked through in headless Chrome against an isolated stack: a public link into a call and back, a private invitation with a wrong and a right code, the email's link in another tab, Home, a room's page, the page for older apps.*
 - [ ] Contacts, ringing, place and answer contact calls from the browser
 - [ ] Call UI on par with desktop: grid, controls, screen share with frame-rate picker
 - [ ] Mobile layout (active speaker + up to 4 tiles), tested in Chrome on Android

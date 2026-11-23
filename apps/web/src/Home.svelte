@@ -43,7 +43,7 @@
   async function open(id: string) {
     const found = await api<RoomDetail>(`/rooms/${id}`);
     if (!alive) return;
-    detail = found; roomName = found.room.name; invitation = ''; renaming = false; copied = '';
+    detail = found; roomName = found.room.name; invitation = ''; renaming = false; copied = ''; menu = false;
   }
   const again = () => open(detail!.room.id);
   async function clip(text: string, what: string) { if (await copy(text)) { copied = what; setTimeout(() => { if (copied === what) copied = ''; }, 2500); } }

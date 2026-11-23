@@ -755,36 +755,25 @@ impl Home {
                             .on_click(cx.listener(|this, _, window, cx| this.new_room(window, cx))),
                     ),
             )
-            .when(
-                self.account_open || s.auth_attempt.pending() || !s.auth_message.is_empty(),
-                |el| {
-                    el.child(
-                        div()
-                            .px(px(12.0))
-                            .py(px(6.0))
-                            .flex()
-                            .flex_col()
-                            .gap(px(6.0))
-                            .child(
-                                button(
-                                    "sign-in",
-                                    if s.auth_attempt.pending() {
-                                        "Waiting for browser…"
-                                    } else {
-                                        "Sign in / switch account"
-                                    },
-                                    None,
-                                    Kind::Secondary,
-                                    true,
-                                )
-                                .when(s.auth_busy(), |button| button.opacity(0.45))
-                                .when(!s.auth_busy(), |button| {
-                                    button.on_click(|_, _, cx| {
+            .when(self.account_open || !s.auth_message.is_empty(), |el| {
+                el.child(
+                    div()
+                        .px(px(12.0))
+                        .py(px(6.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        .when(s.args.session.is_none(), |el| {
+                            el.child(
+                                button("sign-in", "Sign in", None, Kind::Secondary, true)
+                                    .when(s.room_creation.pending(), |button| button.opacity(0.45))
+                                    .on_click(|_, _, cx| {
                                         Shell::global(cx).update(cx, |s, cx| s.sign_in(None, cx))
-                                    })
-                                }),
+                                    }),
                             )
-                            .child(
+                        })
+                        .when(s.args.session.is_some(), |el| {
+                            el.child(
                                 button(
                                     "edit-name",
                                     "Change your name",
@@ -794,44 +783,23 @@ impl Home {
                                 )
                                 .on_click(|_, _, cx| crate::onboarding::open_profile(cx)),
                             )
-                            .when(s.auth_attempt.pending(), |el| {
-                                el.child(
-                                    button(
-                                        "cancel-sign-in",
-                                        "Cancel sign-in",
-                                        None,
-                                        Kind::Secondary,
-                                        true,
-                                    )
+                            .child(
+                                button("sign-out", "Sign out", None, Kind::Secondary, true)
                                     .on_click(|_, _, cx| {
-                                        Shell::global(cx).update(cx, |s, cx| s.cancel_sign_in(cx))
+                                        Shell::global(cx).update(cx, |s, cx| s.sign_out(cx))
                                     }),
-                                )
-                            })
-                            .when_some(s.auth_attempt.code(), |el, code| {
-                                el.child(
-                                    div().text_size(px(22.0)).text_color(rgb(TEXT)).child(code),
-                                )
-                            })
-                            .when(s.args.session.is_some(), |el| {
-                                el.child(
-                                    button("sign-out", "Sign out", None, Kind::Secondary, true)
-                                        .on_click(|_, _, cx| {
-                                            Shell::global(cx).update(cx, |s, cx| s.sign_out(cx))
-                                        }),
-                                )
-                            })
-                            .when(!s.auth_message.is_empty(), |el| {
-                                el.child(
-                                    div()
-                                        .text_size(px(11.0))
-                                        .text_color(rgb(TEXT_DIM))
-                                        .child(s.auth_message.clone()),
-                                )
-                            }),
-                    )
-                },
-            )
+                            )
+                        })
+                        .when(!s.auth_message.is_empty(), |el| {
+                            el.child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(rgb(TEXT_DIM))
+                                    .child(s.auth_message.clone()),
+                            )
+                        }),
+                )
+            })
             .child(
                 div()
                     .id("list")
@@ -858,10 +826,10 @@ impl Home {
                     .child(avatar(&me, 26.0))
                     .child(row_text(
                         me.clone(),
-                        if s.principal.as_ref().is_some_and(|p| p.kind == "user") {
-                            "Signed in"
-                        } else {
-                            "Guest / signed out"
+                        match &s.principal {
+                            Some(p) => p.email.clone().unwrap_or_else(|| "Signed in".into()),
+                            None if s.args.session.is_some() => "Signed in".into(),
+                            None => "Signed out".into(),
                         },
                     ))
                     .child(

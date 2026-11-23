@@ -31,7 +31,11 @@
 //!   voice: test instances speak `CUBIE_FAKE_MIC`, a 48 kHz float WAV),
 //!   `each-voice` (records each voice in its own file too), `quit-overlay`
 //!   (keeps the quit hint visible for screenshots), `appearance-light` /
-//!   `appearance-dark` (override this app's appearance for screenshots).
+//!   `appearance-dark` (override this app's appearance for screenshots),
+//!   `sign-in-email=<address>` (types it in the sign-in window and presses
+//!   Continue), `sign-in-code=<file>` (types the code in that file, a local
+//!   mail outbox's "Your Cubie code: 482913"; a wrong one if there is no
+//!   such file), `name=<name>` (answers "What should people call you?").
 
 use std::time::Duration;
 
@@ -115,6 +119,27 @@ fn act(action: &str, cx: &mut App) {
     };
     if let Some(appearance) = appearance {
         cx.set_window_appearance(Some(appearance));
+        return;
+    }
+
+    if let Some(email) = action.strip_prefix("sign-in-email=") {
+        crate::sign_in::script_email(email, cx);
+        return;
+    }
+    if let Some(file) = action.strip_prefix("sign-in-code=") {
+        let code = std::fs::read_to_string(file)
+            .ok()
+            .and_then(|mail| {
+                mail.split("code: ")
+                    .nth(1)
+                    .map(|rest| rest.chars().take(6).collect())
+            })
+            .unwrap_or_else(|| "000000".to_owned());
+        crate::sign_in::script_code(&code, cx);
+        return;
+    }
+    if let Some(name) = action.strip_prefix("name=") {
+        crate::onboarding::script_name(name, cx);
         return;
     }
 
