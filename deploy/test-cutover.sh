@@ -233,8 +233,11 @@ cat >/mock/bin/curl <<'SH'
 #!/bin/sh
 exit 0
 SH
+four=fedcba9876543210fedcba9876543210fedcba98
+echo "$four" >/ci/revision
 send /ci
 grep -qx 'server four' /opt/cubie/bin/cubie-server
+test "$(cat /opt/cubie/.revision)" = "$four"
 grep -qx 'server three' /opt/cubie/previous/cubie-server
 test "$(rows /opt/cubie/previous)" = 7
 
@@ -242,9 +245,14 @@ test "$(rows /opt/cubie/previous)" = 7
 add 'lost by going back'
 /opt/cubie/bin/cubie-app back
 grep -qx 'server three' /opt/cubie/bin/cubie-server
+test "$(cat /opt/cubie/.revision)" = "$commit"
 test "$(rows /var/lib/cubie)" = 7
+# And what went back is what the next deploy keeps, as it is by then.
+add 'after going back'
 send /ci
 grep -qx 'server four' /opt/cubie/bin/cubie-server
+grep -qx 'server three' /opt/cubie/previous/cubie-server
+test "$(rows /opt/cubie/previous)" = 8
 
 # Nothing but the three, as plain files, changes anything.
 bundle 'server five'

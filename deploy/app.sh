@@ -31,13 +31,20 @@ as_cubie() {
     runuser -u cubie -- "$@"
 }
 
+# One deployment or rollback at a time, `make deploy` included (deploy.sh
+# takes the same lock around install.sh).
+lock() {
+    exec 9>/run/lock/cubie-deploy.lock
+    flock -w 600 9 || die 'Another deployment is still running.'
+}
+
 # The API answers within half a minute, long enough to migrate the database.
 healthy() {
     i=0
-    until curl -fsS -m 5 http://127.0.0.1:4601/api/health >/dev/null 2>&1; do
+    until curl -fsS -m 2 http://127.0.0.1:4601/api/health >/dev/null 2>&1; do
         i=$((i + 1))
-        [ $i -ge 60 ] && return 1
-        sleep 0.5
+        [ $i -ge 30 ] && return 1
+        sleep 1
     done
 }
 
@@ -57,6 +64,7 @@ keep() {
     fi
     mkdir -m 700 "$PREVIOUS.new"
     cp -p "$ROOT/bin/cubie-server" "$PREVIOUS.new/"
+    [ ! -f "$ROOT/.revision" ] || cp "$ROOT/.revision" "$PREVIOUS.new/revision"
     [ ! -d "$ROOT/web" ] || cp -R "$ROOT/web" "$PREVIOUS.new/web"
 }
 
@@ -115,8 +123,14 @@ put_back() {
 }
 
 back() {
+    lock
     put_back
     healthy || die "The previous server is back in place, and doesn't answer."
+    # It is what runs now: the next deploy keeps a copy of it, not of the
+    # one it replaced.
+    mark
+    rm -f "$ROOT/.revision"
+    [ ! -f "$PREVIOUS/revision" ] || cp "$PREVIOUS/revision" "$ROOT/.revision"
     echo "the previous server, web client and database are back"
 }
 
@@ -130,10 +144,9 @@ receive() {
     [ -x "$ROOT/bin/cubie-server" ] && [ -d "$ROOT/web" ] && [ -f /etc/systemd/system/cubie-server.service ] ||
         die 'Cubie is not installed here yet. Run "make deploy" first.'
 
-    # One deployment at a time, `make deploy` included. A connection that
-    # sends nothing holds this up for five minutes, not for good.
-    exec 9>/run/lock/cubie-deploy.lock
-    flock -w 600 9 || die 'Another deployment is still running.'
+    # A connection that sends nothing holds the lock for five minutes, not
+    # for good.
+    lock
 
     # One fixed place: what an attempt that was killed left is gone with
     # the next one.
