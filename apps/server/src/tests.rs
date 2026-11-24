@@ -788,12 +788,17 @@ async fn csrf_and_email_rate_limits() {
         ask("curious", "unknown20@example.com").await,
         StatusCode::TOO_MANY_REQUESTS
     );
-    // Someone else, and an address that does have an account, are unaffected.
+    // From then on that requester learns nothing about any address, one
+    // with an account included. Someone else is unaffected.
+    assert_eq!(
+        ask("curious", "admin@example.com").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
     assert_eq!(
         ask("elsewhere", "unknown@example.com").await,
         StatusCode::NOT_FOUND
     );
-    assert_eq!(ask("curious", "admin@example.com").await, StatusCode::OK);
+    assert_eq!(ask("elsewhere", "admin@example.com").await, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -2565,7 +2570,8 @@ async fn sign_in_codes_need_their_challenge_and_work_once_a_few_tries() {
         StatusCode::OK
     );
 
-    // Twenty wrong codes in a day stop codes for that email.
+    // Twenty wrong codes in a day stop codes for that email from whoever
+    // gave them. The owner, somewhere else, still signs in with theirs.
     sqlx::query("UPDATE rate_limits SET count=20 WHERE key LIKE 'wrong-code:%'")
         .execute(&t.state.db)
         .await
@@ -2574,13 +2580,13 @@ async fn sign_in_codes_need_their_challenge_and_work_once_a_few_tries() {
         .execute(&t.state.db)
         .await
         .unwrap();
-    let (id, code, link) = t.code("admin@example.com", None, false).await;
+    let (id, code, _) = t.code("admin@example.com", None, false).await;
+    let answer = json!({"id":id,"code":code.unwrap()});
+    assert_eq!(verify(answer.clone()).await.0, StatusCode::BAD_REQUEST);
     assert_eq!(
-        verify(json!({"id":id,"code":code.unwrap()})).await.0,
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        verify(json!({"token":link.unwrap()})).await.0,
+        t.req_from("elsewhere", "POST", "/api/auth/verify", "", answer)
+            .await
+            .0,
         StatusCode::OK
     );
 }

@@ -206,15 +206,26 @@ grep -qx 'server two' /opt/cubie/previous/cubie-server
 # web client and the database as they were.
 bundle 'server four'
 add 'before server four'
+# The database's directory is the server's own, and this server is hostile:
+# it leaves a link there for root to write through.
+echo untouched >/root-only
+chmod 600 /root-only
 cat >/mock/bin/curl <<'SH'
 #!/bin/sh
-case "$*" in *4601/api/health*) ! grep -qx 'server four' /opt/cubie/bin/cubie-server ;; *) exit 0 ;; esac
+case "$*" in *4601/api/health*)
+    grep -qx 'server four' /opt/cubie/bin/cubie-server || exit 0
+    ln -sf /root-only /var/lib/cubie/cubie.db
+    exit 1 ;;
+esac
 SH
 refused /ci 2>/tmp/refused
 grep -q 'are back' /tmp/refused
 grep -qx 'server three' /opt/cubie/bin/cubie-server
 grep -qx 'server three' /opt/cubie/web/index.html
 test "$(cat /opt/cubie/.revision)" = "$commit"
+grep -qx untouched /root-only
+test ! -L /var/lib/cubie/cubie.db
+test "$(stat -c %U:%a /var/lib/cubie/cubie.db)" = cubie:600
 test "$(rows /var/lib/cubie)" = 6
 # And can be sent again once it's fixed, from the same rollback point.
 add 'after the failed server four'
@@ -226,6 +237,14 @@ send /ci
 grep -qx 'server four' /opt/cubie/bin/cubie-server
 grep -qx 'server three' /opt/cubie/previous/cubie-server
 test "$(rows /opt/cubie/previous)" = 7
+
+# Going back by hand is the same step.
+add 'lost by going back'
+/opt/cubie/bin/cubie-app back
+grep -qx 'server three' /opt/cubie/bin/cubie-server
+test "$(rows /var/lib/cubie)" = 7
+send /ci
+grep -qx 'server four' /opt/cubie/bin/cubie-server
 
 # Nothing but the three, as plain files, changes anything.
 bundle 'server five'

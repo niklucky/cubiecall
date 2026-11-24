@@ -295,6 +295,16 @@ async fn spend(
     }
     Ok(())
 }
+/// What `key` has counted in its current `period`, without counting more.
+async fn counted(db: &mut SqliteConnection, key: &str, period: i64) -> Result<i64> {
+    Ok(sqlx::query_scalar(
+        "SELECT COALESCE(SUM(count),0) FROM rate_limits WHERE key=? AND window=?",
+    )
+    .bind(key)
+    .bind(now() / period)
+    .fetch_one(db)
+    .await?)
+}
 #[derive(Deserialize)]
 pub struct AccountInvite {
     pub email: String,
@@ -417,15 +427,17 @@ pub async fn request_link(
     let invite = req.invite.as_deref().map(hash);
     // Said plainly: someone waiting for a code that will never come has no
     // way to find out why. It tells a stranger who has an account, so it is
-    // counted.
+    // counted, and a requester who has used the count up is told nothing
+    // about any address, known or not, until the hour is over.
+    let unknown = format!("unknown-email:{requester}");
+    if counted(&mut *s.db.acquire().await?, &unknown, 3600).await? >= UNKNOWN_EMAILS_AN_HOUR {
+        return Err(AppError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many attempts. Please try again later.",
+        ));
+    }
     if !may_sign_in(&s, &email, invite.as_deref()).await? {
-        rate(
-            &s,
-            &format!("unknown-email:{requester}"),
-            UNKNOWN_EMAILS_AN_HOUR,
-            3600,
-        )
-        .await?;
+        rate(&s, &unknown, UNKNOWN_EMAILS_AN_HOUR, 3600).await?;
         return Err(AppError::new(
             StatusCode::NOT_FOUND,
             if invite.is_some() {
@@ -680,8 +692,10 @@ pub struct Verify {
 }
 /// Wrong codes one challenge takes before it stops working.
 const CODE_TRIES: i64 = 5;
-/// Wrong codes one email takes in a day, across challenges: with six digits
-/// that leaves a guesser one chance in fifty thousand a day. Links still work.
+/// Wrong codes one requester may give for one email in a day, across
+/// challenges: with six digits that leaves a guesser one chance in fifty
+/// thousand a day. Counted per requester, so that a stranger guessing can't
+/// stop the owner's own codes from working. Links still work.
 const WRONG_CODES_A_DAY: i64 = 20;
 /// One answer for every way a code fails (wrong, used up, expired, never
 /// sent): which of them it was is nobody's to learn by guessing.
@@ -691,6 +705,7 @@ fn wrong_code() -> AppError {
 /// The email a code proves, and the invitation it was asked with.
 async fn verify_code(
     tx: &mut SqliteConnection,
+    requester: &str,
     challenge: &str,
     code: &str,
 ) -> Result<Option<(String, Option<String>)>> {
@@ -714,15 +729,8 @@ async fn verify_code(
     let Some(email) = links.first().map(|link| link.email.clone()) else {
         return Ok(None);
     };
-    let budget = format!("wrong-code:{}", hash(&email));
-    let window = now() / 86_400;
-    let wrong_today: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(count),0) FROM rate_limits WHERE key=? AND window=?",
-    )
-    .bind(&budget)
-    .bind(window)
-    .fetch_one(&mut *tx)
-    .await?;
+    let budget = format!("wrong-code:{requester}:{}", hash(&email));
+    let wrong_today = counted(&mut *tx, &budget, 86_400).await?;
     let expected = code_hash(challenge, &code);
     let found = links
         .iter()
@@ -761,7 +769,7 @@ pub async fn verify_link(
         let (Some(id), Some(code)) = (&req.id, &req.code) else {
             return Err(AppError::bad("Enter the code from your email"));
         };
-        let Some(proved) = verify_code(&mut tx, id, code).await? else {
+        let Some(proved) = verify_code(&mut tx, &client_ip(&h), id, code).await? else {
             // Keep the count of wrong tries.
             tx.commit().await?;
             return Err(wrong_code());

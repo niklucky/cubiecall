@@ -24,10 +24,17 @@ installed() {
     sha256sum "$ROOT/bin/cubie-server" 2>/dev/null | cut -d' ' -f1
 }
 
+# The database's directory belongs to the server, and the server is whatever
+# was last deployed. Root never opens a file there: a link left in it would
+# point root anywhere on the box. Reading and writing it is done as `cubie`.
+as_cubie() {
+    runuser -u cubie -- "$@"
+}
+
 # The API answers within half a minute, long enough to migrate the database.
 healthy() {
     i=0
-    until curl -fsS http://127.0.0.1:4601/api/health >/dev/null 2>&1; do
+    until curl -fsS -m 5 http://127.0.0.1:4601/api/health >/dev/null 2>&1; do
         i=$((i + 1))
         [ $i -ge 60 ] && return 1
         sleep 0.5
@@ -46,7 +53,7 @@ keep() {
     if [ -f "$ROOT/.deployed" ]; then
         [ "$(cat "$ROOT/.deployed")" = "$(installed)" ] || return 0
     else
-        curl -fsS http://127.0.0.1:4601/api/health >/dev/null 2>&1 || return 0
+        curl -fsS -m 5 http://127.0.0.1:4601/api/health >/dev/null 2>&1 || return 0
     fi
     mkdir -m 700 "$PREVIOUS.new"
     cp -p "$ROOT/bin/cubie-server" "$PREVIOUS.new/"
@@ -73,13 +80,16 @@ restart() {
     if [ -d "$PREVIOUS.new" ]; then
         systemctl stop cubie-server
         for suffix in '' -wal -shm; do
-            [ ! -f "$STATE/cubie.db$suffix" ] || cp -p "$STATE/cubie.db$suffix" "$PREVIOUS.new/"
+            [ ! -f "$STATE/cubie.db$suffix" ] ||
+                as_cubie cat "$STATE/cubie.db$suffix" > "$PREVIOUS.new/cubie.db$suffix"
         done
         rm -rf "$PREVIOUS"
         mv "$PREVIOUS.new" "$PREVIOUS"
         echo "kept the previous server, web client and database in $PREVIOUS"
     fi
-    systemctl restart cubie-server
+    # A server that won't start is the health check's to report, so that
+    # whoever waits for it can still put the previous one back.
+    systemctl restart cubie-server || echo "cubie-server did not start" >&2
 }
 
 # This server is now the one a later deploy may keep for a rollback.
@@ -88,14 +98,26 @@ mark() {
     mv "$ROOT/.deployed.new" "$ROOT/.deployed"
 }
 
-# Everything `keep` and `restart` set aside, back in place: the documented
-# rollback (docs/DEPLOY.md).
+# Everything `keep` and `restart` set aside, back in place (`back`, the
+# rollback in docs/DEPLOY.md). It loses what was written since.
 put_back() {
+    [ -f "$PREVIOUS/cubie-server" ] && [ -d "$PREVIOUS/web" ] && [ -f "$PREVIOUS/cubie.db" ] ||
+        die "There is no complete copy in $PREVIOUS."
     systemctl stop cubie-server
-    rm -f "$STATE/cubie.db-wal" "$STATE/cubie.db-shm"
-    cp -p "$PREVIOUS"/cubie.db* "$STATE/"
+    for suffix in '' -wal -shm; do
+        as_cubie rm -f "$STATE/cubie.db$suffix"
+        # shellcheck disable=SC2016
+        [ ! -f "$PREVIOUS/cubie.db$suffix" ] ||
+            as_cubie sh -c 'umask 077 && cat > "$1"' sh "$STATE/cubie.db$suffix" < "$PREVIOUS/cubie.db$suffix"
+    done
     swap "$PREVIOUS"
     systemctl start cubie-server
+}
+
+back() {
+    put_back
+    healthy || die "The previous server is back in place, and doesn't answer."
+    echo "the previous server, web client and database are back"
 }
 
 # A bundle from GitHub Actions on standard input: a gzipped tar of
@@ -163,8 +185,8 @@ receive() {
 }
 
 case "${1:-}" in
-    keep | restart | mark | receive) [ $# -eq 1 ] || die "usage: $0 $1" ;;
+    keep | restart | mark | receive | back) [ $# -eq 1 ] || die "usage: $0 $1" ;;
     swap) [ $# -eq 2 ] || die "usage: $0 swap <directory>" ;;
-    *) die "usage: $0 keep | swap <directory> | restart | mark | receive" ;;
+    *) die "usage: $0 keep | swap <directory> | restart | mark | receive | back" ;;
 esac
 "$@"

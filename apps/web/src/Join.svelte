@@ -49,12 +49,13 @@
   const view = $derived.by((): View => {
     if (!capable) return 'unsupported';
     if (!entry) return loading ? 'loading' : 'offline';
+    // Signing in from the door, or from a call that might be yours already.
+    if (wantsAccount && !account && ['ready', 'used', 'full'].includes(entry.state)) return 'account';
     switch (entry.state) {
       // An invitation wants an account first: any, or the one email it names.
       case 'signin': return account ? 'another' : 'signin';
       case 'private': return account ? 'uninvited' : 'signin';
-      case 'invite': return 'door';
-      case 'ready': return wantsAccount && !account ? 'account' : 'door';
+      case 'invite': case 'ready': return 'door';
       default: return entry.state;
     }
   });
@@ -161,7 +162,7 @@
   <SignIn title="Sign in to Cubie" sub="Enter your email and we’ll send you a code." pending={invitation ? { roomInvite: invitation } : { room: roomId }} onsignedin={signedIn}>
     {#snippet hero()}<img src="/favicon.svg" width="88" height="88" alt="" />{/snippet}
   </SignIn>
-  <button class="lk back" onclick={() => (wantsAccount = false)}>Back to the call</button>
+  <button class="lk back" onclick={() => (wantsAccount = false)}>Back</button>
 {:else if view === 'uninvited'}
   <Notice icon="lock" title="You need an invitation"><p class="sub">This call is private. Ask the person who sent the link to invite <b>{account?.email}</b>.</p>
     {@render again()}<p class="foot"><button class="lk" onclick={another}>Use another account</button></p></Notice>
