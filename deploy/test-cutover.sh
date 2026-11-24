@@ -285,5 +285,15 @@ rm /opt/cubie/.cutover-pending
 grep -qx 'server four' /opt/cubie/bin/cubie-server
 grep -qx 'server three' /opt/cubie/previous/cubie-server
 test ! -e /opt/cubie/incoming
+
+# A deploy from the release Mac names no commit: the last one sent mustn't
+# pass for it, now or in the copy the next deploy keeps.
+test -s /opt/cubie/.revision
+install_app
+grep -qx 'server two' /opt/cubie/bin/cubie-server
+test ! -e /opt/cubie/.revision
+bundle 'server six'
+send /ci
+test ! -e /opt/cubie/previous/revision
 echo 'Cutover, rollback, retry, and GitHub Actions deployment checks passed.'
 CONTAINER

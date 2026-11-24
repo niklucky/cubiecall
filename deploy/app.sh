@@ -100,10 +100,12 @@ restart() {
     systemctl restart cubie-server || echo "cubie-server did not start" >&2
 }
 
-# This server is now the one a later deploy may keep for a rollback.
+# This server is now the one a later deploy may keep for a rollback. Which
+# commit it is, only `receive` and `back` know: they say so after this.
 mark() {
     installed > "$ROOT/.deployed.new"
     mv "$ROOT/.deployed.new" "$ROOT/.deployed"
+    rm -f "$ROOT/.revision"
 }
 
 # Everything `keep` and `restart` set aside, back in place (`back`, the
@@ -129,7 +131,6 @@ back() {
     # It is what runs now: the next deploy keeps a copy of it, not of the
     # one it replaced.
     mark
-    rm -f "$ROOT/.revision"
     [ ! -f "$PREVIOUS/revision" ] || cp "$PREVIOUS/revision" "$ROOT/.revision"
     echo "the previous server, web client and database are back"
 }
