@@ -3,21 +3,23 @@
 The alpha uses one VPS (`root@testron.dev`, Debian 13, shared with other projects). Its canonical origin is **https://cubiecall.com**.
 
 ```sh
-make deploy        # server + web client + VPS config
-make release-mac   # build the Mac app and publish it at https://cubiecall.com/download/
-make mac-app       # build only → target/mac/
+git push origin main          # server + web client, tested and deployed by GitHub Actions
+git push origin v0.1.1        # the Mac app, built and published by GitHub Actions
+make deploy                   # from this Mac: server + web client + VPS config
+make release-mac              # from this Mac: the Mac app
+make mac-app                  # build only → target/mac/
 ```
 
-Set `CUBIE_HOST=user@host` to deploy somewhere else.
+Set `CUBIE_HOST=user@host` for `make deploy` to deploy somewhere else.
 
 ## Order of a release
 
-1. **Server and web first, together**: `make deploy`. The installer swaps the web client and restarts the server, which migrates its database as it starts. Apps already installed keep working with a newer server.
-2. **Check it**: `https://cubiecall.com/api/health`, sign in on the web, open a room link in a private window.
-3. **Then the Mac app**: push a `vX.Y.Z` tag on a commit the server already runs (see below). Never tag first: a Mac build can need what an older server doesn't have (signing in with a code needs migration 0007), and Sparkle hands it to everyone.
+1. **Server and web first, together**: merge to `main`. The **Deploy server and web** workflow tests both, builds them and replaces them on the box ([below](#github-actions-deploys)); the server migrates its database as it starts. Apps already installed keep working with a newer server.
+2. **Check it**: the workflow run is green (it checks `/api/health` and that the public page is the one it built). Sign in on the web, open a room link in a private window.
+3. **Then the Mac app**: push a `vX.Y.Z` tag on a commit the server already runs (see below). Never tag first, or before the deploy has finished: a Mac build can need what an older server doesn't have (signing in with a code needs migration 0007), and Sparkle hands it to everyone.
 4. **The iPhone app** isn't distributed yet (`make release-ios` uploads for TestFlight when it is).
 
-`make deploy` ships the working tree as it is and runs no tests: run `make check`, `cargo test -p cubie-server` and `pnpm test` in `apps/web` first. `deploy/test-cutover.sh` (Docker) exercises the installer itself.
+A change under `deploy/` (nginx, systemd units, LiveKit, the installer, the deploy key) reaches the box only with `make deploy`: GitHub Actions can't make it. `make deploy` ships the working tree as it is and runs no tests: run `make check`, `cargo test -p cubie-server` and `pnpm test` in `apps/web` first. `deploy/test-cutover.sh` (Docker) exercises the installer and what GitHub Actions may send it.
 
 ## Rolling back
 
@@ -32,7 +34,7 @@ rm -rf /opt/cubie/web && cp -R /opt/cubie/previous/web /opt/cubie/web
 systemctl start cubie-server
 ```
 
-A retry after a failed deploy leaves `previous` alone: it is only replaced once a deploy has finished. Rolling the Mac app back is a new release with a higher version from the older code; Sparkle doesn't downgrade.
+A retry after a failed deploy leaves `previous` alone: it is only replaced once a deploy has finished. A deploy from GitHub Actions does this by itself when the new server doesn't answer within half a minute, and fails its run; `/opt/cubie/.revision` names the commit the last one put in place. Rolling the Mac app back is a new release with a higher version from the older code; Sparkle doesn't downgrade.
 
 ## First deployment under the Cubie name
 
@@ -67,12 +69,35 @@ Browser handoffs use `quipcall://` to open installed apps from either release. T
 
 1. The server, cross-compiled to a static Linux binary with `cargo zigbuild` (`x86_64-unknown-linux-musl`; Zig compiles bundled SQLite and TLS C code), and the web client (`pnpm build`). Install `zig` and `cargo-zigbuild` on the build Mac first.
 2. One tarball over SSH to a private temporary directory under `/opt/cubie-incoming.*`, removed afterwards.
-3. `install.sh` (idempotent): user and directories, LiveKit at the pinned version, keys, configs, units, web files, nginx site, then health checks (`/api/health` through nginx, LiveKit on 7880).
+3. `install.sh` (idempotent): user and directories, LiveKit at the pinned version, keys, configs, units, the server and web files (`deploy/app.sh`), nginx site, health checks (`/api/health` through nginx, LiveKit on 7880), then the account GitHub Actions deploys with (`deploy/ci-access.sh`).
 
 Guard rails, because the box is shared:
 - LiveKit restarts only when its binary, config or unit changed. A restart drops every call in progress. The API server always restarts; that takes milliseconds and keeps calls alive.
 - If `nginx -t` rejects the new site, the previous one is restored, so other sites keep working and future reloads don't fail.
-- Subsequent deploys update the Cubie site, two systemd units, and the application, database and ACME directories listed above.
+- Subsequent deploys update the Cubie site, two systemd units, the `cubie-deploy` account with its one sudo rule, and the application, database and ACME directories listed above. The sudo rule is checked with `visudo` before and after it goes in, and removed if sudo objects.
+
+## GitHub Actions deploys
+
+The **Deploy server and web** workflow (`.github/workflows/deploy.yml`) runs on every push to `main` that changes `apps/server`, `apps/web`, `crates/protocol` or the Cargo manifests, and from Actions → **Run workflow** on `main`; on any other branch it does nothing. Runs go one at a time, in order.
+
+1. Two jobs on `ubuntu-24.04`: `cargo test -p cubie-server`, then the static binary (`x86_64-unknown-linux-musl`, compiled with `musl-tools` and Rust 1.99.0); `pnpm check`, `pnpm test`, then `pnpm build`. A failed test deploys nothing.
+2. The deploy job sends one bundle over SSH: `cubie-server`, `web/` and `revision` (the commit).
+3. On the box `deploy/app.sh receive` checks the bundle (those three, plain files only), keeps what it replaces in `/opt/cubie/previous`, swaps the server and the web client, restarts the server and waits for `/api/health`. If it doesn't answer in half a minute, the previous server, web client and database go back and the run fails. The same build sent again changes nothing.
+4. The job then checks `https://cubiecall.com/api/health` and that the public page is the one it built.
+
+It deploys the application only. nginx, the systemd units, LiveKit, certificates, `secrets.env`, the download page and the installer itself change with `make deploy`, which uses the same `deploy/app.sh` steps and the same lock, so the two can't run into each other.
+
+What it may do on the box is one thing. Its SSH key signs in as `cubie-deploy`, an account with no files of its own (its `authorized_keys` in `/opt/cubie/ci` belongs to root) and no shell session: every connection runs `sudo /opt/cubie/bin/cubie-app receive`, whatever it asked for, and the rule in `/etc/sudoers.d/cubie-deploy` allows that command alone. Nothing in a bundle runs as root; the server runs as `cubie`. `deploy/ci-access.sh` sets this up on every `make deploy`, from the public key in `deploy/ci-deploy.pub`.
+
+On GitHub the key lives in the `production` environment, which accepts the `main` branch only, so a workflow on another branch can't read it:
+
+| | |
+| --- | --- |
+| `DEPLOY_KEY` (secret) | The private half of `deploy/ci-deploy.pub`. It exists nowhere else |
+| `DEPLOY_KNOWN_HOSTS` (secret) | The box's host key, from the release Mac's `known_hosts` |
+| `CUBIE_DEPLOY_HOST` (variable) | `cubie-deploy@testron.dev` |
+
+To replace the key: `ssh-keygen -t ed25519 -N '' -C cubie-github-deploy -f key`, put `key.pub` in `deploy/ci-deploy.pub`, `make deploy`, `gh secret set DEPLOY_KEY --env production < key`, and delete `key`. To switch deploys off, disable the workflow, or remove `/etc/sudoers.d/cubie-deploy` on the box.
 
 ## Mac app
 

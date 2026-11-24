@@ -38,7 +38,7 @@ To add a low-level LiveKit test participant (bypasses application auth): `lk roo
 
 ## Ship
 
-- `make deploy` updates the server, the web client and the VPS config.
+- A push to `main` deploys the server and the web client (GitHub Actions); `make deploy` does the same from this Mac, plus the VPS config.
 - Push a tag such as `v0.1.1` to build, sign, notarize and publish both Mac apps through GitHub Actions. A manual **Release Mac app** run builds signed downloads without publishing.
 - `make release-mac` remains available for a local recovery release; set `CUBIE_BUILD` higher than the published build number.
 - Details are in [docs/DEPLOY.md](docs/DEPLOY.md).

@@ -12,7 +12,7 @@ Read README.md first. Plan: docs/PLAN.md. Decisions: docs/ARCHITECTURE.md.
 - In PLAN.md, finished tasks are marked `[x] ~~task~~` and finished stages `## ~~Stage N~~ ✅`. Update it as work lands.
 - Run `make check` (clippy with `-D warnings`, plus svelte-check) and `cargo fmt --all` before committing.
 - Cargo needs `vendor/webrtc-sys` (crates.io source + `vendor/webrtc-sys.patch`, gitignored). `make` targets create it; in a fresh checkout run `dev/vendor-webrtc-sys.sh` before plain `cargo`.
-- Commit locally only. Push only when asked.
+- Commit locally only. Push only when asked. A push to `main` that touches `apps/server`, `apps/web` or `crates/protocol` deploys them to production (`.github/workflows/deploy.yml`, docs/DEPLOY.md).
 
 ## Never
 - Kill the user's `make dev` or `make web` (ports 7880, 8080 and 5173). Run your own stack with `source dev/isolated-env.sh` from the repository root. It allocates fresh database/outbox/native state, matches the browser Origin to Vite 5273, and configures LiveKit 7980 and server 8180. Do not source `dev/dev.env` or use the ordinary `make dev` for isolated tests. Launch commands are in docs/DEPLOY.md. Point the app at it with both `--server "$CUBIE_API"` and `--web "$CUBIE_PUBLIC_URL"`.

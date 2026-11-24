@@ -3,8 +3,10 @@
 #
 # Layout: /opt/cubie/{bin,web,download}, secrets.env (API keys, made here
 # once), livekit.yaml, previous/ (what the last deploy replaced, for a
-# rollback: docs/DEPLOY.md); systemd units cubie-livekit and cubie-server;
-# nginx site cubiecall.com. Nothing else on the box is touched.
+# rollback: docs/DEPLOY.md), ci/ (the key GitHub Actions deploys with);
+# systemd units cubie-livekit and cubie-server; nginx site cubiecall.com;
+# the cubie and cubie-deploy accounts and the second one's sudo rule
+# (deploy/ci-access.sh). Nothing else on the box is touched.
 set -eu
 umask 022
 STAGE=$(cd "$(dirname "$0")/.." && pwd)
@@ -167,42 +169,15 @@ else
 fi
 
 
-# What a rollback needs. A new server may migrate the database, and the one
-# it replaces refuses a database newer than itself, so going back takes the
-# old server, the old web client and the database as they were together.
-# Taken only from a deployment that finished (or, the first time this runs,
-# one that answers): a retry after a failed attempt must not replace it with
-# that attempt's own half-upgraded state.
-PREVIOUS=$ROOT/previous
-rm -rf "$PREVIOUS.new"
-snapshot=
-installed=$(sha256sum "$ROOT/bin/cubie-server" 2>/dev/null | cut -d' ' -f1)
-if [ -z "$upgrade" ] && [ -n "$installed" ] && [ -f "$STATE/cubie.db" ]; then
-    if [ -f "$ROOT/.deployed" ]; then
-        [ "$(cat "$ROOT/.deployed")" != "$installed" ] || snapshot=1
-    elif curl -fsS http://127.0.0.1:4601/api/health >/dev/null 2>&1; then
-        snapshot=1
-    fi
-fi
-if [ -n "$snapshot" ]; then
-    mkdir -m 700 "$PREVIOUS.new"
-    cp -p "$ROOT/bin/cubie-server" "$PREVIOUS.new/"
-    [ ! -d "$ROOT/web" ] || cp -R "$ROOT/web" "$PREVIOUS.new/web"
-fi
+# Keep what this deploy replaces, for a rollback (deploy/app.sh). The first
+# cutover has its own way back: the legacy services and their database.
+app() { sh "$STAGE/deploy/app.sh" "$@"; }
+[ -n "$upgrade" ] || app keep
 
 put "$STAGE/deploy/livekit.yaml" $ROOT/livekit.yaml 644
 put "$STAGE/deploy/systemd/cubie-livekit.service" /etc/systemd/system/cubie-livekit.service 644
 put "$STAGE/deploy/systemd/cubie-server.service" /etc/systemd/system/cubie-server.service 644
-install -m 755 "$STAGE/cubie-server" $ROOT/bin/cubie-server.new
-mv $ROOT/bin/cubie-server.new $ROOT/bin/cubie-server
-
-# Web client: swap the whole directory at once.
-rm -rf $ROOT/web.new $ROOT/web.old
-cp -R "$STAGE/web" $ROOT/web.new
-chmod -R u=rwX,go=rX $ROOT/web.new
-[ -d $ROOT/web ] && mv $ROOT/web $ROOT/web.old
-mv $ROOT/web.new $ROOT/web
-rm -rf $ROOT/web.old
+app swap "$STAGE"
 install -m 644 "$STAGE/deploy/download/index.html" "$STAGE/deploy/download/install.sh" $ROOT/download/
 
 systemctl daemon-reload
@@ -268,18 +243,7 @@ if [ "$(cat "$ROOT/.running-livekit" 2>/dev/null || true)" != "$livekit_revision
 else
     systemctl start cubie-livekit
 fi
-if [ -n "$snapshot" ]; then
-    # The database as the old server left it. Stopped first, so the copy
-    # (with its write-ahead log) is whole.
-    systemctl stop cubie-server
-    for suffix in '' -wal -shm; do
-        [ ! -f "$STATE/cubie.db$suffix" ] || cp -p "$STATE/cubie.db$suffix" "$PREVIOUS.new/"
-    done
-    rm -rf "$PREVIOUS"
-    mv "$PREVIOUS.new" "$PREVIOUS"
-    echo "kept the previous server, web client and database in $PREVIOUS"
-fi
-systemctl restart cubie-server
+app restart
 
 for unit in cubie-livekit cubie-server; do
 	if ! eventually systemctl is-active --quiet $unit; then
@@ -315,7 +279,7 @@ eventually curl -fsS --resolve $DOMAIN:443:127.0.0.1 https://$DOMAIN/api/health 
 	journalctl -u cubie-server -n 30 --no-pager
 	exit 1
 }
-# This server is now the one a later deploy may keep for a rollback.
-sha256sum "$ROOT/bin/cubie-server" | cut -d' ' -f1 > "$ROOT/.deployed.new"
-mv "$ROOT/.deployed.new" "$ROOT/.deployed"
+app mark
+# GitHub Actions deploys the server and web client from here on.
+sh "$STAGE/deploy/ci-access.sh"
 echo "deployed: https://$DOMAIN"
