@@ -3,12 +3,33 @@
 The alpha uses one VPS (`root@testron.dev`, Debian 13, shared with other projects). Its canonical origin is **https://cubiecall.com**.
 
 ```sh
-make deploy        # server + web client + VPS config
-make release-mac   # build the Mac app and publish it at https://cubiecall.com/download/
-make mac-app       # build only → target/mac/
+git push origin main          # server + web client, tested and deployed by GitHub Actions
+git push origin v0.1.1        # the Mac app, built and published by GitHub Actions
+make deploy                   # from this Mac: server + web client + VPS config
+make release-mac              # from this Mac: the Mac app
+make mac-app                  # build only → target/mac/
 ```
 
-Set `CUBIE_HOST=user@host` to deploy somewhere else.
+Set `CUBIE_HOST=user@host` for `make deploy` to deploy somewhere else.
+
+## Order of a release
+
+1. **Server and web first, together**: merge to `main`. The **Deploy server and web** workflow tests both, builds them and replaces them on the box ([below](#github-actions-deploys)); the server migrates its database as it starts. Apps already installed keep working with a newer server.
+2. **Check it**: the workflow run is green (it checks `/api/health` and that the public page is the one it built). Sign in on the web, open a room link in a private window.
+3. **Then the Mac app**: push a `vX.Y.Z` tag on a commit the server already runs (see below). Never tag first, or before the deploy has finished: a Mac build can need what an older server doesn't have (signing in with a code needs migration 0007), and Sparkle hands it to everyone.
+4. **The iPhone app** isn't distributed yet (`make release-ios` uploads for TestFlight when it is).
+
+A change under `deploy/` (nginx, systemd units, LiveKit, the installer, the deploy key) reaches the box only with `make deploy`: GitHub Actions can't make it. `make deploy` ships the working tree as it is and runs no tests: run `make check`, `cargo test -p cubie-server` and `pnpm test` in `apps/web` first. `deploy/test-cutover.sh` (Docker) exercises the installer and what GitHub Actions may send it.
+
+## Rolling back
+
+Every deploy keeps what it replaced in `/opt/cubie/previous` (root only): the server, the web client, and the database copied while the old server was stopped. A server refuses a database migrated by a newer one ("migration N was previously applied but is missing"), so going back means all three together, and loses what was written since the deploy:
+
+```sh
+ssh root@testron.dev /opt/cubie/bin/cubie-app back
+```
+
+A retry after a failed deploy leaves `previous` alone: it is only replaced once a deploy has finished. A deploy from GitHub Actions does this by itself when the new server doesn't answer within half a minute, and fails its run; `/opt/cubie/.revision` names the commit the last one put in place. Rolling the Mac app back is a new release with a higher version from the older code; Sparkle doesn't downgrade.
 
 ## First deployment under the Cubie name
 
@@ -43,12 +64,35 @@ Browser handoffs use `quipcall://` to open installed apps from either release. T
 
 1. The server, cross-compiled to a static Linux binary with `cargo zigbuild` (`x86_64-unknown-linux-musl`; Zig compiles bundled SQLite and TLS C code), and the web client (`pnpm build`). Install `zig` and `cargo-zigbuild` on the build Mac first.
 2. One tarball over SSH to a private temporary directory under `/opt/cubie-incoming.*`, removed afterwards.
-3. `install.sh` (idempotent): user and directories, LiveKit at the pinned version, keys, configs, units, web files, nginx site, then health checks (`/api/health` through nginx, LiveKit on 7880).
+3. `install.sh` (idempotent): user and directories, LiveKit at the pinned version, keys, configs, units, the server and web files (`deploy/app.sh`), nginx site, health checks (`/api/health` through nginx, LiveKit on 7880), then the account GitHub Actions deploys with (`deploy/ci-access.sh`).
 
 Guard rails, because the box is shared:
 - LiveKit restarts only when its binary, config or unit changed. A restart drops every call in progress. The API server always restarts; that takes milliseconds and keeps calls alive.
 - If `nginx -t` rejects the new site, the previous one is restored, so other sites keep working and future reloads don't fail.
-- Subsequent deploys update the Cubie site, two systemd units, and the application, database and ACME directories listed above.
+- Subsequent deploys update the Cubie site, two systemd units, the `cubie-deploy` account with its one sudo rule, and the application, database and ACME directories listed above. The sudo rule is checked with `visudo` before and after it goes in, and removed if sudo objects.
+
+## GitHub Actions deploys
+
+The **Deploy server and web** workflow (`.github/workflows/deploy.yml`) runs on every push to `main` that changes `apps/server`, `apps/web`, `crates/protocol` or the Cargo manifests, and from Actions → **Run workflow** on `main`; on any other branch it does nothing. Runs go one at a time, in order.
+
+1. Two jobs on `ubuntu-24.04`: `cargo test -p cubie-server`, then the static binary (`x86_64-unknown-linux-musl`, compiled with `musl-tools` and Rust 1.99.0); `pnpm check`, `pnpm test`, then `pnpm build`. A failed test deploys nothing.
+2. The deploy job sends one bundle over SSH: `cubie-server`, `web/` and `revision` (the commit).
+3. On the box `deploy/app.sh receive` checks the bundle (those three, plain files only), keeps what it replaces in `/opt/cubie/previous`, swaps the server and the web client, restarts the server and waits for `/api/health`. If it doesn't answer in half a minute, the previous server, web client and database go back and the run fails. The same build sent again changes nothing.
+4. The job then checks `https://cubiecall.com/api/health` and that the public page is the one it built.
+
+It deploys the application only. nginx, the systemd units, LiveKit, certificates, `secrets.env`, the download page and the installer itself change with `make deploy`, which uses the same `deploy/app.sh` steps and the same lock, so the two can't run into each other.
+
+What it may do on the box is one thing. Its SSH key signs in as `cubie-deploy`, an account with no files of its own (its `authorized_keys` in `/opt/cubie/ci` belongs to root) and no shell session: every connection runs `sudo /opt/cubie/bin/cubie-app receive`, whatever it asked for, and the rule in `/etc/sudoers.d/cubie-deploy` allows that command alone. Nothing in a bundle runs as root; the server runs as `cubie`. `deploy/ci-access.sh` sets this up on every `make deploy`, from the public key in `deploy/ci-deploy.pub`.
+
+On GitHub the key lives in the `production` environment, which accepts the `main` branch only, so a workflow on another branch can't read it:
+
+| | |
+| --- | --- |
+| `DEPLOY_KEY` (secret) | The private half of `deploy/ci-deploy.pub`. It exists nowhere else |
+| `DEPLOY_KNOWN_HOSTS` (secret) | The box's host key, from the release Mac's `known_hosts` |
+| `CUBIE_DEPLOY_HOST` (variable) | `cubie-deploy@testron.dev` |
+
+To replace the key: `ssh-keygen -t ed25519 -N '' -C cubie-github-deploy -f key`, put `key.pub` in `deploy/ci-deploy.pub`, `make deploy`, `gh secret set DEPLOY_KEY --env production < key`, and delete `key`. To switch deploys off, disable the workflow, or remove `/etc/sudoers.d/cubie-deploy` on the box.
 
 ## Mac app
 
@@ -124,15 +168,15 @@ The installer requires Python 3, validates these settings before replacing the r
 
 The systemd unit sets the public origin to `https://cubiecall.com`, creates a private state directory, and stores SQLite at `/var/lib/cubie/cubie.db`. Back this database up using SQLite's online backup command (or stop the API before copying it). It contains accounts, sessions, invitations, rooms and memberships. Restarting the API preserves access. Migrations run at startup. The API checks readiness by opening and migrating the database before binding its port.
 
-Sign in on the web, then use **Invite a new account** to make a single-use, email-bound registration link. Share the link yourself. It expires after seven days. The recipient enters the invited email and verifies it through Resend. Existing accounts only need an email sign-in link. Magic links expire after 15 minutes and are consumed only by an explicit confirmation POST, so email-link scanners don't consume them. Credential hashes, rather than bearer credentials, are stored in SQLite.
+Sign in on the web, then use **Invite a new account** to make a single-use, email-bound registration link. Share the link yourself. It expires after seven days. The recipient enters the invited email and verifies it through Resend. An invitation to a private room does the same for whoever it is sent to: they register with it, and it becomes their membership. Existing accounts only need a sign-in email. It carries a 6-digit code, typed where it was asked for, and (to a browser) a link; both expire after 15 minutes and work once. The link is consumed only by an explicit confirmation POST, so email-link scanners don't consume it. The code works only with the challenge returned to the asking client, five tries per challenge and twenty wrong codes a day per requester and email. Credential hashes, rather than bearer credentials, are stored in SQLite.
 
-Browser sessions use HttpOnly, Secure, SameSite=Lax cookies on production. Native sessions use macOS Keychain, scoped to the server and (for tests) `CUBIE_DATA_DIR`. Desktop sign-in opens the browser and requires typing the eight-character code shown by that Mac. The code is absent from the URL, stored hashed on the server, and limited to five approval attempts. Pending sign-in can be cancelled immediately. HTTP 401 clears the exact failed native credential; an admission failure returns Home and starts sign-in for that room. Stale responses cannot clear a newer session. The app exchanges a separate private polling secret for a session; no session credential is passed through a custom URL scheme. User sessions last 30 days and guest sessions one year, with renewal on active use. Authenticated use renews the deadline once less than half remains, and browser cookies follow that deadline; expired or revoked credentials are never renewed. A room membership persists independently of session expiry; a guest who loses their credential needs a fresh invitation. Apple and other OAuth providers are deferred; the `identities` table already separates provider identity from the internal account ID.
+Browser sessions use HttpOnly, Secure, SameSite=Lax cookies on production. Native sessions use macOS Keychain, scoped to the server and (for tests) `CUBIE_DATA_DIR`. The Mac and iPhone apps sign in in their own window with the emailed code (`/api/auth/request` and `/api/auth/verify` with `"app": true`: an email without a link, and a bearer credential instead of a cookie). Builds from before that open the browser and require typing the eight-character code shown by the app; that code is absent from the URL, stored hashed on the server, and limited to five approval attempts. The web page for it now requires an account. HTTP 401 clears the exact failed native credential; an admission failure returns Home and starts sign-in for that room. Stale responses cannot clear a newer session. No session credential is passed through a custom URL scheme. User sessions last 30 days and guest sessions one year, with renewal on active use. Authenticated use renews the deadline once less than half remains, and browser cookies follow that deadline; expired or revoked credentials are never renewed. A room membership persists independently of session expiry; a guest who loses their credential needs a fresh invitation. Apple and other OAuth providers are deferred; the `identities` table already separates provider identity from the internal account ID.
 
 ## Calls and access
 
 - A signed-in user creates rooms. A **guest 1-to-1** reserves one identity for the creator and one for the first guest; the same guest can reconnect, and a third principal cannot join. Removing the guest keeps that slot claimed and blocks the removed principal; invite a replacement with a new call link.
 - A **public room** admits anyone with its unguessable link, including guests.
-- A **private room** admits its owner, invited registered members and explicitly invited guests. Account registration and room membership are separate permissions.
+- A **private room** admits its owner and the people invited to it. An invitation needs an account: `POST /api/invites/redeem` refuses a name-only guest, and a new person makes their account with the invitation (one account per invitation). Guests who joined a private room before this keep their access until removed.
 - A **single-use guest invitation** can be claimed by one identity; that identity can leave and return until manually removed. The unclaimed link expires after seven days, but claimed membership and the original return link have no time limit. Acceptance is atomic. A lost HTTP response can be retried by the same identity, but a consumed link never restores removed access.
 - Only the room owner can issue/revoke room invitations, remove access, rename or close the room. Membership invitations are bound to an account email. Guests cannot create rooms or issue invitations.
 - **Remove access** commits revocation before requesting LiveKit disconnection. If disconnection fails, the API reports failure and the UI offers a retry; access remains revoked. Closing a room works the same way.
@@ -143,7 +187,7 @@ The old unauthenticated GET `/api/join` is removed. Unknown room IDs no longer c
 
 ## Local auth development
 
-`make dev` uses `dev/dev.env`: SQLite under `dev/data`, bootstrap email `admin@example.test`, and a private-file outbox in `dev/data/mail`. Request a magic link from the local web UI, then open the URL from the outbox file. Nothing is sent to Resend in this mode. The outbox is explicitly restricted to localhost and never logged. Real deployment must use Resend.
+`make dev` uses `dev/dev.env`: SQLite under `dev/data`, bootstrap email `admin@example.test`, and a private-file outbox in `dev/data/mail`. Ask for a code from the local web UI or app, then read it (and, for the web, its link) from the outbox file: `Your Cubie code: 482913`. Nothing is sent to Resend in this mode. The outbox is explicitly restricted to localhost and never logged. Real deployment must use Resend.
 
 For an isolated second stack, source `dev/isolated-env.sh` **once** from the repository root, then launch all processes from that shell (or pass its exported values to each terminal):
 
@@ -168,13 +212,15 @@ Join preflight: `POST /api/entry` accepts exactly one of `room` or `invite`. It 
 
 Desktop sign-in polling uses a separate IP allowance from email/approval requests, plus a per-challenge quota after verifying the private proof. The app backs off on transient network errors and HTTP 408/429/5xx within its original sign-in deadline. Cached room lists are bound to the principal and cleared before a new account refresh, including when that refresh fails. Browser join continuations are cancelled when navigating away, so late identity/redemption responses cannot trigger another join or approval.
 
-Auth requests are limited per IP; unrelated recipients and auth endpoints do not share a global budget. Email requests enter a durable SQLite queue before any account lookup. The worker drains at startup and wakes via Notify after enqueue, at a scheduled retry, or a five-minute recovery poll. Failed delivery retries up to five total attempts with 30/60/120/240-second backoff, within the request’s 15-minute lifetime. Each requester gets three new requests per eligible recipient per 15-minute window, while a recipient-wide cap permits at most six delivery attempts across all IPs, including retries. Excess requests return the same public success response and preserve delivered links. Successful verification resets requester suppression, not the recipient cap. Ambiguous failures retain their token and consume the delivery attempt because the provider may have accepted the email before timing out. Delivery errors and retry exhaustion are logged without exposing account eligibility.
+Auth requests are limited per IP; unrelated recipients and auth endpoints do not share a global budget. Email requests for an address with an account or a fitting invitation enter a durable SQLite queue; any other address is refused in the response. The worker drains at startup and wakes via Notify after enqueue, at a scheduled retry, or a five-minute recovery poll. Failed delivery retries up to five total attempts with 30/60/120/240-second backoff, within the request’s 15-minute lifetime. Each requester gets three new requests per eligible recipient per 15-minute window, while a recipient-wide cap permits at most six delivery attempts across all IPs, including retries. Excess requests still get the success response (no email follows) and preserve delivered links. Successful verification resets requester suppression, not the recipient cap. Ambiguous failures retain their token and consume the delivery attempt because the provider may have accepted the email before timing out. Delivery errors and retry exhaustion are logged, never shown.
 
 Migration 0002 adds queued mail and device-code approval. Deploy updated web, API and Mac clients together; existing pending challenges and older Mac builds cannot complete code approval. Existing signed-in sessions remain valid.
 
 Migration 0003 adds durable mail retry scheduling and temporary direct-call expiry. Unused Quick-call links become eligible for cleanup after 24 hours; older open direct rooms receive 24 hours of grace from migration. Owners can choose **Keep as room** in native Room access, Home’s history, or the web room details before expiry to make the room reusable. Temporary calls stay out of `/api/rooms`; private/public rooms and durable private guest memberships do not expire. New admission and signed-token reconnects use the same persisted closed state; either can renew an open room until cleanup commits closure. Cleanup checks presence, renews occupied rooms, and closes only after two empty observations ten minutes apart. Each candidate has its own retry schedule, so failed deletions cannot starve other rooms. Deploy updated clients with this migration so keeping a direct call updates the server as well as the local bookmark.
 
 Migration 0004 adds provisional desktop sessions and idle cleanup scheduling. Approval polling leaves the previous session valid and returns a ten-minute provisional credential. After saving it in Keychain, the Mac’s first authenticated request activates it and revokes the previous credential atomically. Uninstalled or lost responses expire without revoking the previous session; cancelled issued credentials are submitted for logout. Other devices remain signed in. Ship updated native clients with the server so Keychain failures preserve the previous credential.
+
+Migration 0007 adds sign-in codes: a challenge and an `app` flag on queued mail, and a challenge, a code hash and a try count on issued links. Ship the server with the web client (its sign-in sends and expects them) before or with the Mac and iPhone builds that sign in by themselves; older builds keep using browser approval. `/api/auth/request` answers `{"ok":true,"id":…}`, or 404 with a sentence for the person when the address has no account and no invitation that fits (at most twenty of those an hour per requester); `/api/auth/verify` takes `{"token"}` or `{"id","code"}`. `/api/entry` answers `signin` for an unused invitation until the caller is an account (the one it names, if it names one). New accounts have an empty name until `PATCH /api/auth/me`; `/api/entry` adds the owner's name (`host`) and whether the room is the caller's (`mine`) wherever it already shows the room's name. `cargo test -p cubie-server` covers code tries and limits, the app credential, registration from a room invitation and its races; `pnpm test` covers where the email's link continues.
 
 Guest creation is capped separately at 30 new identities/hour and 100/day per IP. Existing sessions are reused without consuming that quota. Auth cleanup removes expired credentials and unreferenced guest identities in batches, retaining durable membership/revocation and pending approval references. It runs separately from LiveKit room cleanup. Migration 0005 indexes guest-reference lookups so pruning does not scan entire child tables for each guest. Mac browser approval does not preflight or redeem the destination room; admission is checked by the Mac after identity approval.
 

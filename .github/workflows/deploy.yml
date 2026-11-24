@@ -1,0 +1,153 @@
+name: Deploy server and web
+run-name: Server and web · ${{ github.sha }} · attempt ${{ github.run_attempt }}
+
+# Every push to main that changes the server or the web client is tested,
+# built and put on https://cubiecall.com. The two go together: the web client
+# and the API it talks to change in one step on the box (docs/DEPLOY.md).
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/server/**
+      - apps/web/**
+      - crates/protocol/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/deploy.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# bash with pipefail: a failed deployment must not hide behind `tee`.
+defaults:
+  run:
+    shell: bash
+
+# One at a time and in order; a deployment under way is never cancelled.
+concurrency:
+  group: deploy-server-web
+  cancel-in-progress: false
+
+jobs:
+  server:
+    name: Test and build the server
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: 1.99.0
+          targets: x86_64-unknown-linux-musl
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: server-deploy
+          cache-on-failure: false
+      - name: Prepare native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          dev/vendor-webrtc-sys.sh
+      - name: Test
+        run: cargo test --locked -p cubie-server
+      # A static binary: SQLite and the TLS code are C, compiled for musl.
+      - name: Build
+        run: cargo build --locked --release -p cubie-server --target x86_64-unknown-linux-musl
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: server
+          path: target/x86_64-unknown-linux-musl/release/cubie-server
+          if-no-files-found: error
+          retention-days: 14
+
+  web:
+    name: Test and build the web client
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: |
+          npm install --global pnpm@9.15.0
+          pnpm install --frozen-lockfile
+      - name: Test
+        run: |
+          pnpm check
+          pnpm test
+      - name: Build
+        run: pnpm build
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: web
+          path: apps/web/dist
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy:
+    name: Deploy to cubiecall.com
+    needs: [server, web]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # The key is this environment's secret, and the environment accepts main only.
+    environment:
+      name: production
+      url: https://cubiecall.com
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: server
+          path: bundle
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: web
+          path: bundle/web
+      - name: Configure deployment key
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          : "${DEPLOY_KEY:?Missing DEPLOY_KEY}" "${KNOWN_HOSTS:?Missing DEPLOY_KNOWN_HOSTS}"
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/cubie-deploy.key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/cubie-known-hosts"
+          printf 'Host *\n  IdentityFile %s\n  IdentitiesOnly yes\n  UserKnownHostsFile %s\n  StrictHostKeyChecking yes\n  BatchMode yes\n' \
+            "$RUNNER_TEMP/cubie-deploy.key" "$RUNNER_TEMP/cubie-known-hosts" > "$HOME/.ssh/config"
+      # The key can do one thing on the box: hand this bundle to
+      # deploy/app.sh, which checks it, keeps what it replaces, and puts
+      # that back if the new server doesn't answer.
+      - name: Replace the server and the web client
+        env:
+          DEPLOY_HOST: ${{ vars.CUBIE_DEPLOY_HOST }}
+        run: |
+          set -eu
+          : "${DEPLOY_HOST:?Missing CUBIE_DEPLOY_HOST variable}"
+          test -s bundle/cubie-server -a -s bundle/web/index.html
+          printf '%s\n' "$GITHUB_SHA" > bundle/revision
+          tar -czf bundle.tgz -C bundle .
+          ssh -T "$DEPLOY_HOST" < bundle.tgz | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Verify the public site
+        run: |
+          set -eu
+          curl -fsS --retry 5 --retry-all-errors https://cubiecall.com/api/health
+          curl -fsS --retry 5 --retry-all-errors https://cubiecall.com/ | cmp - bundle/web/index.html
+      - name: Remove deployment credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/cubie-deploy.key" "$RUNNER_TEMP/cubie-known-hosts" "$HOME/.ssh/config"

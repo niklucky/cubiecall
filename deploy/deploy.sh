@@ -16,7 +16,7 @@ trap 'rm -rf "$bundle"' EXIT
 cp target/x86_64-unknown-linux-musl/release/cubie-server "$bundle/"
 cp -R apps/web/dist "$bundle/web"
 mkdir "$bundle/deploy"
-cp -R deploy/install.sh deploy/configure-secrets.py deploy/livekit.yaml deploy/nginx deploy/systemd deploy/download "$bundle/deploy/"
+cp -R deploy/install.sh deploy/app.sh deploy/ci-access.sh deploy/ci-deploy.pub deploy/configure-secrets.py deploy/livekit.yaml deploy/nginx deploy/systemd deploy/download "$bundle/deploy/"
 
 # Auth settings are optional on later deploys; values never appear in logs.
 auth_file=${CUBIE_AUTH_ENV:-${QUIPCALL_AUTH_ENV:-deploy/auth.env.local}}

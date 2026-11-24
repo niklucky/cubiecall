@@ -4,11 +4,15 @@ Less is more. Outside a call the app is one window: your rooms and their calls. 
 
 The clickable prototype these screens were built from is [prototype/ui.html](prototype/ui.html) (open it in a browser). Some parts remain planned, including contacts, ringing and shared files.
 
-## First launch
+## Signing in
 
-A small window asks what people should call you, with your avatar updating as you type. The name is cached on this Mac (`local.json`); once signed in, the pencil next to your name also updates your account name. `--name` skips the question.
+Every screen asks for one thing and has one button. No passwords, and no words like "guest", "member" or "session". The clickable design for all of it, web and apps, is [prototype/onboarding.html](prototype/onboarding.html).
 
-Sign in opens the browser for an email magic link and explicit approval of this Mac by typing its displayed code in the browser. **Cancel sign-in** stops a pending attempt immediately; **Sign in** can then start a fresh one. Registration requires an account invitation; room invitations grant room access independently. The native session stays in Keychain. Guests can join through the web with a name. Apple and other OAuth providers are planned.
+A Mac without an account opens on a small window (400 × 500): Quby, "Welcome to Cubie", a field for your email and **Continue**. The server emails a 6-digit code; the window's second step shows six boxes for it (typed or pasted, sent on the sixth digit), with **Send a new code** (after half a minute) and **Use a different email**. A wrong code clears the boxes and says so. No browser opens. An expired session comes back to the same window, which says why. Closing it quits the app, as there is nothing else open.
+
+A new account has no name yet, so a second window asks what people should call you, with your avatar updating as you type and the name on this Mac's account as a first guess. Then Home opens, or the call a link asked for. `--name` skips sign-in and opens Home without an account (development and tests).
+
+Cubie is invite-only: a code is sent only to an email that has an account or an invitation, and any other is told so under the field at once ("No Cubie account uses this email…"), on the web and in the apps. Accounts are made on the web, from an invitation to Cubie or to a private room. The session stays in Keychain. Apple and other OAuth providers are planned.
 
 ## Home
 
@@ -36,19 +40,21 @@ One window (960 × 640), two panes:
 
 ## Joining from a link
 
-Call and invitation links open a focused join page, separate from account and room management. The page checks access without creating a guest, claiming an invitation or reserving a 1-to-1 guest slot. A valid guest invitation is claimed only when the person chooses to join or open the Mac app.
+A link opens the door to a call: your face (initials on your colour, filling in as you type), two round switches, the headline, one field for your name and **Join call**. The headline says who invited you ("Anna invited you to a call") or the room's name with whose it is under it. The page checks access without creating anyone, claiming an invitation or reserving a 1-to-1 slot. It never offers the app and never opens it.
 
-The browser starts with microphone and camera off. Guests can enter their name, preview their camera, check microphone level and choose input devices before joining. Permission denial explains how to recover and still allows joining with the device off. The call uses the preview's selected devices and on/off choices; preview tracks stop when joining, leaving the page or opening sign-in. Browser preview settings apply to browser calls; the Mac app uses its own device settings.
+The microphone starts on and the camera off. The browser asks for the microphone when the call starts; refused, the call still opens, muted, and says how to allow it. Turning the camera on shows it in the circle first ("Only you see your camera until you join"). With more than one microphone or camera, a quiet "Change microphone or camera" line opens the choice. The name is remembered in the browser, so coming back is one tap.
 
-After accepting an invitation, the address becomes the ordinary room link so the same browser can return. Unclaimed invitations survive reload and sign-in in the current history entry. Consumed or expired invitations, removed access, full 1-to-1 calls and unavailable/private rooms have distinct recovery screens. Member invitations ask for the invited account before claiming access. The layout adapts to small screens and keeps the room name above the preview.
+**A private room asks who you are first.** Its invitation opens "Anna invited you to Family" with a field for your email, then the six boxes for the code from the email, then the door. The invitation is also how a new person gets an account: there is no other sign-up. A new account is asked its name on the door itself ("You're in. What's your name?"); someone with an account goes email, code, Join. The code is typed on the page that asked for it. The email's button, for people reading it on the same device, opens a page with one button (mail scanners open links, and a link that signed in by itself could be used up before you see it) and goes on to the same door.
 
-**Open in the Mac app** uses `quipcall://open/<room>` so the browser can launch both generations of the app with the Mac’s current identity, as `cubie://join/<room>` does. Missing or expired credentials open browser approval; switching an existing identity is an explicit action under Account. A private invitation is still claimed in the browser first, so if it belongs to a different identity, switch the Mac account deliberately before joining. Session tokens never appear in the link.
+After accepting an invitation, the address becomes the ordinary room link so the same browser can return. Unclaimed invitations survive reload and sign-in in the current history entry. Everything that can go wrong has one sentence and at most one button: a private room's link without an invitation (sign in; then "You need an invitation", naming the email to ask for), an invitation made for another email, a used or expired invitation, a call for two that is full, access removed, a call that has ended, no connection, and a messenger's built-in browser that can't make calls ("Open this link in Safari or Chrome"). After leaving: "You left the call" and **Join again**.
+
+**The website itself** (no link) is the same email and code, then Home: **Start a call** (a link to send, then the call), your rooms, **+ New room** (private, or anyone with the link), and a room's page (join, invite, people, rename, close). A private room has one **Invite someone**: a link that works for one person. **Open in the Mac app** is a quiet link on a room's page there, for people who are signed in; it uses `quipcall://open/<room>`, which both generations of the app register. Apps from before in-app sign-in still open the browser to be approved: that page signs you in the same way, then asks for the code the app shows.
 
 ## Room access
 
 **Access** on Home and **Invite** during a call open the same native window. Public rooms admit anyone with their address. A private room address only works for people who already have access.
 
-Owners of private rooms can create a single-use guest link or an invitation bound to a member’s account email. The app displays the generated link for copying; it does not email the room invitation. One guest can claim a guest link and return until manually removed. Unclaimed invitations expire after seven days. Members need an existing account or a separate registration invitation.
+Owners of private rooms can create an invitation link that works for one person, or one bound to an email. The app displays the generated link for copying; it does not email the room invitation. Whoever opens it signs in, or makes their account with it, and has access until manually removed. Unclaimed invitations expire after seven days.
 
 Owners see people and pending invitations, can revoke unused invitations, and can remove someone after confirmation. Access is revoked even if disconnecting the ongoing call fails; the error remains visible and **Disconnect again** retries it. **Close room** requires confirmation, prevents new joins and disconnects everyone while keeping local history. Closing permanently removes local bookmarks; restoring hidden rooms cannot bring them back. Removing a direct guest also locks their slot; start a new Quick call to invite someone else. Non-owners see the room address and their room information. Refresh updates people and invitations; switching accounts clears the access window.
 
@@ -132,7 +138,9 @@ Cubie for iPhone (bundle `com.cubiecall.ios`) looks like iOS, not like the Mac a
 - **Calls** (where the app opens, once there are any): the calls you were in on this phone, newest first, as the Phone app lists them: the room, who was there and for how long, when. A call nobody joined is red. Tap one for its page; swipe to delete; Edit to clear.
 - **Rooms**: your rooms, searchable; + makes one. Tap a room for its page; the small round button on the row calls at once; swipe or long-press to share the link.
 - **Contacts**: your address book, searchable by name, email or number. People with an account come first, under "On Cubie", with a call button; everyone else has **Invite**, which opens the system's share sheet (Messages, Telegram, WhatsApp, Mail…) with a link to a room for the two of you (it opens in a browser, no app needed). Until calls can ring, calling someone on Cubie sends them that link first, then takes you into the call.
-- **Settings**: you, and Sign Out.
+- **Settings**: you (tap to change your name), and Sign Out.
+
+Signing in is the same two steps as on the Mac, in the system’s own field and button: your email, then the 6-digit code, which iOS offers from Mail above the keyboard. A new account is asked what people should call it before the tabs open.
 
 **A room opens as a group chat**, the way Telegram and WhatsApp show one. The room's face and name are in the bar, with Share and Call. The history runs oldest to newest and opens at the newest end:
 
@@ -156,4 +164,4 @@ Earlier drawings: [prototype/mobile.html](prototype/mobile.html) (round 1, in a 
 - *Recording*: what Record offers first (Audio, or Audio and screen), each voice in its own file too, and the folder (Show in Finder, Change…).
 - *Call*: hold to talk, the beep when you talk while muted, the caption line by the widget, and others' video in calls of four or more (follows the speaker, or a bubble each). All on by default, following the speaker.
 
-Home keeps account switching, sign-out and name editing behind the profile row’s Account button. Pending approval and errors remain visible. The room list refreshes when Home gains focus. Opening a room link preserves the Mac’s signed-in identity; approval is only needed for missing/expired credentials or an explicit switch. Unsaved calls show the server-provided room name in the call and history.
+Home’s profile row shows your name and email; its Account button opens **Change your name** and **Sign out** (which goes back to the sign-in window). Errors remain visible there. The room list refreshes when Home gains focus. Opening a room link preserves the Mac’s signed-in identity; the sign-in window opens only for missing or expired credentials, and the call is joined once you’re in. Unsaved calls show the server-provided room name in the call and history.

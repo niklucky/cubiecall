@@ -2,6 +2,7 @@
   import Lobby from './Lobby.svelte';
   import type { JoinOptions } from './media';
   import {
+    DisconnectReason,
     Room,
     RoomEvent,
     Track,
@@ -43,6 +44,8 @@
   let room: Room | undefined;
   let status = $state<'idle' | 'joining' | 'connected'>('idle');
   let error = $state('');
+  // How the call this page was just in ended: the page after it says so.
+  let left = $state<'' | 'left' | 'ended' | 'removed'>('');
   // LiveKit objects must not be deep-proxied by Svelte, hence $state.raw.
   let tiles = $state.raw<Tile[]>([]);
   let micOn = $state(false);
@@ -82,6 +85,7 @@
     if (status !== 'idle') return;
     let connecting: Room | undefined;
     error = '';
+    left = '';
     status = 'joining';
     try {
       name = name.trim() || 'Guest';
@@ -104,7 +108,11 @@
           track.detach().forEach((el) => el.remove());
           refresh();
         })
-        .on(RoomEvent.Disconnected, () => {
+        .on(RoomEvent.Disconnected, (reason) => {
+          if (room === r) {
+            left = reason === DisconnectReason.ROOM_DELETED ? 'ended'
+              : reason === DisconnectReason.PARTICIPANT_REMOVED ? 'removed' : 'left';
+          }
           room = undefined;
           tiles = [];
           lines = [];
@@ -215,9 +223,9 @@
 
 </script>
 
-<main>
+<main class:call={status === 'connected'}>
   {#if status !== 'connected'}
-    <Lobby callError={error} joining={status === 'joining'} onjoin={async (id, displayName, options, title) => { roomName = id; roomTitle = title; name = displayName; await join(options); }} />
+    <Lobby callError={error} {left} joining={status === 'joining'} onjoin={async (id, displayName, options, title) => { roomName = id; roomTitle = title; name = displayName; await join(options); }} />
   {:else}
     <header>
       <span class="call-title">In “{roomTitle}” as {name}</span>

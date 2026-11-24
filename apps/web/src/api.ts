@@ -19,7 +19,8 @@ export async function api<T>(path: string, body?: unknown, method?: string): Pro
 
 export type Entry = {
   state: 'ready' | 'invite' | 'signin' | 'used' | 'expired' | 'removed' | 'full' | 'private' | 'unavailable';
-  room?: Pick<CallRoom, 'id' | 'name' | 'kind'>;
+  /** `host`: whose room it is. `mine`: yours. */
+  room?: Pick<CallRoom, 'id' | 'name' | 'kind'> & { host?: string | null; mine?: boolean };
   inviteKind?: 'guest' | 'member';
 };
 export class ApiError extends Error {

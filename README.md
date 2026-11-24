@@ -26,19 +26,19 @@ You need Rust, Xcode, Node 22+ with pnpm, and `brew install livekit livekit-cli 
 ```sh
 make dev               # LiveKit + server on :8080
 make web               # http://127.0.0.1:5173 (run `pnpm install` in apps/web first)
-make desktop           # sign in through the browser; credentials stay in Keychain
+make desktop           # sign in with your email and a code; credentials stay in Keychain
 make check             # clippy + svelte-check
 ```
 
 The iPhone app needs `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`. `make ios-sim` builds it for the Simulator; or run `make ios-core` once and open `apps/ios/Cubie.xcodeproj` (set your team under Signing to run on a phone). It talks to cubiecall.com unless launched with `-server <api> -web <site>`.
 
-For local sign-in use `admin@example.test`; open the magic link from `dev/data/mail` (no email is sent). Create rooms while signed in. Auth/deployment details: [DEPLOY.md](docs/DEPLOY.md).
+For local sign-in use `admin@example.test`; type the code from `dev/data/mail` (no email is sent). Create rooms while signed in. Auth/deployment details: [DEPLOY.md](docs/DEPLOY.md).
 
 To add a low-level LiveKit test participant (bypasses application auth): `lk room join --url ws://127.0.0.1:7880 --api-key cubie-dev --api-secret cubie-dev-secret-0123456789abcdef --identity bot --publish-demo spike`
 
 ## Ship
 
-- `make deploy` updates the server, the web client and the VPS config.
+- A push to `main` deploys the server and the web client (GitHub Actions); `make deploy` does the same from this Mac, plus the VPS config.
 - Push a tag such as `v0.1.1` to build, sign, notarize and publish both Mac apps through GitHub Actions. A manual **Release Mac app** run builds signed downloads without publishing.
 - `make release-mac` remains available for a local recovery release; set `CUBIE_BUILD` higher than the published build number.
 - Details are in [docs/DEPLOY.md](docs/DEPLOY.md).

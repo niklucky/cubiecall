@@ -41,8 +41,16 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     /// Signing in, or the tabs: whichever the session says.
     func showRoot() {
-        let root: UIViewController = AppEnv.shared.client.signedIn() ? MainTabs() : SignInViewController()
+        let client = AppEnv.shared.client
+        let root: UIViewController = client.signedIn() ? MainTabs() : SignInViewController()
         window?.rootViewController = root
+        guard client.signedIn() else { return }
+        // An account that never said its name (the app was closed at the
+        // question) is asked again before anything else.
+        Task { [weak self] in
+            guard let account = try? await client.refresh(), account.name.isEmpty else { return }
+            self?.window?.rootViewController = SignInViewController(askingName: true)
+        }
     }
 
     /// The session ended (or you signed out): back to signing in.

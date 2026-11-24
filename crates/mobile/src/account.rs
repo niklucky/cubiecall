@@ -1,13 +1,13 @@
 //! Who you are and your rooms, over the server's HTTP API.
 //!
-//! Signing in is the desktop app's: the phone shows a code, the browser (the
-//! email link, then the code) approves it, and the phone picks up its session
-//! by polling with a secret only it has. The session stays in the Keychain.
+//! Signing in is the desktop app's: the server emails a 6-digit code, and
+//! the phone exchanges it, with the challenge only it was given, for a
+//! session. The session stays in the Keychain.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use cubie_core::http::{self, request};
+use cubie_core::http::request;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -19,6 +19,7 @@ use crate::{AppError, secrets};
 #[derive(Debug, Clone, PartialEq, Deserialize, uniffi::Record)]
 pub struct Account {
     pub id: String,
+    /// Empty for a new account, until [`Client::set_name`].
     pub name: String,
     #[serde(default)]
     pub email: Option<String>,
@@ -68,13 +69,6 @@ impl RoomJson {
     }
 }
 
-/// A sign-in on its way: open `url` in the browser and type `code` there.
-#[derive(Debug, Clone, uniffi::Record)]
-pub struct SignIn {
-    pub url: String,
-    pub code: String,
-}
-
 /// Someone in your address book who has an account.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ContactMatch {
@@ -84,9 +78,9 @@ pub struct ContactMatch {
     pub name: String,
 }
 
+/// A sign-in on its way: the challenge the emailed code goes with.
 struct Pending {
     id: String,
-    secret: String,
 }
 
 #[derive(Default)]
@@ -224,60 +218,43 @@ impl Client {
         format!("{}/?room={room}", self.web.trim_end_matches('/'))
     }
 
-    /// Start signing in. Then [`Client::sign_in_poll`] every couple of
-    /// seconds until it returns you.
-    pub async fn sign_in_start(&self) -> Result<SignIn, AppError> {
-        let start = request(
+    /// Start signing in: the server emails a 6-digit code to `email`. An
+    /// address without an account is an error that says so (the app can't
+    /// register one). Then [`Client::sign_in_code`] with what the person
+    /// types.
+    pub async fn sign_in_start(&self, email: String) -> Result<(), AppError> {
+        let sent = request(
             &self.server,
             None,
-            "/auth/desktop/start",
-            Some(json!({})),
+            "/auth/request",
+            Some(json!({"email": email.trim(), "app": true})),
             "POST",
         )
         .await?;
-        let field = |name: &str| {
-            start[name]
-                .as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| anyhow::anyhow!("The server's sign-in answer makes no sense"))
-        };
-        let (id, secret, code) = (field("id")?, field("secret")?, field("code")?);
-        // `device=phone` only changes the page's words ("your phone", not
-        // "your Mac").
-        let url = format!(
-            "{}/?desktop={id}&device=phone",
-            self.web.trim_end_matches('/')
-        );
-        self.state.lock().pending = Some(Pending { id, secret });
-        Ok(SignIn { url, code })
+        let id = sent["id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("The server's sign-in answer makes no sense"))?
+            .to_owned();
+        self.state.lock().pending = Some(Pending { id });
+        Ok(())
     }
 
-    /// Whether the browser has approved yet: you, once it has. A connection
-    /// that drops for a moment counts as "not yet".
-    pub async fn sign_in_poll(&self) -> Result<Option<Account>, AppError> {
-        let (id, body, previous) = {
+    /// The code from the email: you, once it's right. A wrong one can be
+    /// tried again, a few times.
+    pub async fn sign_in_code(&self, code: String) -> Result<Account, AppError> {
+        let (id, previous) = {
             let s = self.state.lock();
             let pending = s.pending.as_ref().ok_or_else(cancelled)?;
-            (
-                pending.id.clone(),
-                json!({"id": pending.id, "secret": pending.secret}),
-                s.session.clone(),
-            )
+            (pending.id.clone(), s.session.clone())
         };
-        let poll = request(
+        let value = request(
             &self.server,
             previous.as_deref(),
-            "/auth/desktop/poll",
-            Some(body),
+            "/auth/verify",
+            Some(json!({"id": id, "code": code, "app": true})),
             "POST",
-        );
-        let value = match poll.await {
-            Err(e) if http::transient(&e) => return Ok(None),
-            result => result?,
-        };
-        if value["pending"] == true {
-            return Ok(None);
-        }
+        )
+        .await?;
         let token = value["token"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("The server sent no session"))?
@@ -286,7 +263,7 @@ impl Client {
             serde_json::from_value(value["principal"].clone()).map_err(anyhow::Error::from)?;
         {
             let mut s = self.state.lock();
-            // Cancelled, or started again, while this poll was on its way.
+            // Cancelled, or started again, while this was on its way.
             if s.pending.as_ref().map(|p| p.id.as_str()) != Some(id.as_str()) {
                 return Err(cancelled().into());
             }
@@ -299,7 +276,7 @@ impl Client {
         self.store.claim(&account.id);
         // The session is provisional until its first use: this makes it last,
         // and ends the one it replaces.
-        Ok(Some(self.refresh().await.unwrap_or(account)))
+        Ok(self.refresh().await.unwrap_or(account))
     }
 
     pub fn sign_in_cancel(&self) {
@@ -312,6 +289,15 @@ impl Client {
         let value = self.authorized("/auth/me", None, "GET").await?;
         let account: Account = serde_json::from_value(value).map_err(anyhow::Error::from)?;
         self.store.claim(&account.id);
+        self.state.lock().account = Some(account.clone());
+        Ok(account)
+    }
+
+    /// What people should call you. A new account has no name until this.
+    pub async fn set_name(&self, name: String) -> Result<Account, AppError> {
+        let body = json!({"name": name.trim()});
+        let value = self.authorized("/auth/me", Some(body), "PATCH").await?;
+        let account: Account = serde_json::from_value(value).map_err(anyhow::Error::from)?;
         self.state.lock().account = Some(account.clone());
         Ok(account)
     }

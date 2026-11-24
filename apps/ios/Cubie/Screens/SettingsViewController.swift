@@ -1,6 +1,7 @@
 import UIKit
 
-/// You, and signing out. More comes with the call settings.
+/// You (tap to change your name), and signing out. More comes with the call
+/// settings.
 final class SettingsViewController: UITableViewController {
     init() {
         super.init(style: .insetGrouped)
@@ -28,11 +29,14 @@ final class SettingsViewController: UITableViewController {
         let cell = tableView.dequeueReusableCell(withIdentifier: "cell", for: indexPath)
         if indexPath.section == 0 {
             let account = AppEnv.shared.client.account()
-            var content = UIListContentConfiguration.face(account?.name ?? "You", detail: account?.email)
-            content.image = Avatar.image(account?.name ?? "You", side: 60)
+            // A new account may not have said its name yet.
+            let name = account.flatMap { $0.name.isEmpty ? nil : $0.name } ?? "You"
+            var content = UIListContentConfiguration.face(name, detail: account?.email)
+            content.image = Avatar.image(name, side: 60)
             content.textProperties.font = .preferredFont(forTextStyle: .title3)
             cell.contentConfiguration = content
-            cell.selectionStyle = .none
+            cell.selectionStyle = .default
+            cell.accessibilityHint = "Changes your name"
         } else {
             var content = cell.defaultContentConfiguration()
             content.text = "Sign Out"
@@ -53,7 +57,10 @@ final class SettingsViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        guard indexPath.section == 1 else { return }
+        guard indexPath.section == 1 else {
+            rename()
+            return
+        }
         let alert = UIAlertController(
             title: nil,
             message: "Your list of calls on this iPhone goes too.",
@@ -67,6 +74,31 @@ final class SettingsViewController: UITableViewController {
         })
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         alert.popoverPresentationController?.sourceView = tableView.cellForRow(at: indexPath)
+        present(alert, animated: true)
+    }
+
+    /// What people should call you, asked the system's way.
+    private func rename() {
+        let alert = UIAlertController(title: "Your Name", message: "Shown on your face in calls.", preferredStyle: .alert)
+        alert.addTextField { field in
+            field.text = AppEnv.shared.client.account()?.name
+            field.placeholder = "Your name"
+            field.textContentType = .name
+            field.autocapitalizationType = .words
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Save", style: .default) { [weak self, weak alert] _ in
+            let name = (alert?.textFields?.first?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return }
+            Task {
+                do {
+                    _ = try await AppEnv.shared.client.setName(name: name)
+                    self?.tableView.reloadData()
+                } catch {
+                    self?.say(error.shown)
+                }
+            }
+        })
         present(alert, animated: true)
     }
 }

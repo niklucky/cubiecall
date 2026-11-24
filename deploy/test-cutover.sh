@@ -3,7 +3,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 docker run --rm -i --network none -v "$PWD/deploy:/source:ro" python:3.11-slim-bookworm sh -se <<'CONTAINER'
-mkdir -p /bundle/web /opt/cubie/bin /opt/quipcall /var/lib/quipcall /etc/nginx/sites-enabled /etc/nginx/sites-available /etc/systemd/system /etc/letsencrypt/live/cubiecall.com /mock/bin /mock/units
+mkdir -p /bundle/web /etc/sudoers.d /opt/cubie/bin /opt/quipcall /var/lib/quipcall /etc/nginx/sites-enabled /etc/nginx/sites-available /etc/systemd/system /etc/letsencrypt/live/cubiecall.com /mock/bin /mock/units
 cp -R /source /bundle/deploy
 touch /bundle/cubie-server /etc/letsencrypt/live/cubiecall.com/fullchain.pem
 echo legacy > /etc/nginx/sites-available/quipcall.com.conf
@@ -66,7 +66,7 @@ case "$*" in 'ahosts www.cubycall.com') exit 2 ;; 'ahosts www.'*) exit 0 ;; *) e
 SH
 chmod +x /mock/bin/getent
 chmod +x /mock/bin/certbot
-for name in nginx sleep journalctl; do ln -s /bin/true "/mock/bin/$name"; done
+for name in nginx sleep journalctl visudo; do ln -s /bin/true "/mock/bin/$name"; done
 chmod +x /mock/bin/systemctl /mock/bin/curl /opt/cubie/bin/livekit-server
 export PATH=/mock/bin:$PATH
 python3 - <<'PY'
@@ -139,5 +139,161 @@ import sqlite3
 with sqlite3.connect('/var/lib/cubie/cubie.db') as db:
     assert db.execute('SELECT COUNT(*) FROM accounts').fetchone() == (2,)
 PY
-echo 'Cutover, rollback, and retry checks passed.'
+
+# A routine deploy keeps what it replaced: the server, and the database as it
+# was. A retry after a failed deploy must not replace that with the failed
+# attempt's own state.
+rows() {
+    rm -rf /tmp/check && mkdir /tmp/check && cp "$1"/cubie.db* /tmp/check/
+    python3 -c "import sqlite3; print(sqlite3.connect('/tmp/check/cubie.db').execute('SELECT COUNT(*) FROM accounts').fetchone()[0])"
+}
+add() { python3 -c "import sqlite3; db = sqlite3.connect('/var/lib/cubie/cubie.db'); db.execute(\"INSERT INTO accounts VALUES ('$1')\"); db.commit()"; }
+test "$(stat -c %a /opt/cubie/previous)" = 700
+test "$(rows /opt/cubie/previous)" = 2
+echo 'server two' >/bundle/cubie-server
+add 'before server two'
+touch /mock/fail-api
+must_fail
+rm /mock/fail-api
+test ! -s /opt/cubie/previous/cubie-server
+test "$(rows /opt/cubie/previous)" = 3
+add 'written by the failed attempt'
+install_app
+test ! -s /opt/cubie/previous/cubie-server
+test "$(rows /opt/cubie/previous)" = 3
+grep -qx 'server two' /opt/cubie/bin/cubie-server
+# The deploy that finished is the next one's rollback point.
+install_app
+grep -qx 'server two' /opt/cubie/previous/cubie-server
+test "$(rows /opt/cubie/previous)" = 4
+# GitHub Actions' way in: an account that owns nothing and may run one thing.
+grep -qx 'cubie-deploy ALL=(root) NOPASSWD: /opt/cubie/bin/cubie-app receive' /etc/sudoers.d/cubie-deploy
+grep -q '^restrict,command="sudo -n /opt/cubie/bin/cubie-app receive" ssh-ed25519 ' /opt/cubie/ci/.ssh/authorized_keys
+test "$(stat -c %U:%a /opt/cubie/ci/.ssh/authorized_keys /opt/cubie/bin/cubie-app | tr '\n' ' ')" = 'root:644 root:755 '
+test "$(getent passwd cubie-deploy | cut -d: -f6)" = /opt/cubie/ci
+
+# What it sends: the server, the web client and the commit they came from.
+commit=0123456789abcdef0123456789abcdef01234567
+send() { tar -czf - -C "$1" . | /opt/cubie/bin/cubie-app receive; }
+refused() { if send "$1"; then echo 'Unexpected deployment' >&2; exit 1; fi; }
+bundle() {
+    rm -rf /ci && mkdir -p /ci/web/assets
+    echo "$1" >/ci/cubie-server
+    echo "$1" >/ci/web/index.html
+    echo "$commit" >/ci/revision
+}
+echo 'web two' >/opt/cubie/web/index.html
+bundle 'server three'
+chmod 4777 /ci/cubie-server /ci/web/index.html
+add 'before server three'
+send /ci
+grep -qx 'server three' /opt/cubie/bin/cubie-server
+grep -qx 'server three' /opt/cubie/web/index.html
+test "$(stat -c %U:%a /opt/cubie/bin/cubie-server /opt/cubie/web/index.html | tr '\n' ' ')" = 'root:755 root:644 '
+test "$(cat /opt/cubie/.revision)" = "$commit"
+grep -qx 'server two' /opt/cubie/previous/cubie-server
+grep -qx 'web two' /opt/cubie/previous/web/index.html
+test "$(rows /opt/cubie/previous)" = 5
+test ! -e /opt/cubie/incoming
+
+# The same build again is not a deployment: the copy of server two stays.
+: >/mock/service-log
+send /ci | grep -qx "$commit is already deployed"
+test ! -s /mock/service-log
+grep -qx 'server two' /opt/cubie/previous/cubie-server
+
+# A server that doesn't answer is replaced by the one before it, with the
+# web client and the database as they were.
+bundle 'server four'
+add 'before server four'
+# The database's directory is the server's own, and this server is hostile:
+# it leaves a link there for root to write through.
+echo untouched >/root-only
+chmod 600 /root-only
+cat >/mock/bin/curl <<'SH'
+#!/bin/sh
+case "$*" in *4601/api/health*)
+    grep -qx 'server four' /opt/cubie/bin/cubie-server || exit 0
+    ln -sf /root-only /var/lib/cubie/cubie.db
+    exit 1 ;;
+esac
+SH
+refused /ci 2>/tmp/refused
+grep -q 'are back' /tmp/refused
+grep -qx 'server three' /opt/cubie/bin/cubie-server
+grep -qx 'server three' /opt/cubie/web/index.html
+test "$(cat /opt/cubie/.revision)" = "$commit"
+grep -qx untouched /root-only
+test ! -L /var/lib/cubie/cubie.db
+test "$(stat -c %U:%a /var/lib/cubie/cubie.db)" = cubie:600
+test "$(rows /var/lib/cubie)" = 6
+# And can be sent again once it's fixed, from the same rollback point.
+add 'after the failed server four'
+cat >/mock/bin/curl <<'SH'
+#!/bin/sh
+exit 0
+SH
+four=fedcba9876543210fedcba9876543210fedcba98
+echo "$four" >/ci/revision
+send /ci
+grep -qx 'server four' /opt/cubie/bin/cubie-server
+test "$(cat /opt/cubie/.revision)" = "$four"
+grep -qx 'server three' /opt/cubie/previous/cubie-server
+test "$(rows /opt/cubie/previous)" = 7
+
+# Going back by hand is the same step.
+add 'lost by going back'
+/opt/cubie/bin/cubie-app back
+grep -qx 'server three' /opt/cubie/bin/cubie-server
+test "$(cat /opt/cubie/.revision)" = "$commit"
+test "$(rows /var/lib/cubie)" = 7
+# And what went back is what the next deploy keeps, as it is by then.
+add 'after going back'
+send /ci
+grep -qx 'server four' /opt/cubie/bin/cubie-server
+grep -qx 'server three' /opt/cubie/previous/cubie-server
+test "$(rows /opt/cubie/previous)" = 8
+
+# Nothing but the three, as plain files, changes anything.
+bundle 'server five'
+ln -s /etc/passwd /ci/web/passwd
+refused /ci
+rm /ci/web/passwd
+touch /ci/install.sh
+refused /ci
+rm /ci/install.sh
+echo main >/ci/revision
+refused /ci
+echo "$commit" >/ci/revision
+rm /ci/web/index.html
+refused /ci
+if head -c 4096 /dev/urandom | /opt/cubie/bin/cubie-app receive; then exit 1; fi
+if /opt/cubie/bin/cubie-app receive </dev/null; then exit 1; fi
+if /opt/cubie/bin/cubie-app receive anything </dev/null; then exit 1; fi
+# A connection that sends nothing doesn't hold the next deployment up for
+# good, and what a killed attempt left goes with the next one.
+sed 's/^WAIT=.*/WAIT=1/' /opt/cubie/bin/cubie-app >/tmp/impatient
+mkfifo /tmp/silence
+mkdir /opt/cubie/incoming
+touch /opt/cubie/incoming/left
+if sh /tmp/impatient receive <>/tmp/silence; then exit 1; fi
+test ! -e /opt/cubie/incoming
+touch /opt/cubie/.cutover-pending
+bundle 'server five'
+refused /ci
+rm /opt/cubie/.cutover-pending
+grep -qx 'server four' /opt/cubie/bin/cubie-server
+grep -qx 'server three' /opt/cubie/previous/cubie-server
+test ! -e /opt/cubie/incoming
+
+# A deploy from the release Mac names no commit: the last one sent mustn't
+# pass for it, now or in the copy the next deploy keeps.
+test -s /opt/cubie/.revision
+install_app
+grep -qx 'server two' /opt/cubie/bin/cubie-server
+test ! -e /opt/cubie/.revision
+bundle 'server six'
+send /ci
+test ! -e /opt/cubie/previous/revision
+echo 'Cutover, rollback, retry, and GitHub Actions deployment checks passed.'
 CONTAINER

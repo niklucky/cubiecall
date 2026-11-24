@@ -138,7 +138,7 @@ pub async fn detail(
             kind: String,
             revoked: bool,
         }
-        let members: Vec<Member> = sqlx::query_as("SELECT p.id,p.name,p.kind,m.revoked FROM memberships m JOIN principals p ON p.id=m.principal WHERE m.room=?").bind(&id).fetch_all(&mut *db).await?;
+        let members: Vec<Member> = sqlx::query_as(&format!("SELECT p.id,{} AS name,p.kind,m.revoked FROM memberships m JOIN principals p ON p.id=m.principal WHERE m.room=?", auth::SHOWN_NAME)).bind(&id).fetch_all(&mut *db).await?;
         #[derive(Serialize, FromRow)]
         struct Invite {
             hash: String,
@@ -240,7 +240,12 @@ pub async fn redeem(
     if used.is_some() {
         return Err(AppError::forbidden("This invitation has already been used"));
     }
-    if kind == "member" && (p.kind != "user" || p.email != email) {
+    // A private room is for accounts. Someone new makes theirs with the
+    // invitation (`auth::verify_link`); a name alone doesn't get in.
+    if p.kind != "user" {
+        return Err(AppError::forbidden("Sign in to accept this invitation"));
+    }
+    if kind == "member" && p.email != email {
         return Err(AppError::forbidden(
             "Sign in with the invited email to accept membership",
         ));
@@ -345,10 +350,11 @@ pub async fn entry(
             } else {
                 "private"
             }
-        } else if kind == "member"
-            && p.as_ref()
-                .is_none_or(|p| p.kind != "user" || p.email != *email)
+        } else if p
+            .as_ref()
+            .is_none_or(|p| p.kind != "user" || (kind == "member" && p.email != *email))
         {
+            // An account first: any, or the one the invitation names.
             "signin"
         } else {
             "invite"
@@ -365,7 +371,16 @@ pub async fn entry(
     };
     let mut value = json!({"state":state});
     if matches!(state, "ready" | "invite" | "signin") {
-        value["room"] = json!({"id":r.id,"name":r.name,"kind":r.kind});
+        // Whose room it is: "Anna invited you" says more than a room's kind.
+        let host: Option<String> = sqlx::query_scalar(&format!(
+            "SELECT {} FROM principals p WHERE p.id=?",
+            auth::SHOWN_NAME
+        ))
+        .bind(&r.owner)
+        .fetch_optional(&mut *db)
+        .await?;
+        let mine = p.as_ref().is_some_and(|p| p.id == r.owner);
+        value["room"] = json!({"id":r.id,"name":r.name,"kind":r.kind,"host":host,"mine":mine});
         if let Some((kind, _, _)) = invitation {
             value["inviteKind"] = json!(kind);
         }
@@ -423,7 +438,7 @@ pub async fn join(
     let identity = format!("{}:{}", p.id, random());
     let token = AccessToken::with_api_key(&s.config.livekit_api_key, &s.config.livekit_api_secret)
         .with_identity(&identity)
-        .with_name(&p.name)
+        .with_name(&auth::shown_name(&p.name, p.email.as_deref()))
         .with_ttl(Duration::from_secs(120))
         .with_grants(VideoGrants {
             room_join: true,

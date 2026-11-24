@@ -673,10 +673,10 @@ impl Render for RoomAccess {
             }
             if owner && d.room.kind == RoomKind::Private {
                 body=body.child(heading("Invite someone"))
-                    .child(button("guest-link","Create single-use guest link",Some(Icon::UserPlus),Kind::Primary,false).when(!ready,|v|v.opacity(0.45)).on_click(cx.listener(|v,_,_,cx|v.run(Action::InviteGuest,cx))))
-                    .child(note("One person can claim it, then return until you remove them. Unclaimed links expire in 7 days."))
-                    .child(div().flex().gap(px(8.0)).child(field(&self.email)).child(button("member-invite","Invite member",None,Kind::Secondary,false).when(!ready,|v|v.opacity(0.45)).on_click(cx.listener(|v,_,_,cx|v.run(Action::InviteMember,cx)))))
-                    .child(note("Members sign in with the invited email. This does not create a new account."));
+                    .child(button("guest-link","Create invitation link",Some(Icon::UserPlus),Kind::Primary,false).when(!ready,|v|v.opacity(0.45)).on_click(cx.listener(|v,_,_,cx|v.run(Action::InviteGuest,cx))))
+                    .child(note("It works for one person. They sign up with their email, then they're in until you remove them. Unused links expire in 7 days."))
+                    .child(div().flex().gap(px(8.0)).child(field(&self.email)).child(button("member-invite","Invite this email",None,Kind::Secondary,false).when(!ready,|v|v.opacity(0.45)).on_click(cx.listener(|v,_,_,cx|v.run(Action::InviteMember,cx)))))
+                    .child(note("Only that email can use the invitation. Someone new makes their account with it."));
             } else if !owner && d.room.kind == RoomKind::Private {
                 body = body.child(note(
                     "Ask the room owner to invite someone or change access.",

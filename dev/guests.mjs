@@ -142,26 +142,27 @@ const STEP = (name, go) => {
   const texts = [...document.querySelectorAll('button')].map((b) => b.textContent.trim());
   if (texts.includes('Leave')) return { done: 'joined' };
   const title = document.querySelector('h1')?.textContent ?? document.title;
-  if (!document.querySelector('.join-layout')) {
-    // The page says "Checking your link…" first, in the same place as a refusal.
-    const refused = document.querySelector('.result') && !/^Checking/.test(title);
+  const door = document.querySelector('form.door');
+  if (!door) {
+    // "One moment…" comes first, in the same place as a refusal or a sign-in.
+    const refused = document.querySelector('.col') && !/^One moment/.test(title);
     return refused ? { done: `not let in: ${title}` } : { at: 'checking the link' };
   }
-  const error = document.querySelector('.error')?.textContent?.trim();
-  const [mic, cam] = document.querySelectorAll('.media-controls button');
+  const error = door.querySelector('.err')?.textContent?.trim();
+  const [mic, cam] = door.querySelectorAll('.toggles button');
   for (const [button, what] of [[mic, 'microphone'], [cam, 'camera']]) {
     if (button.getAttribute('aria-pressed') === 'true') continue;
-    // "Cancel … setup" while it starts: leave it be.
-    if (!button.disabled && !/^Cancel/.test(button.textContent.trim())) button.click();
+    // "Starting…" while the camera opens: leave it be.
+    if (!button.disabled && !/^Starting/.test(button.textContent.trim())) button.click();
     return { at: `starting the ${what}`, error };
   }
-  const input = document.querySelector('.join-info form input');
+  const input = door.querySelector('input[name=name]');
   if (input.value !== name) {
     input.value = name;
     input.dispatchEvent(new Event('input', { bubbles: true }));
     return { at: 'typing the name' };
   }
-  const join = document.querySelector('.join-button');
+  const join = door.querySelector('.btn');
   if (join.disabled) return { at: 'joining', error };
   if (!go) return { ready: true, at: 'ready to join' };
   join.click();
