@@ -369,9 +369,17 @@ impl Engine {
         room: &str,
         session: &str,
     ) -> impl Future<Output = anyhow::Result<JoinInfo>> + Send + 'static + use<> {
+        self.join_at(http::Endpoint::Direct(server), room, session)
+    }
+
+    pub fn join_at(
+        &self,
+        endpoint: http::Endpoint<&str>,
+        room: &str,
+        session: &str,
+    ) -> impl Future<Output = anyhow::Result<JoinInfo>> + Send + 'static + use<> {
         let events = self.events.clone();
-        let request = http::request_with_retry(
-            server,
+        let request = endpoint.request_with_retry(
             Some(session),
             "/join",
             Some(serde_json::json!({"room":room})),

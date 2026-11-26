@@ -695,7 +695,11 @@ async fn email_signin_returns_to_the_requesting_browser_origin() {
     let mut state = t.state.clone();
     Arc::make_mut(&mut state.config).public_url = "https://cubiecall.com".into();
     let app = router(state.clone());
-    for origin in ["https://quipcall.com", "https://cubiecall.com"] {
+    for origin in [
+        "https://quipcall.com",
+        "https://cubiecall.com",
+        "https://cubiecall.ru",
+    ] {
         let req = Request::post("/api/auth/request")
             .header("x-cubie", "1")
             .header("origin", origin)
@@ -719,6 +723,62 @@ async fn email_signin_returns_to_the_requesting_browser_origin() {
                 .lines()
                 .any(|line| line.starts_with(&format!("{origin}/signin#magic=")))
         );
+    }
+}
+
+#[tokio::test]
+async fn reserve_proxy_uses_its_own_signaling_and_invitation_urls() {
+    let t = Test::new().await;
+    let admin = t.admin().await;
+    let room = t.room(&admin, "private").await;
+    let mut state = t.state.clone();
+    let config = Arc::make_mut(&mut state.config);
+    config.public_url = "https://cubiecall.com".into();
+    config.livekit_public_url = "wss://cubiecall.com".into();
+    let app = router(state);
+    for (host, origin, signaling) in [
+        (
+            "cubiecall.com",
+            "https://cubiecall.com",
+            "wss://cubiecall.com",
+        ),
+        ("cubiecall.ru", "https://cubiecall.ru", "wss://cubiecall.ru"),
+    ] {
+        for (path, body, prefix) in [
+            (
+                "/api/join".to_owned(),
+                json!({ "room": room }),
+                signaling.to_owned(),
+            ),
+            (
+                format!("/api/rooms/{room}/invites"),
+                json!({ "kind": "guest" }),
+                format!("{origin}/#roomInvite="),
+            ),
+            (
+                "/api/auth/invites".to_owned(),
+                json!({ "email": "friend@example.com" }),
+                format!("{origin}/#accountInvite="),
+            ),
+        ] {
+            let req = Request::post(path)
+                .header("x-cubie", "1")
+                .header("x-forwarded-host", host)
+                .header("origin", origin)
+                .header("authorization", format!("Bearer {admin}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            let res = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+            let value: Value =
+                serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes())
+                    .unwrap();
+            assert!(
+                value["url"].as_str().unwrap().starts_with(&prefix),
+                "{value}"
+            );
+        }
     }
 }
 
@@ -752,6 +812,12 @@ async fn csrf_and_email_rate_limits() {
         ("x-cubie", "https://cubiecall.com", StatusCode::OK),
         ("x-quipcall", "https://quipcall.com", StatusCode::OK),
         ("x-cubie", "https://quipcall.com", StatusCode::OK),
+        ("x-cubie", "https://cubiecall.ru", StatusCode::OK),
+        (
+            "x-cubie",
+            "https://cubiecall.ru.evil.example",
+            StatusCode::FORBIDDEN,
+        ),
         (
             "x-cubie",
             "https://quipcall.com.evil.example",

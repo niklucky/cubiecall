@@ -469,12 +469,13 @@ impl Call {
             can_transcribe: None,
         });
 
-        let join = engine.join(
-            &args.server,
+        let join = engine.join_at(
+            crate::auth::endpoint(&args.server),
             &room.id,
             args.session.as_deref().unwrap_or_default(),
         );
         let expected_session = args.session.clone();
+        let link_args = args.clone();
         let join_task = cx.spawn(async move |this, cx| {
             let result = join.await;
             let _ = this.update(cx, |call, cx| {
@@ -484,6 +485,7 @@ impl Call {
                 call.waiting_for = None;
                 match result {
                     Ok(info) => {
+                        call.web_url = link_args.web_origin().to_owned();
                         if let Some(name) = info
                             .room_name
                             .as_deref()
@@ -522,7 +524,7 @@ impl Call {
 
         Self {
             room,
-            web_url: args.web.clone(),
+            web_url: args.web_origin().to_owned(),
             engine,
             status: Status::Joining,
             me,

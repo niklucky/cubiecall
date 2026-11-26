@@ -615,7 +615,7 @@ impl Render for RoomAccess {
             } else {
                 body = body.child(heading(d.room.name.clone()));
             }
-            let url = crate::call::link(&self.args.web, &d.room.id);
+            let url = crate::call::link(self.args.web_origin(), &d.room.id);
             body = body.child(
                 div()
                     .flex()

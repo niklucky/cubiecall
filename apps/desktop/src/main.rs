@@ -59,6 +59,12 @@ pub struct Args {
     pub regular: bool,
 }
 
+impl Args {
+    fn web_origin(&self) -> &str {
+        auth::web_origin(&self.server, &self.web)
+    }
+}
+
 /// The server release builds talk to, baked in at build time:
 /// `CUBIE_SERVER=https://cubiecall.com cargo build --release` (see deploy/).
 const SERVER: &str = match option_env!("CUBIE_SERVER") {
@@ -303,7 +309,7 @@ impl Shell {
 
     /// The call link for a room.
     pub fn link_for(&self, id: &str) -> String {
-        call::link(&self.args.web, id)
+        call::link(self.args.web_origin(), id)
     }
 
     pub fn set_name(&mut self, name: &str, cx: &mut Context<Self>) {

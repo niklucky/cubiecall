@@ -101,7 +101,43 @@ fn clear(server: &str) {
         }
     }
 }
-pub(crate) use cubie_core::http::{RequestError, request};
+pub(crate) use cubie_core::http::RequestError;
+
+const PRIMARY: &str = "https://cubiecall.com";
+const RESERVE: &str = "https://cubiecall.ru";
+static CUBIE: cubie_core::http::Failover = cubie_core::http::Failover::new(PRIMARY, RESERVE);
+
+pub(crate) fn endpoint(server: &str) -> cubie_core::http::Endpoint<&str> {
+    use cubie_core::http::Endpoint;
+    if server.trim_end_matches('/') == PRIMARY {
+        Endpoint::Redundant(&CUBIE)
+    } else {
+        Endpoint::Direct(server)
+    }
+}
+
+pub(crate) fn web_origin<'a>(server: &str, web: &'a str) -> &'a str {
+    if web.trim_end_matches('/') != PRIMARY {
+        return web;
+    }
+    match endpoint(server) {
+        cubie_core::http::Endpoint::Redundant(route) => route.origin(),
+        cubie_core::http::Endpoint::Direct(server) if server.trim_end_matches('/') == RESERVE => {
+            RESERVE
+        }
+        _ => web,
+    }
+}
+
+pub(crate) fn request(
+    server: &str,
+    token: Option<&str>,
+    path: &str,
+    body: Option<serde_json::Value>,
+    method: &str,
+) -> impl Future<Output = anyhow::Result<serde_json::Value>> + Send + 'static + use<> {
+    endpoint(server).request(token, path, body, method)
+}
 
 /// A completion can only modify the operation generation that started it.
 pub struct Generation<T> {

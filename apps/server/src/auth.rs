@@ -328,7 +328,7 @@ pub async fn invite_account(
         .execute(&s.db)
         .await?;
     Ok(Json(
-        json!({"url":format!("{}/#accountInvite={token}",s.config.public_url), "email":email}),
+        json!({"url":format!("{}/#accountInvite={token}",s.config.link_origin(&h)), "email":email}),
     ))
 }
 #[derive(Deserialize)]

@@ -58,6 +58,14 @@ Browser handoffs use `quipcall://` to open installed apps from either release. T
 - `/opt/cubie/secrets.env` (root, 0600) holds the LiveKit API key and secret. `install.sh` generates it on the first deploy and it never leaves the box. It also holds the auth settings below. Rotate LiveKit keys in place; do not delete the email configuration.
 - No host firewall. LiveKit binds only to `eth0` (public IPv4 + IPv6), not to the Docker bridges.
 
+## Russian reserve domain
+
+`cubiecall.ru` points to the Russian nginx VPS at `94.228.126.139`. It forwards the website, API, downloads and LiveKit WebSocket signaling directly to the origin VPS (`testron.dev`), with upstream HTTPS verified as `cubiecall.com`. The origin nginx accepts the original client IP from this edge address and marks its API requests so that invitations and signaling use `cubiecall.ru`. Both domains use the same accounts and rooms. Browser sign-in cookies are host-specific.
+
+On a replacement edge, install nginx and Certbot. Create `/var/www/cubie-acme`, enable [the HTTP challenge site](../deploy/nginx/cubiecall.ru.acme.conf) as `/etc/nginx/sites-enabled/cubiecall.ru.conf`, then validate and reload nginx. Once public DNS points to the edge, run `certbot certonly --webroot -w /var/www/cubie-acme -d cubiecall.ru` and replace the enabled site with [the HTTPS proxy](../deploy/nginx/cubiecall.ru.conf). Run `nginx -t` before reloading. Enable `certbot.timer` and install a Certbot deploy hook to run `nginx -t && systemctl reload nginx` after renewal. If the edge IP changes, update the DNS record and the two trusted-edge entries in [the origin site](../deploy/nginx/cubiecall.com.conf).
+
+The production Mac app probes `cubiecall.com` first and switches to `cubiecall.ru` if needed. It keeps using the working endpoint until it fails or the app is restarted. Audio and video still use LiveKit's ICE media ports on the origin. Networks that block those ports or the origin IP also need a TURN relay they can reach.
+
 ## How `make deploy` works
 
 `deploy/deploy.sh` builds locally and runs `deploy/install.sh` on the box:

@@ -1,4 +1,10 @@
 use anyhow::{Context, bail};
+use axum::http::HeaderMap;
+
+const PRODUCTION_ORIGIN: &str = "https://cubiecall.com";
+const RESERVE_HOST: &str = "cubiecall.ru";
+const RESERVE_ORIGIN: &str = "https://cubiecall.ru";
+const RESERVE_SIGNALING: &str = "wss://cubiecall.ru";
 
 #[derive(Clone)]
 pub struct Config {
@@ -75,8 +81,32 @@ impl Config {
     }
     pub fn trusts_origin(&self, origin: &str) -> bool {
         origin == self.public_url
-            // Existing signed-in browsers keep their host-only session cookie here.
-            || (self.public_url == "https://cubiecall.com" && origin == "https://quipcall.com")
+            || (self.public_url == PRODUCTION_ORIGIN
+                && matches!(origin, RESERVE_ORIGIN | "https://quipcall.com"))
+    }
+
+    // Origin nginx sets this header from the verified proxy peer.
+    fn via_reserve(&self, headers: &HeaderMap) -> bool {
+        self.public_url == PRODUCTION_ORIGIN
+            && headers
+                .get("x-forwarded-host")
+                .is_some_and(|host| host == RESERVE_HOST)
+    }
+
+    pub fn link_origin(&self, headers: &HeaderMap) -> &str {
+        if self.via_reserve(headers) {
+            RESERVE_ORIGIN
+        } else {
+            &self.public_url
+        }
+    }
+
+    pub fn signaling_url(&self, headers: &HeaderMap) -> &str {
+        if self.via_reserve(headers) {
+            RESERVE_SIGNALING
+        } else {
+            &self.livekit_public_url
+        }
     }
 }
 fn env(key: &str) -> Option<String> {
