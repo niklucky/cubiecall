@@ -129,6 +129,7 @@ Design: [UI.md](UI.md).
 - [ ] Ringing protocol: invite → ringing → accept / decline / cancel / timeout / busy. With multiple devices, the first accept wins.
 - [ ] Incoming-call window and ringtone
 - [ ] Device switching (mic, speaker, camera) during a call
+- [x] ~~Join the call again when the connection is lost (the Mac slept, the network went away)~~ *Desktop: once LiveKit gives up (after a sleep its token has expired: `JoinFailure`), the app gets a new token and connects again, with backoff, saying "Reconnecting…". Mic and camera come back as they were; a screen share, your recording and your transcript stop. The iPhone app still ends the call.*
 - [ ] Call history
 
 **Done when:** two desktops can call each other through the backend, and every ringing state is covered by tests.

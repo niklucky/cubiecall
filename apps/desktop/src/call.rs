@@ -619,7 +619,8 @@ impl Call {
     /// The connection was lost (the Mac slept, say) and LiveKit gave up
     /// reconnecting: join again with a new token, as you were. Your mic
     /// opens as it was, your camera comes back; a screen share needs its
-    /// picker, so it stops.
+    /// picker, so it stops. Your recording stops (what it has is saved),
+    /// and so does your transcript: start them again once you're back.
     fn rejoin(&mut self, reason: &str, cx: &mut Context<Self>) {
         tracing::warn!(reason, "connection lost: joining again");
         self.former.insert(self.me.read(cx).identity.clone());
@@ -648,6 +649,11 @@ impl Call {
             let me = self.me.read(cx).name.clone();
             self.log(me, Happened::StoppedSharing, cx);
             self.drop_preview(cx);
+        }
+        // Nothing can be shared or recorded until you're back.
+        #[cfg(target_os = "macos")]
+        if let Some(picker) = self.picker.take() {
+            close(&picker, cx);
         }
         // Their videos went with the connection; they come again once
         // you're back, and whoever left meanwhile goes then.
