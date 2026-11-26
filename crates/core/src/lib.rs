@@ -42,7 +42,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use cubie_protocol::JoinInfo;
+pub use cubie_protocol::JoinInfo;
 use futures_util::{FutureExt as _, StreamExt as _};
 use livekit::options::TrackPublishOptions;
 use livekit::prelude::*;
@@ -170,7 +170,10 @@ pub enum Event {
         screen: bool,
     },
     /// Your Mac transcribes the call; everyone has been told.
-    TranscriptionStarted,
+    TranscriptionStarted {
+        /// Which of your transcripts: its stop says the same.
+        id: u64,
+    },
     /// What someone said, or a draft of it while they talk (`done` false),
     /// as transcribed on `by`'s Mac (an identity; yours, or a transcriber's,
     /// now or before a handover). A line replaces earlier ones with its id
@@ -181,13 +184,13 @@ pub enum Event {
         line: TranscriptLine,
         relayed: bool,
     },
-    /// Your transcription stopped, and every line is out. `by` asked for it,
-    /// if it wasn't you; `handed_over`: their Mac carries on. `ended`: the
-    /// call ended it (you left, or the connection was lost).
+    /// Your transcription `id` stopped (or stopped starting), and every
+    /// line is out. `by` asked for it, if it wasn't you; `handed_over`:
+    /// their Mac carries on.
     TranscriptionStopped {
+        id: u64,
         by: Option<String>,
         handed_over: bool,
-        ended: bool,
     },
     /// Your transcription couldn't start.
     TranscriptionFailed(String),
@@ -250,6 +253,9 @@ pub struct TranscribeOptions {
     pub language: Option<String>,
     /// Take over from the Mac that asked: start although it transcribes.
     pub handover: Option<Handover>,
+    /// Carry on with your transcript after joining again: with its claim
+    /// from before, so a Mac that started since keeps the transcript.
+    pub resume: bool,
 }
 
 /// Taking over the transcript from the Mac that asked. Only while its claim
@@ -336,6 +342,8 @@ struct State {
     stopped_transcribing: HashMap<String, Instant>,
     /// When your transcription started, unix ms (see [`TRANSCRIBING`]).
     transcribing_since: u64,
+    /// Which start your transcription is (see [`reserve_start`]).
+    transcribing_id: u64,
     /// The model your Mac could transcribe with, told to everyone.
     can_transcribe: Option<String>,
     /// `disconnect` saying goodbye to the server; see [`Engine::closed`].
@@ -441,7 +449,9 @@ impl Engine {
         session: &str,
     ) -> impl Future<Output = anyhow::Result<JoinInfo>> + Send + 'static + use<> {
         let events = self.events.clone();
-        let request = endpoint.request_with_retry(
+        // Leaving (or the call going) calls it off: a late admission would
+        // keep the room going for nobody.
+        let request = endpoint.cancellable_request_with_retry(
             Some(session),
             "/join",
             Some(serde_json::json!({"room":room})),
@@ -498,11 +508,11 @@ impl Engine {
                 s.screen.take(),
                 s.camera.take(),
                 s.recorder.take(),
-                s.transcribing.take(),
+                take_transcribing(&mut s),
                 std::mem::take(&mut s.transcript_sends),
             )
         };
-        stop_taking_in(transcribing.as_ref(), recorder.as_ref());
+        stop_taking_in(transcribing.as_ref().map(|(_, t)| t), recorder.as_ref());
         let events = self.events.clone();
         let closing = self.tasks.spawn(async move {
             let started = Instant::now();
@@ -914,12 +924,12 @@ impl Engine {
                 return;
             }
             let event = match &started {
-                Ok(()) => Event::TranscriptionStarted,
+                Ok(()) => Event::TranscriptionStarted { id },
                 Err(e) => match e.downcast_ref::<StoppedStarting>() {
                     Some(StoppedStarting(by)) => Event::TranscriptionStopped {
+                        id,
                         by: by.clone(),
                         handed_over: false,
-                        ended: false,
                     },
                     None => Event::TranscriptionFailed(format!("{e:#}")),
                 },
@@ -1016,10 +1026,10 @@ async fn stop_transcribing_for(
 ) {
     let (room, transcribing, pass_on) = {
         let mut s = state.lock();
-        let transcribing = s.transcribing.take();
+        let transcribing = take_transcribing(&mut s);
         // Stopped means stopped: nothing more is heard, from now, before
         // anything goes over the network.
-        if let Some(transcribing) = &transcribing {
+        if let Some((_, transcribing)) = &transcribing {
             transcribing.stop_listening();
         }
         let pass_on = if handed_over {
@@ -1049,7 +1059,7 @@ async fn stop_transcribing_for(
             }
         });
     }
-    let Some(transcribing) = transcribing else {
+    let Some((id, transcribing)) = transcribing else {
         return;
     };
     // The claim goes before the last words are out, so no Mac takes over
@@ -1070,9 +1080,9 @@ async fn stop_transcribing_for(
         });
     let _ = events
         .send(Event::TranscriptionStopped {
+            id,
             by,
             handed_over,
-            ended: false,
         })
         .await;
 }
@@ -1254,7 +1264,7 @@ async fn start_transcribing(
             None
         }
     };
-    let model = options.model;
+    let (model, resume) = (options.model, options.resume);
     let stt = cubie_stt::Options {
         model: models::path(model, &options.dir),
         vad: models::path(&catalog::VAD, &options.dir),
@@ -1324,7 +1334,14 @@ async fn start_transcribing(
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as u64);
-    let since = now.max(newest_claim(&room, &state.lock().mine).map_or(0, |(since, _)| since + 1));
+    let since = {
+        let s = state.lock();
+        match s.transcribing_since {
+            // Carrying on as before: a Mac that started since is newer.
+            before if resume && before > 0 => before,
+            _ => now.max(newest_claim(&room, &s.mine).map_or(0, |(since, _)| since + 1)),
+        }
+    };
     state.lock().transcribing_since = since;
     if let Err(e) = set_attribute(&room, TRANSCRIBING, &format!("{}@{since}", model.id)).await {
         let _ = tokio::task::spawn_blocking(move || transcriber.stop()).await;
@@ -1418,6 +1435,7 @@ fn install_transcribing(
     start_goes_on(&s, connection, id)?;
     let listener = listen_to(&mut s, weak, handle);
     s.transcribing = Some(make(listener));
+    s.transcribing_id = id;
     Ok(())
 }
 
@@ -2251,12 +2269,12 @@ async fn connect(
             s.room = None;
             s.transcript_sends.clear();
             forget_call(&mut s);
-            (s.recorder.take(), s.transcribing.take())
+            (s.recorder.take(), take_transcribing(&mut s))
         } else {
             (None, None)
         }
     };
-    stop_taking_in(transcribing.as_ref(), recorder.as_ref());
+    stop_taking_in(transcribing.as_ref().map(|(_, t)| t), recorder.as_ref());
     wind_down(transcribing, recorder, &events, true).await;
     Ok(())
 }
@@ -2302,7 +2320,7 @@ fn stop_taking_in(
 /// its own time. `say_saved`: tell how the recording went (leaving keeps it
 /// in the call's history without).
 async fn wind_down(
-    transcribing: Option<transcribe::Transcribing>,
+    transcribing: Option<(u64, transcribe::Transcribing)>,
     recorder: Option<record::Recorder>,
     events: &async_channel::Sender<Event>,
     say_saved: bool,
@@ -2314,19 +2332,24 @@ async fn wind_down(
     .await;
 }
 async fn finish_words(
-    transcribing: Option<transcribe::Transcribing>,
+    transcribing: Option<(u64, transcribe::Transcribing)>,
     events: &async_channel::Sender<Event>,
 ) {
-    if let Some(transcribing) = transcribing {
+    if let Some((id, transcribing)) = transcribing {
         let _ = tokio::task::spawn_blocking(move || transcribing.stop()).await;
         let _ = events
             .send(Event::TranscriptionStopped {
+                id,
                 by: None,
                 handed_over: false,
-                ended: true,
             })
             .await;
     }
+}
+
+/// Your transcription, and which start it is.
+fn take_transcribing(s: &mut State) -> Option<(u64, transcribe::Transcribing)> {
+    s.transcribing.take().map(|t| (s.transcribing_id, t))
 }
 async fn finish_recording(
     recorder: Option<record::Recorder>,

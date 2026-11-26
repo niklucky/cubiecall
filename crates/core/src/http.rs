@@ -466,6 +466,31 @@ impl Endpoint<&str> {
         method: &str,
         retry: bool,
     ) -> impl Future<Output = anyhow::Result<Value>> + Send + 'static + use<> {
+        self.send(token, path, body, method, retry, false)
+    }
+
+    /// As [`Endpoint::request_with_retry`], but dropping the future calls
+    /// the request off, its retries too: nobody waits for its answer.
+    pub(crate) fn cancellable_request_with_retry(
+        self,
+        token: Option<&str>,
+        path: &str,
+        body: Option<Value>,
+        method: &str,
+        retry: bool,
+    ) -> impl Future<Output = anyhow::Result<Value>> + Send + 'static + use<> {
+        self.send(token, path, body, method, retry, true)
+    }
+
+    fn send(
+        self,
+        token: Option<&str>,
+        path: &str,
+        body: Option<Value>,
+        method: &str,
+        retry: bool,
+        cancel_on_drop: bool,
+    ) -> impl Future<Output = anyhow::Result<Value>> + Send + 'static + use<> {
         let endpoint = match self {
             Self::Direct(server) => Endpoint::Direct(server.to_owned()),
             Self::Redundant(failover) => Endpoint::Redundant(failover),
@@ -474,25 +499,32 @@ impl Endpoint<&str> {
         let path = path.to_owned();
         let method = method.parse();
         async move {
-            crate::runtime()?
-                .spawn(async move {
-                    let request = ApiRequest {
-                        token,
-                        path,
-                        body,
-                        method: method?,
-                    };
-                    match endpoint {
-                        Endpoint::Redundant(failover) => {
-                            failover.send(client(true)?, &request, retry).await
-                        }
-                        Endpoint::Direct(server) => {
-                            request.send(client(false)?, &server, retry).await
-                        }
+            let task = crate::runtime()?.spawn(async move {
+                let request = ApiRequest {
+                    token,
+                    path,
+                    body,
+                    method: method?,
+                };
+                match endpoint {
+                    Endpoint::Redundant(failover) => {
+                        failover.send(client(true)?, &request, retry).await
                     }
-                })
-                .await?
+                    Endpoint::Direct(server) => request.send(client(false)?, &server, retry).await,
+                }
+            });
+            let _abort = cancel_on_drop.then(|| AbortOnDrop(task.abort_handle()));
+            task.await?
         }
+    }
+}
+
+/// Calls a spawned request off when the future waiting for it is dropped.
+struct AbortOnDrop(tokio::task::AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 

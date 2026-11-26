@@ -3,7 +3,7 @@
 //! When the call ends it becomes a [`CallRecord`] and its [`Moment`]s, for
 //! the Calls tab and the room's history.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::store::{CallRecord, Moment, MomentKind};
@@ -28,6 +28,11 @@ pub(crate) struct Log {
     you: Vec<String>,
     your_name: String,
     names: HashMap<String, String>,
+    /// Who's in the call now, who records and whose Mac transcribes: only
+    /// a change is worth a line (joining again tells all of it anew).
+    present: HashSet<String>,
+    recording: HashSet<String>,
+    transcribing: HashSet<String>,
     /// Shared screens showing now: track → whose.
     screens: HashMap<String, String>,
     people: Vec<String>,
@@ -42,6 +47,25 @@ fn now() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
+/// `identity` in `set` if `on`: whether that changed anything.
+fn flip(set: &mut HashSet<String>, identity: &str, on: bool) -> bool {
+    if on {
+        set.insert(identity.to_owned())
+    } else {
+        set.remove(identity)
+    }
+}
+
+/// The keys of notes that may be taken back: someone gone, a share over.
+/// Never a transcript line's (`<transcriber>:<line>`).
+fn gone_key(identity: &str) -> String {
+    format!("gone {identity}")
+}
+
+fn unshared_key(track: &str) -> String {
+    format!("unshared {track}")
+}
+
 impl Log {
     /// You're in, as `you` (an identity), called `your_name`.
     pub(crate) fn begin(you: String, your_name: String) -> Self {
@@ -51,6 +75,9 @@ impl Log {
             you: vec![you],
             your_name,
             names: HashMap::new(),
+            present: HashSet::new(),
+            recording: HashSet::new(),
+            transcribing: HashSet::new(),
             screens: HashMap::new(),
             people: Vec::new(),
             moments: Vec::new(),
@@ -70,6 +97,11 @@ impl Log {
     }
 
     fn note(&mut self, kind: MomentKind, identity: &str) {
+        self.note_as(kind, identity, String::new());
+    }
+
+    /// A note that may be taken back by `key` (see [`Log::undo`]).
+    fn note_as(&mut self, kind: MomentKind, identity: &str, key: String) {
         if self.notes == MAX_NOTES {
             return;
         }
@@ -80,24 +112,51 @@ impl Log {
             who: self.name(identity),
             mine: self.is_you(identity),
             text: String::new(),
-            key: String::new(),
+            key,
         });
+    }
+
+    /// Take back the note made as `key`, if there is one: what it said
+    /// didn't happen after all.
+    fn undo(&mut self, key: &str) -> bool {
+        let Some(at) = self.moments.iter().rposition(|m| m.key == key) else {
+            return false;
+        };
+        self.moments.remove(at);
+        self.notes -= 1;
+        true
     }
 
     fn is_you(&self, identity: &str) -> bool {
         self.you.iter().any(|you| you == identity)
     }
 
-    /// Back in the call as `you`, after the connection was lost.
-    pub(crate) fn rejoined(&mut self, you: String) {
+    /// Back in the call as `you`, after the connection was lost, with
+    /// `others` there: whoever isn't any more left meanwhile.
+    pub(crate) fn rejoined(&mut self, you: String, others: &[String]) {
         self.you.push(you);
+        let gone: Vec<String> = self
+            .present
+            .iter()
+            .filter(|id| !others.contains(id))
+            .cloned()
+            .collect();
+        for identity in gone {
+            self.left(&identity);
+        }
     }
 
+    /// Someone is in the call. Once there, they're not noted again; one
+    /// noted as gone while the connection failed (the same identity: each
+    /// joining has its own) never left.
     pub(crate) fn joined(&mut self, identity: &str, name: &str) {
         let name = if name.is_empty() { "Guest" } else { name };
         self.names.insert(identity.to_owned(), name.to_owned());
         if !self.people.iter().any(|p| p == name) {
             self.people.push(name.to_owned());
+        }
+        if !self.present.insert(identity.to_owned()) || self.undo(&gone_key(identity)) {
+            return;
         }
         if self.since.elapsed() >= ALREADY_THERE {
             self.note(MomentKind::Joined, identity);
@@ -105,38 +164,52 @@ impl Log {
     }
 
     pub(crate) fn left(&mut self, identity: &str) {
-        self.note(MomentKind::Left, identity);
+        if self.present.remove(identity) {
+            self.note_as(MomentKind::Left, identity, gone_key(identity));
+        }
     }
 
-    /// A video appeared; only shared screens are worth a line.
+    /// A video appeared; only shared screens are worth a line. One noted
+    /// as stopped while the connection failed goes on.
     pub(crate) fn screen_started(&mut self, track: &str, identity: &str) {
-        self.screens.insert(track.to_owned(), identity.to_owned());
+        if self
+            .screens
+            .insert(track.to_owned(), identity.to_owned())
+            .is_some()
+            || self.undo(&unshared_key(track))
+        {
+            return;
+        }
         self.note(MomentKind::ShareStarted, identity);
     }
 
     /// A video went: if it was a shared screen, that share is over.
     pub(crate) fn track_removed(&mut self, track: &str) {
         if let Some(identity) = self.screens.remove(track) {
-            self.note(MomentKind::ShareStopped, &identity);
+            self.note_as(MomentKind::ShareStopped, &identity, unshared_key(track));
         }
     }
 
     pub(crate) fn recording(&mut self, identity: &str, on: bool) {
-        let kind = if on {
-            MomentKind::RecordingStarted
-        } else {
-            MomentKind::RecordingStopped
-        };
-        self.note(kind, identity);
+        if flip(&mut self.recording, identity, on) {
+            let kind = if on {
+                MomentKind::RecordingStarted
+            } else {
+                MomentKind::RecordingStopped
+            };
+            self.note(kind, identity);
+        }
     }
 
     pub(crate) fn transcribing(&mut self, identity: &str, on: bool) {
-        let kind = if on {
-            MomentKind::TranscriptStarted
-        } else {
-            MomentKind::TranscriptStopped
-        };
-        self.note(kind, identity);
+        if flip(&mut self.transcribing, identity, on) {
+            let kind = if on {
+                MomentKind::TranscriptStarted
+            } else {
+                MomentKind::TranscriptStopped
+            };
+            self.note(kind, identity);
+        }
     }
 
     /// A finished line of the transcript. A later one with the same `key`
@@ -250,6 +323,51 @@ mod tests {
                 (MomentKind::Left, "Max"),
             ]
         );
+    }
+
+    #[test]
+    fn joining_again_notes_only_what_changed() {
+        let mut log = Log::begin("me-1".into(), "Nikita".into());
+        log.joined("anna-1", "Anna");
+        log.joined("max-1", "Max");
+        log.joined("eve-1", "Eve");
+        log.recording("anna-1", true);
+        log.screen_started("TR_screen", "anna-1");
+        log.since -= Duration::from_secs(5);
+        // LiveKit's own try at reconnecting drops everyone first.
+        log.track_removed("TR_screen");
+        log.left("anna-1");
+        log.left("max-1");
+        // Eve was there still when the call gave up.
+        // Back as me-2: Anna is still there, sharing and recording; Max and
+        // Eve left meanwhile; Bob came. Everything is told anew.
+        log.rejoined("me-2".into(), &["anna-1".into(), "bob-1".into()]);
+        log.joined("anna-1", "Anna");
+        log.joined("bob-1", "Bob");
+        log.recording("anna-1", true);
+        log.recording("bob-1", false);
+        log.transcribing("bob-1", false);
+        log.screen_started("TR_screen", "anna-1");
+        log.said("anna-1:1", "me-2", 20_000, "Back");
+        let (_, moments) = log.finish("room", "");
+        let notes: Vec<_> = moments
+            .iter()
+            .filter(|m| m.kind != MomentKind::Said)
+            .map(|m| (m.kind, m.who.as_str()))
+            .collect();
+        assert_eq!(
+            notes,
+            [
+                (MomentKind::RecordingStarted, "Anna"),
+                (MomentKind::ShareStarted, "Anna"),
+                (MomentKind::Left, "Max"),
+                (MomentKind::Left, "Eve"),
+                (MomentKind::Joined, "Bob"),
+            ]
+        );
+        // You, as you are now.
+        let line = moments.iter().find(|m| m.kind == MomentKind::Said).unwrap();
+        assert!(line.mine);
     }
 
     #[test]

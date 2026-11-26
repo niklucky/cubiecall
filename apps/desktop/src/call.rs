@@ -371,6 +371,10 @@ pub struct Call {
     /// That start is under way: if another Mac took the transcript over
     /// meanwhile, it gives way without a word.
     resuming_transcript: bool,
+    /// Which of your transcripts runs (the engine's id), and the one of a
+    /// lost connection still finishing its last words.
+    transcript_id: Option<u64>,
+    draining: Option<u64>,
     connected_at: Option<(SystemTime, Instant)>,
     people: BTreeSet<String>,
     /// Who joined, left, shared and recorded, for the call's timeline.
@@ -534,6 +538,8 @@ impl Call {
             camera_on_connect: args.camera,
             transcribe_on_connect: false,
             resuming_transcript: false,
+            transcript_id: None,
+            draining: None,
             connected_at: None,
             people: BTreeSet::new(),
             events: Vec::new(),
@@ -640,6 +646,7 @@ impl Call {
         self.resuming_transcript = false;
         self.handover = None;
         if let Some(t) = self.transcription.take_if(|t| t.mine) {
+            self.draining = self.transcript_id.take();
             self.log(t.name, Happened::StoppedTranscribing, cx);
         }
         let mic = self.mic_on && !self.held;
@@ -1265,6 +1272,7 @@ impl Call {
             dir: store::models_dir(),
             language,
             handover: self.handover.take(),
+            resume: self.resuming_transcript,
         });
         self.preparing = Some(Preparing::Loading);
         cx.notify();
@@ -1341,12 +1349,12 @@ impl Call {
             .map_or(Duration::ZERO, |(_, mono)| mono.elapsed());
         // Your Mac transcribes: what was being said is still on its way
         // (TranscriptionStopped follows it). The windows close now.
-        if wait_for_words && self.transcription.as_ref().is_some_and(|t| t.mine) {
+        if wait_for_words && self.words_to_come() {
             let timeout = cx.spawn(async move |this, cx| {
                 cx.background_executor()
                     .timer(Duration::from_secs(10))
                     .await;
-                let _ = this.update(cx, |this, cx| this.words_are_in(cx));
+                let _ = this.update(cx, |this, cx| this.keep_ended(cx));
             });
             self.ending = Some((duration, timeout));
         } else {
@@ -1356,8 +1364,21 @@ impl Call {
         schedule_sync(&cx.entity(), cx);
     }
 
-    /// After leaving, your Mac's last words are in: keep the call.
+    /// Your Mac's transcripts still have words on the way: yours now, or
+    /// a lost connection's.
+    fn words_to_come(&self) -> bool {
+        self.draining.is_some() || self.transcription.as_ref().is_some_and(|t| t.mine)
+    }
+
+    /// After leaving, a transcript's last words are in: keep the call once
+    /// all of them are.
     fn words_are_in(&mut self, cx: &mut Context<Self>) {
+        if !self.words_to_come() {
+            self.keep_ended(cx);
+        }
+    }
+
+    fn keep_ended(&mut self, cx: &mut Context<Self>) {
         if let Some((duration, _)) = self.ending.take() {
             self.ended(duration, cx);
         }
@@ -1512,10 +1533,6 @@ impl Call {
                     self.rejoin(&reason, cx);
                     windows_changed = true;
                 } else if self.status != Status::Ended {
-                    // Your transcript ended with the call.
-                    if let Some(t) = self.transcription.take_if(|t| t.mine) {
-                        self.log(t.name, Happened::StoppedTranscribing, cx);
-                    }
                     self.fail(format!("disconnected: {reason}"), cx);
                 }
             }
@@ -1821,9 +1838,10 @@ impl Call {
                 }
                 self.show_recording();
             }
-            Event::TranscriptionStarted => {
+            Event::TranscriptionStarted { id } => {
                 self.preparing = None;
                 self.resuming_transcript = false;
+                self.transcript_id = Some(id);
                 let (identity, name) = {
                     let me = self.me.read(cx);
                     (me.identity.clone(), me.name.clone())
@@ -1870,14 +1888,21 @@ impl Call {
                 // Lines don't change anything else on screen.
                 return;
             }
-            // The lost connection's transcript, done (if it says so at all):
-            // that was taken care of when it was lost, and another may run now.
-            Event::TranscriptionStopped { ended: true, .. } if self.status != Status::Ended => {}
+            // The lost connection's transcript, done: it was taken care of
+            // when the connection went, and another may run now.
+            Event::TranscriptionStopped { id, .. } if self.draining == Some(id) => {
+                self.draining = None;
+                self.words_are_in(cx);
+            }
+            // Not the transcript you run now.
+            Event::TranscriptionStopped { id, .. }
+                if self.transcript_id.is_some() && self.transcript_id != Some(id) => {}
             Event::TranscriptionStopped {
                 by,
                 handed_over: true,
                 ..
             } => {
+                self.transcript_id = None;
                 // Their Mac carries on (we heard it start while ours ran).
                 if self.transcription.take_if(|t| t.mine).is_some()
                     && let Some(member) = by.as_deref().and_then(|id| self.member(id, cx))
@@ -1906,6 +1931,7 @@ impl Call {
             }
             Event::TranscriptionStopped { by, .. } => {
                 self.resuming_transcript = false;
+                self.transcript_id = None;
                 // Or it was stopped while it got ready (taking over, say),
                 // and never listened.
                 let overtaken = self

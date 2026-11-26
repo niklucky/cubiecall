@@ -152,11 +152,17 @@ pub struct Call {
     /// The camera is restarting on its other side.
     flipping: AtomicBool,
     front: AtomicBool,
-    /// Your camera is on; joining again, it comes back.
+    /// Your camera is on (or restarting on its other side); joining
+    /// again, it comes back, unless you turn it off meanwhile.
     camera_on: AtomicBool,
     camera_on_connect: AtomicBool,
-    /// Joining again after the connection was lost: the tries so far.
+    /// Joining again after the connection was lost: the tries so far. Mic
+    /// and camera changes take this lock too, so none is lost to a rejoin.
     rejoin: Mutex<Option<usize>>,
+    /// Closed when you leave (or the call goes): an admission still on its
+    /// way is called off.
+    cancel: async_channel::Sender<()>,
+    cancelled: async_channel::Receiver<()>,
     /// You left: nothing joins again.
     left: AtomicBool,
     /// Who to ask to join again, and who hears of it.
@@ -176,6 +182,7 @@ impl Client {
         listener: Arc<dyn CallListener>,
     ) -> Result<Arc<Call>, crate::AppError> {
         let (engine, events) = Engine::new().map_err(crate::AppError::from)?;
+        let (cancel, cancelled) = async_channel::bounded(1);
         // Every call opens on the front camera, whichever the last one ended
         // on (the engine's choice outlives a call).
         #[cfg(target_os = "ios")]
@@ -201,25 +208,27 @@ impl Client {
             camera_on: AtomicBool::new(false),
             camera_on_connect: AtomicBool::new(false),
             rejoin: Mutex::new(None),
+            cancel,
+            cancelled,
             left: AtomicBool::new(false),
             client: self.clone(),
             listener: listener.clone(),
         });
         let weak = Arc::downgrade(&call);
         let client = self;
+        let cancelled = call.cancelled.clone();
         std::thread::Builder::new()
             .name("cubie-call".into())
             .spawn(move || {
-                let room_name = match crate::block::on(admission) {
+                // Leaving before you're in calls it off.
+                let Some(admission) = crate::block::on(until_cancelled(admission, cancelled))
+                else {
+                    return;
+                };
+                match admission {
                     Ok(info) => {
                         let Some(call) = weak.upgrade() else { return };
-                        // The server's name for the room is the newest.
-                        let name = info.room_name.clone();
-                        if let Some(name) = name.as_ref().filter(|n| !n.is_empty()) {
-                            call.name.lock().clone_from(name);
-                        }
-                        call.engine.connect(info);
-                        name
+                        call.admitted(info);
                     }
                     Err(e) => {
                         let error = crate::AppError::from(e);
@@ -239,13 +248,7 @@ impl Client {
                 drop(client);
                 // Until the call is dropped: the engine holds the other end.
                 while let Ok(event) = events.recv_blocking() {
-                    for mut event in translate(&weak, event) {
-                        if let CallEvent::Connected {
-                            room_name: name, ..
-                        } = &mut event
-                        {
-                            name.clone_from(&room_name);
-                        }
+                    for event in translate(&weak, event) {
                         listener.on_event(event);
                     }
                 }
@@ -267,6 +270,8 @@ impl Call {
         if self.mic_missing.load(Ordering::Relaxed) {
             return false;
         }
+        // In step with joining again, which sets how the next mic opens.
+        let _rejoin = self.rejoin.lock();
         self.mic_wanted.store(on, Ordering::Relaxed);
         self.engine.set_mic_opens_muted(!on);
         self.engine.set_mic_enabled(on);
@@ -274,6 +279,16 @@ impl Call {
     }
 
     pub fn set_camera(&self, on: bool) {
+        // Joining again: it starts once you're back, or doesn't.
+        {
+            let rejoin = self.rejoin.lock();
+            if rejoin.is_some() {
+                self.camera_on_connect.store(on, Ordering::Relaxed);
+                drop(rejoin);
+                self.listener.on_event(CallEvent::YourCamera { on });
+                return;
+            }
+        }
         if on {
             self.start_camera();
         } else {
@@ -288,7 +303,8 @@ impl Call {
         #[cfg(target_os = "ios")]
         self.engine.set_camera_front(front);
         let _ = front;
-        if running {
+        // Joining again, the camera comes back on the side chosen.
+        if running && self.rejoin.lock().is_none() {
             // One camera at a time: the new one opens once the old has
             // closed (see `translate`).
             self.flipping.store(true, Ordering::Relaxed);
@@ -345,6 +361,7 @@ impl Call {
     pub fn leave(&self) {
         self.left.store(true, Ordering::Relaxed);
         self.rejoin.lock().take();
+        self.cancel.close();
         self.videos.lock().clear();
         self.engine.disconnect();
         self.keep_record();
@@ -379,18 +396,34 @@ impl Call {
     /// button says, your camera if it was on).
     fn start_rejoin(self: &Arc<Self>) {
         tracing::warn!("connection lost: joining again");
-        self.camera_on_connect.store(
-            self.camera_on.swap(false, Ordering::Relaxed),
-            Ordering::Relaxed,
-        );
-        self.flipping.store(false, Ordering::Relaxed);
-        // What's left of the old connection goes; the next opens its own.
-        self.engine.disconnect();
-        let mic =
-            self.mic_wanted.load(Ordering::Relaxed) && !self.mic_missing.load(Ordering::Relaxed);
-        self.engine.set_mic_opens_muted(!mic);
-        *self.rejoin.lock() = Some(0);
+        {
+            // A mute or camera change waits for this, and then counts.
+            let mut rejoin = self.rejoin.lock();
+            self.camera_on_connect.store(
+                self.camera_on.swap(false, Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+            self.flipping.store(false, Ordering::Relaxed);
+            // What's left of the old connection goes; the next opens its own.
+            self.engine.disconnect();
+            let mic = self.mic_wanted.load(Ordering::Relaxed)
+                && !self.mic_missing.load(Ordering::Relaxed);
+            self.engine.set_mic_opens_muted(!mic);
+            *rejoin = Some(0);
+        }
         self.rejoin_later();
+    }
+
+    /// Let in: the server's name for the room is the newest. Connects,
+    /// unless you've left (`leave` takes the same lock).
+    fn admitted(&self, info: cubie_core::JoinInfo) {
+        if let Some(name) = info.room_name.as_ref().filter(|n| !n.is_empty()) {
+            self.name.lock().clone_from(name);
+        }
+        let _rejoin = self.rejoin.lock();
+        if !self.left.load(Ordering::Relaxed) {
+            self.engine.connect(info);
+        }
     }
 
     /// Try to join again, after a while that grows with every try, until
@@ -417,20 +450,17 @@ impl Call {
                     &call.room,
                     session.as_deref().unwrap_or(""),
                 );
-                // The call may be dropped while this waits.
+                // Leaving, or the call going, calls it off.
+                let cancelled = call.cancelled.clone();
                 drop(call);
-                let result = crate::block::on(admission);
+                let Some(result) = crate::block::on(until_cancelled(admission, cancelled)) else {
+                    return;
+                };
                 let Some(call) = weak.upgrade().filter(|c| c.rejoining()) else {
                     return;
                 };
                 match result {
-                    // Under the lock `leave` takes: leaving now, nothing connects.
-                    Ok(info) => {
-                        let rejoin = call.rejoin.lock();
-                        if rejoin.is_some() && !call.left.load(Ordering::Relaxed) {
-                            call.engine.connect(info);
-                        }
-                    }
+                    Ok(info) => call.admitted(info),
                     // Not back on the network yet.
                     Err(e) if cubie_core::http::transient(&e) => {
                         tracing::info!("joining again: {e:#}");
@@ -480,6 +510,22 @@ impl Call {
     }
 }
 
+/// `future`'s output, or nothing once `cancelled` closes (dropping it).
+async fn until_cancelled<T>(
+    future: impl std::future::Future<Output = T>,
+    cancelled: async_channel::Receiver<()>,
+) -> Option<T> {
+    let mut future = std::pin::pin!(future);
+    let mut cancel = std::pin::pin!(cancelled.recv());
+    std::future::poll_fn(|cx| {
+        if cancel.as_mut().poll(cx).is_ready() {
+            return std::task::Poll::Ready(None);
+        }
+        future.as_mut().poll(cx).map(Some)
+    })
+    .await
+}
+
 /// No microphone will open in this call: access is off, or (tests, the
 /// Simulator) the engine was told to leave it alone.
 fn mic_missing() -> bool {
@@ -504,20 +550,30 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
         Event::WaitingForPermission(device) => one(CallEvent::WaitingForPermission {
             camera: device == MediaDevice::Camera,
         }),
-        Event::Connected { identity, .. } => {
-            // Back after the connection was lost: the call goes on, and so
-            // does its history.
-            if call.rejoin.lock().take().is_some() {
-                call.write(|log| log.rejoined(identity.clone()));
-                if call.camera_on_connect.swap(false, Ordering::Relaxed) {
-                    call.start_camera();
+        Event::Connected {
+            identity, others, ..
+        } => {
+            {
+                let mut rejoin = call.rejoin.lock();
+                // Left meanwhile: the call's history is kept already.
+                if call.left.load(Ordering::Relaxed) {
+                    return Vec::new();
                 }
-            } else {
-                *call.log.lock() = Some(Log::begin(identity.clone(), call.your_name.clone()));
+                // Back after the connection was lost: the call goes on, and
+                // so does its history.
+                if rejoin.take().is_some() {
+                    call.write(|log| log.rejoined(identity.clone(), &others));
+                    if call.camera_on_connect.swap(false, Ordering::Relaxed) {
+                        call.start_camera();
+                    }
+                } else {
+                    *call.log.lock() = Some(Log::begin(identity.clone(), call.your_name.clone()));
+                }
             }
+            let name = call.name.lock().clone();
             let connected = CallEvent::Connected {
                 you: identity,
-                room_name: None,
+                room_name: (!name.is_empty()).then_some(name),
             };
             // The engine asked for the microphone before connecting. Without
             // it none will open: the mic button says so from the start.
@@ -586,11 +642,12 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
             one(CallEvent::YourMic { on: enabled })
         }
         Event::CameraChanged { enabled } => {
-            call.camera_on.store(enabled, Ordering::Relaxed);
+            // Restarting on its other side, it's still on.
             if !enabled && call.flipping.swap(false, Ordering::Relaxed) {
                 call.start_camera();
                 return Vec::new();
             }
+            call.camera_on.store(enabled, Ordering::Relaxed);
             one(CallEvent::YourCamera { on: enabled })
         }
         Event::ParticipantRecording {
@@ -662,7 +719,7 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
         | Event::RecordingStarted { .. }
         | Event::RecordingSaved(_)
         | Event::RecordingFailed { .. }
-        | Event::TranscriptionStarted
+        | Event::TranscriptionStarted { .. }
         | Event::TranscriptionStopped { .. }
         | Event::TranscriptionFailed(_)
         | Event::ParticipantCanTranscribe { .. }
