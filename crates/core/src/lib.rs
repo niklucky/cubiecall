@@ -589,12 +589,21 @@ impl Engine {
                     );
                 }
                 // The room now: it may have connected while you were asked.
-                let (room, connection) = current_room(&state).context("not in a call")?;
-                let camera = camera::Camera::start(&room, preview).await?;
+                // Left or joined again meanwhile, and this start is forgotten.
+                let (room, connection) = {
+                    let s = state.lock();
+                    anyhow::ensure!(s.camera_starting == Some(start), Gone);
+                    (s.room.clone().context("not in a call")?, s.connection)
+                };
+                let ours =
+                    |s: &State| s.connection == connection && s.camera_starting == Some(start);
+                let camera = camera::Camera::start(&room, preview)
+                    .await
+                    .map_err(|e| if ours(&state.lock()) { e } else { Gone.into() })?;
                 // The call may have ended while the camera was starting.
                 let stale = {
                     let mut s = state.lock();
-                    if s.connection == connection {
+                    if ours(&s) {
                         s.camera = Some(camera);
                         None
                     } else {
@@ -714,7 +723,15 @@ impl Engine {
                     events.clone(),
                     on_fail,
                 )
-                .await?;
+                .await
+                // Failing for a connection that's gone tells the next nothing.
+                .map_err(|e| {
+                    if state.lock().connection == connection {
+                        e
+                    } else {
+                        Gone.into()
+                    }
+                })?;
                 // The connection may have gone while it started.
                 let stale = {
                     let mut s = state.lock();
@@ -2061,23 +2078,19 @@ async fn connect(
                 .await
             {
                 Ok(_) => {
-                    let enabled = {
-                        let mut s = state.lock();
-                        is_current(&s, &room).then(|| {
-                            // Asked for while it was being published: now.
-                            let enabled = !s.mic_opens_muted;
-                            if enabled {
-                                mic.unmute();
-                            } else {
-                                mic.mute();
-                            }
-                            s.mic = Some(mic);
-                            audio_tap::set_mic_live(&s.hub, enabled);
-                            enabled
-                        })
-                    };
-                    if let Some(enabled) = enabled {
-                        let _ = events.send(Event::MicChanged { enabled }).await;
+                    let mut s = state.lock();
+                    if is_current(&s, &room) {
+                        // Asked for while it was being published: now.
+                        let enabled = !s.mic_opens_muted;
+                        if enabled {
+                            mic.unmute();
+                        } else {
+                            mic.mute();
+                        }
+                        s.mic = Some(mic);
+                        audio_tap::set_mic_live(&s.hub, enabled);
+                        // Under the lock: a click from now on is told after it.
+                        let _ = events.try_send(Event::MicChanged { enabled });
                     }
                 }
                 Err(e) => {
@@ -2402,12 +2415,6 @@ fn track_publications(state: &Mutex<State>, connection: u64, event: &RoomEvent) 
         }
         _ => {}
     }
-}
-
-/// The room you're in, and its connection.
-fn current_room(state: &Mutex<State>) -> Option<(Arc<Room>, u64)> {
-    let s = state.lock();
-    s.room.clone().map(|room| (room, s.connection))
 }
 
 /// A failed connect that may work in a moment: the network or the server

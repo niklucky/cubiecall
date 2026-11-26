@@ -623,8 +623,12 @@ impl Call {
             self.keep_recording(&recording, recording.since.elapsed(), cx);
         }
         // A transcript still getting ready was for the old connection: the
-        // engine drops it without a word.
+        // engine drops it without a word. Yours stops with it: another
+        // Mac may carry on, and you'd hear of it before it's done.
         self.preparing = None;
+        if let Some(t) = self.transcription.take_if(|t| t.mine) {
+            self.log(t.name, Happened::StoppedTranscribing, cx);
+        }
         let mic = self.mic_on && !self.held;
         self.held = false;
         self.key_held = false;
@@ -866,13 +870,16 @@ impl Call {
     }
 
     pub fn toggle_camera(&mut self, cx: &mut Context<Self>) {
-        // Joining again: it starts once you're back.
+        // Joining again: it starts once you're back, unless you change
+        // your mind.
         if self.rejoin.is_some() {
-            if self.camera == Camera::Off {
-                self.camera = Camera::Starting;
-                self.camera_on_connect = true;
-                cx.notify();
-            }
+            self.camera_on_connect = self.camera == Camera::Off;
+            self.camera = if self.camera_on_connect {
+                Camera::Starting
+            } else {
+                Camera::Off
+            };
+            cx.notify();
             return;
         }
         match self.camera {
@@ -1807,15 +1814,17 @@ impl Call {
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map_or(0, |d| d.as_millis() as i64);
                 let me = self.me.read(cx);
-                let (mine, name) = if line.speaker == me.identity {
-                    (true, me.name.clone())
-                } else {
-                    let name = self
-                        .member(&line.speaker, cx)
-                        .map(|m| m.read(cx).name.clone())
-                        .unwrap_or_else(|| line.speaker.clone());
-                    (false, name)
-                };
+                // You, now or before joining again.
+                let (mine, name) =
+                    if line.speaker == me.identity || self.engine.was_me(&line.speaker) {
+                        (true, me.name.clone())
+                    } else {
+                        let name = self
+                            .member(&line.speaker, cx)
+                            .map(|m| m.read(cx).name.clone())
+                            .unwrap_or_else(|| line.speaker.clone());
+                        (false, name)
+                    };
                 let said = Said {
                     id: format!("{by}/{}", line.id),
                     identity: line.speaker,
