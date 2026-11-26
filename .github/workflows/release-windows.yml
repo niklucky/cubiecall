@@ -8,8 +8,6 @@ run-name: Windows app · ${{ github.ref_name }} · attempt ${{ github.run_attemp
 on:
   push:
     tags: ['v*.*.*']
-    # Temporary: one build of the PR branch before the workflow is on main.
-    branches: ['t3/windows-app-testing']
   workflow_dispatch:
 
 permissions:
@@ -36,13 +34,7 @@ jobs:
           persist-credentials: false
       - name: Validate release tag and resolve build number
         id: release
-        # Temporary: a branch push builds like a manual run (never publishes).
-        run: |
-          if [ "$GITHUB_REF_TYPE" = branch ]; then
-            GITHUB_EVENT_NAME=workflow_dispatch python3 deploy/mac/ci-metadata.py
-          else
-            python3 deploy/mac/ci-metadata.py
-          fi
+        run: python3 deploy/mac/ci-metadata.py
       - name: Test atomic website publication
         run: deploy/windows/test-publish.sh
 
