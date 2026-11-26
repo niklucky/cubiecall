@@ -4,7 +4,7 @@
 //! Windows are views onto this model. Which windows exist follows from the
 //! mode and the participants; `sync_windows` opens and closes them.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -377,9 +377,6 @@ pub struct Call {
     /// The connection was lost and you're joining again: the tries that
     /// failed so far.
     rejoin: Option<usize>,
-    /// You, as your earlier connections: the server may still show one
-    /// for a while after you joined again.
-    former: HashSet<String>,
     _tasks: Vec<Task<()>>,
     _models: gpui::Subscription,
     _settings: gpui::Subscription,
@@ -535,7 +532,6 @@ impl Call {
             args: args.clone(),
             joining: None,
             rejoin: None,
-            former: HashSet::new(),
             _tasks: vec![events_task, key_task],
             _models: models_task,
             // Settings may change the model, and with it what this Mac can do.
@@ -623,7 +619,6 @@ impl Call {
     /// and so does your transcript: start them again once you're back.
     fn rejoin(&mut self, reason: &str, cx: &mut Context<Self>) {
         tracing::warn!(reason, "connection lost: joining again");
-        self.former.insert(self.me.read(cx).identity.clone());
         if let Some(recording) = self.recording.take().filter(Recording::is_mine) {
             self.keep_recording(&recording, recording.since.elapsed(), cx);
         }
@@ -639,7 +634,12 @@ impl Call {
         // goes; the next one opens its own.
         self.engine.disconnect();
         self.engine.set_mic_opens_muted(!mic);
-        self.camera = Camera::Off;
+        // Coming back: it says so until it's on.
+        self.camera = if self.camera_on_connect {
+            Camera::Starting
+        } else {
+            Camera::Off
+        };
         self.me.update(cx, |me, cx| {
             me.video = None;
             me.speaking = false;
@@ -648,8 +648,9 @@ impl Call {
         if self.sharing.take().is_some() {
             let me = self.me.read(cx).name.clone();
             self.log(me, Happened::StoppedSharing, cx);
-            self.drop_preview(cx);
         }
+        // A share still starting has its preview already.
+        self.drop_preview(cx);
         // Nothing can be shared or recorded until you're back.
         #[cfg(target_os = "macos")]
         if let Some(picker) = self.picker.take() {
@@ -865,6 +866,15 @@ impl Call {
     }
 
     pub fn toggle_camera(&mut self, cx: &mut Context<Self>) {
+        // Joining again: it starts once you're back.
+        if self.rejoin.is_some() {
+            if self.camera == Camera::Off {
+                self.camera = Camera::Starting;
+                self.camera_on_connect = true;
+                cx.notify();
+            }
+            return;
+        }
         match self.camera {
             Camera::Off => {
                 let (video, sink) = self
@@ -1432,7 +1442,8 @@ impl Call {
     }
 
     fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
-        if from_someone(&event).is_some_and(|id| self.former.contains(id)) {
+        // You, from before joining again, still in the room for a while.
+        if from_someone(&event).is_some_and(|id| self.engine.was_me(id)) {
             return;
         }
         let mut windows_changed = false;
@@ -1458,6 +1469,8 @@ impl Call {
                     self.transcript.update(cx, |t, _| t.connected(now));
                 }
                 if std::mem::take(&mut self.camera_on_connect) {
+                    // Shown as starting while you joined again.
+                    self.camera = Camera::Off;
                     self.toggle_camera(cx);
                 }
             }
@@ -1709,10 +1722,17 @@ impl Call {
                     cx,
                 );
             }
-            Event::RecordingFailed(message) => {
-                self.record_starting = false;
-                // A recording that failed on the way keeps what it wrote.
-                if let Some(recording) = self.recording.take_if(|r| r.is_mine()) {
+            Event::RecordingFailed { message, path } => {
+                // It never started.
+                if path.is_none() {
+                    self.record_starting = false;
+                }
+                // A recording that failed on the way keeps what it wrote;
+                // one from before you joined again has been kept already.
+                if let Some(recording) = self
+                    .recording
+                    .take_if(|r| r.is_mine() && path.is_some() && r.file == path)
+                {
                     let duration = recording.since.elapsed();
                     self.keep_recording(&recording, duration, cx);
                 }
@@ -1732,7 +1752,10 @@ impl Call {
                     .others_recording
                     .iter()
                     .position(|r| r.identity == identity);
-                if recording && known.is_none() {
+                // Told again (you joined again): what they record may differ.
+                if let Some(ix) = known.filter(|_| recording) {
+                    self.others_recording[ix].screen = screen;
+                } else if recording {
                     self.others_recording.push(Recording {
                         identity,
                         name: name.clone(),
@@ -1948,12 +1971,14 @@ impl Call {
                         {
                             self.prompt = None;
                         }
-                        // Told again (you joined again): nothing new.
-                        if self
+                        // Told again (you joined again): the model may differ.
+                        if let Some(t) = self
                             .transcription
-                            .as_ref()
-                            .is_none_or(|t| !t.mine && t.identity != identity)
+                            .as_mut()
+                            .filter(|t| !t.mine && t.identity == identity)
                         {
+                            t.model = cubie_core::catalog::model(&model);
+                        } else if self.transcription.as_ref().is_none_or(|t| !t.mine) {
                             let first = first_name(&name).to_owned();
                             self.transcription = Some(Transcription {
                                 identity,

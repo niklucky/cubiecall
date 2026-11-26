@@ -504,7 +504,7 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
         Event::ScreenShareChanged { .. }
         | Event::RecordingStarted { .. }
         | Event::RecordingSaved(_)
-        | Event::RecordingFailed(_)
+        | Event::RecordingFailed { .. }
         | Event::TranscriptionStarted
         | Event::TranscriptionStopped { .. }
         | Event::TranscriptionFailed(_)

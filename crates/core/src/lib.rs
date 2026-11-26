@@ -36,7 +36,7 @@ mod transcribe;
 pub mod trial;
 pub mod video;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -156,8 +156,12 @@ pub enum Event {
     },
     /// Your recording stopped and its file is complete.
     RecordingSaved(Saved),
-    /// Your recording couldn't start, or failed on the way.
-    RecordingFailed(String),
+    /// Your recording couldn't start, or failed on the way. `path`: the
+    /// recording's file, if it had started.
+    RecordingFailed {
+        message: String,
+        path: Option<PathBuf>,
+    },
     /// Someone else started or stopped recording the call (with their screen
     /// if `screen`).
     ParticipantRecording {
@@ -269,10 +273,14 @@ struct State {
     /// This engine has been in its call before: connecting again (the
     /// connection was lost) tells everything anew, what stopped meanwhile too.
     joined_before: bool,
+    /// Who you've been in this call: this connection and the ones before
+    /// it. One from before may still show in the room for a while.
+    mine: HashSet<String>,
     camera: Option<camera::Camera>,
-    /// The connection the camera is being opened for, to ignore repeated
-    /// clicks. One for a connection that's gone stops by itself.
+    /// The camera start under way, to ignore repeated clicks. Forgotten
+    /// with the call: one for a connection that's gone stops by itself.
     camera_starting: Option<u64>,
+    camera_starts: u64,
     screen: Option<screen::ScreenShare>,
     /// Remote video publications, for per-tile quality control.
     videos: HashMap<TrackKey, RemoteTrackPublication>,
@@ -324,6 +332,19 @@ enum Start {
     /// Stop came, from them (or you), before it listened: it won't.
     Stopped(u64, Option<String>),
 }
+
+/// What was starting (the camera, a screen share) finished after its
+/// connection was gone: it stopped, and has nothing to tell.
+#[derive(Debug)]
+struct Gone;
+
+impl std::fmt::Display for Gone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the connection it started on is gone")
+    }
+}
+
+impl std::error::Error for Gone {}
 
 /// A transcription stopped before it listened to anyone.
 #[derive(Debug)]
@@ -497,6 +518,12 @@ impl Engine {
         self.state.lock().closing.push(closing);
     }
 
+    /// `identity` is you, now or as you were before joining again: the
+    /// room may still show that one for a while.
+    pub fn was_me(&self, identity: &str) -> bool {
+        self.state.lock().mine.contains(identity)
+    }
+
     /// Resolves once every `disconnect` so far has finished: the server knows
     /// you left. Works from any executor, e.g. while the app quits.
     pub fn closed(&self) -> impl std::future::Future<Output = ()> + Send + use<> {
@@ -536,13 +563,14 @@ impl Engine {
 
     /// Open the camera and publish it. Frames also go to `preview` (self-view).
     pub fn start_camera(&self, preview: Option<Arc<dyn FrameSink>>) {
-        let connection = {
+        let start = {
             let mut s = self.state.lock();
-            if s.camera.is_some() || s.camera_starting == Some(s.connection) {
+            if s.camera.is_some() || s.camera_starting.is_some() {
                 return;
             }
-            s.camera_starting = Some(s.connection);
-            s.connection
+            s.camera_starts += 1;
+            s.camera_starting = Some(s.camera_starts);
+            s.camera_starts
         };
         let state = self.state.clone();
         let events = self.events.clone();
@@ -560,7 +588,8 @@ impl Engine {
                         permissions::where_to_allow(MediaDevice::Camera)
                     );
                 }
-                let room = current_room(&state, connection).context("not in a call")?;
+                // The room now: it may have connected while you were asked.
+                let (room, connection) = current_room(&state).context("not in a call")?;
                 let camera = camera::Camera::start(&room, preview).await?;
                 // The call may have ended while the camera was starting.
                 let stale = {
@@ -574,21 +603,15 @@ impl Engine {
                 };
                 if let Some(camera) = stale {
                     camera.stop(&room).await;
-                    anyhow::bail!("call ended");
+                    return Err(Gone.into());
                 }
                 Ok(())
             }
             .await;
-            let current = {
-                let mut s = state.lock();
-                s.camera_starting.take_if(|c| *c == connection);
-                s.connection == connection
-            };
-            // A start for a connection that's gone tells the next one nothing.
-            if !current {
-                if let Err(e) = &result {
-                    tracing::info!("a camera start for a connection that's gone: {e:#}");
-                }
+            state.lock().camera_starting.take_if(|id| *id == start);
+            // The next connection hears nothing of it.
+            if result.as_ref().is_err_and(|e| e.is::<Gone>()) {
+                tracing::info!("a camera start for a connection that's gone");
                 return;
             }
             let event = match result {
@@ -663,21 +686,24 @@ impl Engine {
         preset: ScreenSharePreset,
         preview: Option<Arc<dyn FrameSink>>,
     ) {
-        let connection = self.state.lock().connection;
         let state = self.state.clone();
         let events = self.events.clone();
         let handle = self.tasks.clone();
         self.tasks.spawn(async move {
             let result = async {
-                let room = current_room(&state, connection).context("not in a call")?;
-                let previous = state.lock().screen.take();
+                let (room, connection, previous) = {
+                    let mut s = state.lock();
+                    let room = s.room.clone().context("not in a call")?;
+                    (room, s.connection, s.screen.take())
+                };
                 if let Some(previous) = previous {
                     previous.unpublish(&room).await;
                 }
+                // Failing later stops this share, not one of a later connection.
                 let on_fail = {
                     let (state, events) = (state.clone(), events.clone());
                     move || {
-                        handle.spawn(stop_screen_share(state, events));
+                        handle.spawn(stop_screen_share(state, events, Some(connection)));
                     }
                 };
                 let share = screen::ScreenShare::start(
@@ -701,14 +727,13 @@ impl Engine {
                 };
                 if let Some(share) = stale {
                     share.unpublish(&room).await;
+                    return Err(Gone.into());
                 }
                 anyhow::Ok(())
             }
             .await;
-            if state.lock().connection != connection {
-                if let Err(e) = &result {
-                    tracing::info!("a screen share for a connection that's gone: {e:#}");
-                }
+            if result.as_ref().is_err_and(|e| e.is::<Gone>()) {
+                tracing::info!("a screen share for a connection that's gone");
                 return;
             }
             let event = match result {
@@ -723,8 +748,11 @@ impl Engine {
     }
 
     pub fn stop_screen_share(&self) {
-        self.tasks
-            .spawn(stop_screen_share(self.state.clone(), self.events.clone()));
+        self.tasks.spawn(stop_screen_share(
+            self.state.clone(),
+            self.events.clone(),
+            None,
+        ));
     }
 
     /// Pick the simulcast layer for a remote video. The UI calls this from the
@@ -776,7 +804,10 @@ impl Engine {
                         path,
                         screen: with_screen,
                     },
-                    Err(e) => Event::RecordingFailed(format!("{e:#}")),
+                    Err(e) => Event::RecordingFailed {
+                        message: format!("{e:#}"),
+                        path: None,
+                    },
                 };
             let _ = events.send(event).await;
         });
@@ -791,17 +822,12 @@ impl Engine {
         let Some(recorder) = recorder else { return };
         let events = self.events.clone();
         self.tasks.spawn(async move {
-            let saved = tokio::task::spawn_blocking(move || recorder.stop()).await;
+            let event = stop_recorder(recorder).await;
             if let Some(room) = room
                 && let Err(e) = set_attribute(&room, RECORDING, "").await
             {
                 tracing::warn!("recording attribute: {e}");
             }
-            let event = match saved {
-                Ok(Ok(saved)) => Event::RecordingSaved(saved),
-                Ok(Err(e)) => Event::RecordingFailed(format!("{e:#}")),
-                Err(e) => Event::RecordingFailed(format!("{e}")),
-            };
             let _ = events.send(event).await;
         });
     }
@@ -1018,7 +1044,8 @@ async fn settle_transcriber(state: &Arc<Mutex<State>>, events: &async_channel::S
         }
     };
     let you = room.local_participant().identity().to_string();
-    if let Some((theirs, identity)) = newest_claim(&room)
+    let newest = newest_claim(&room, &state.lock().mine);
+    if let Some((theirs, identity)) = newest
         && yields_to((since, &you), (theirs, &identity))
     {
         tracing::info!(%identity, "their Mac started at the same time and carries on");
@@ -1178,7 +1205,7 @@ async fn start_transcribing(
             Some(theirs)
         }
         None => {
-            nobody_transcribes(&room)?;
+            nobody_transcribes(&room, &state.lock().mine)?;
             None
         }
     };
@@ -1252,7 +1279,7 @@ async fn start_transcribing(
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as u64);
-    let since = now.max(newest_claim(&room).map_or(0, |(since, _)| since + 1));
+    let since = now.max(newest_claim(&room, &state.lock().mine).map_or(0, |(since, _)| since + 1));
     state.lock().transcribing_since = since;
     if let Err(e) = set_attribute(&room, TRANSCRIBING, &format!("{}@{since}", model.id)).await {
         let _ = tokio::task::spawn_blocking(move || transcriber.stop()).await;
@@ -1360,12 +1387,13 @@ fn may_start(
     taking_over: Option<&(u64, String)>,
 ) -> anyhow::Result<()> {
     start_goes_on(&state.lock(), connection, id)?;
+    let mine = state.lock().mine.clone();
     match taking_over {
         Some(theirs) => anyhow::ensure!(
-            newest_claim(room).as_ref() == Some(theirs),
+            newest_claim(room, &mine).as_ref() == Some(theirs),
             "the transcript stopped or moved on while your Mac got ready"
         ),
-        None => nobody_transcribes(room)?,
+        None => nobody_transcribes(room, &mine)?,
     }
     Ok(())
 }
@@ -1463,11 +1491,11 @@ async fn start_recording(
             name_of,
         }
     });
-    if let Some(p) = room
-        .remote_participants()
-        .values()
-        .find(|p| p.attributes().get(RECORDING).is_some_and(|v| !v.is_empty()))
-    {
+    let mine = state.lock().mine.clone();
+    if let Some(p) = room.remote_participants().values().find(|p| {
+        p.attributes().get(RECORDING).is_some_and(|v| !v.is_empty())
+            && !mine.contains(p.identity().as_str())
+    }) {
         anyhow::bail!("{} is already recording this call", p.name());
     }
     // Everyone sees it before a single frame is kept.
@@ -1499,12 +1527,16 @@ async fn start_recording(
     // stop telling everyone that you record.
     let on_failed = {
         let (state, events, handle) = (Arc::downgrade(state), events.clone(), handle.clone());
+        let path = path.clone();
         move || {
             handle.spawn(async move {
                 let Some(state) = state.upgrade() else { return };
+                // This recording, if it's still the one: a call joined
+                // again may have one of its own.
                 let (room, recorder) = {
                     let mut s = state.lock();
-                    (s.room.clone(), s.recorder.take())
+                    let recorder = s.recorder.take_if(|r| r.path() == path);
+                    (s.room.clone(), recorder)
                 };
                 let Some(recorder) = recorder else { return };
                 let result = tokio::task::spawn_blocking(move || recorder.stop()).await;
@@ -1515,7 +1547,8 @@ async fn start_recording(
                     Ok(Err(e)) => format!("{e:#}"),
                     _ => "the recording stopped".into(),
                 };
-                let _ = events.send(Event::RecordingFailed(message)).await;
+                let path = Some(path);
+                let _ = events.send(Event::RecordingFailed { message, path }).await;
             });
         }
     };
@@ -1593,17 +1626,23 @@ fn claim_of(participant: &RemoteParticipant) -> Option<(u64, String)> {
     ))
 }
 
-/// The newest [`TRANSCRIBING`] claim among the others.
-fn newest_claim(room: &Room) -> Option<(u64, String)> {
+/// The newest [`TRANSCRIBING`] claim among the others (not you, as you
+/// were before joining again: `mine`).
+fn newest_claim(room: &Room, mine: &HashSet<String>) -> Option<(u64, String)> {
     room.remote_participants()
         .values()
+        .filter(|p| !mine.contains(p.identity().as_str()))
         .filter_map(claim_of)
         .max()
 }
 
 /// One transcriber per call, unless it hands over.
-fn nobody_transcribes(room: &Room) -> anyhow::Result<()> {
-    match room.remote_participants().values().find(|p| transcribes(p)) {
+fn nobody_transcribes(room: &Room, mine: &HashSet<String>) -> anyhow::Result<()> {
+    match room
+        .remote_participants()
+        .values()
+        .find(|p| transcribes(p) && !mine.contains(p.identity().as_str()))
+    {
         Some(p) => anyhow::bail!("{} is already transcribing this call", p.name()),
         None => Ok(()),
     }
@@ -1829,9 +1868,17 @@ impl Drop for Engine {
     }
 }
 
-async fn stop_screen_share(state: Arc<Mutex<State>>, events: async_channel::Sender<Event>) {
+/// Stop your screen share; only if it's still `connection`'s, if given.
+async fn stop_screen_share(
+    state: Arc<Mutex<State>>,
+    events: async_channel::Sender<Event>,
+    connection: Option<u64>,
+) {
     let (room, share) = {
         let mut s = state.lock();
+        if connection.is_some_and(|c| c != s.connection) {
+            return;
+        }
         (s.room.clone(), s.screen.take())
     };
     if let (Some(room), Some(share)) = (room, share) {
@@ -1925,6 +1972,8 @@ async fn connect(
         if s.connection == connection {
             s.room = Some(room.clone());
             s.audio = audio.clone();
+            s.mine
+                .insert(room.local_participant().identity().to_string());
             Some((
                 s.can_transcribe.clone(),
                 std::mem::replace(&mut s.joined_before, true),
@@ -2017,7 +2066,9 @@ async fn connect(
                         is_current(&s, &room).then(|| {
                             // Asked for while it was being published: now.
                             let enabled = !s.mic_opens_muted;
-                            if !enabled {
+                            if enabled {
+                                mic.unmute();
+                            } else {
                                 mic.mute();
                             }
                             s.mic = Some(mic);
@@ -2183,6 +2234,7 @@ fn forget_call(s: &mut State) {
     s.handover_asked.clear();
     s.handed_to = None;
     s.start = Start::No;
+    s.camera_starting = None;
     s.videos.clear();
     s.mics.clear();
     for (_, task) in s.mic_streams.drain() {
@@ -2240,17 +2292,25 @@ async fn finish_recording(
     say_saved: bool,
 ) {
     let Some(recorder) = recorder else { return };
-    let event = match tokio::task::spawn_blocking(move || recorder.stop()).await {
-        Ok(Ok(saved)) => Event::RecordingSaved(saved),
-        Ok(Err(e)) => Event::RecordingFailed(format!("{e:#}")),
-        Err(e) => Event::RecordingFailed(format!("{e}")),
-    };
-    match event {
-        _ if say_saved => {
+    match stop_recorder(recorder).await {
+        event if say_saved => {
             let _ = events.send(event).await;
         }
-        Event::RecordingFailed(e) => tracing::warn!("recording: {e}"),
+        Event::RecordingFailed { message, .. } => tracing::warn!("recording: {message}"),
         _ => {}
+    }
+}
+/// Stop `recorder`: saved, or failed, with its file.
+async fn stop_recorder(recorder: record::Recorder) -> Event {
+    let path = recorder.path().to_owned();
+    let failed = |message| Event::RecordingFailed {
+        message,
+        path: Some(path.clone()),
+    };
+    match tokio::task::spawn_blocking(move || recorder.stop()).await {
+        Ok(Ok(saved)) => Event::RecordingSaved(saved),
+        Ok(Err(e)) => failed(format!("{e:#}")),
+        Err(e) => failed(format!("{e}")),
     }
 }
 /// Finish sending final words before goodbye, with a bounded allowance so a
@@ -2344,10 +2404,10 @@ fn track_publications(state: &Mutex<State>, connection: u64, event: &RoomEvent) 
     }
 }
 
-/// The room of `connection`, if that's still the one.
-fn current_room(state: &Mutex<State>, connection: u64) -> Option<Arc<Room>> {
+/// The room you're in, and its connection.
+fn current_room(state: &Mutex<State>) -> Option<(Arc<Room>, u64)> {
     let s = state.lock();
-    s.room.clone().filter(|_| s.connection == connection)
+    s.room.clone().map(|room| (room, s.connection))
 }
 
 /// A failed connect that may work in a moment: the network or the server
