@@ -1,0 +1,5 @@
+# Windows: libwebrtc (webrtc-sys) ships built against the static C runtime
+# (/MT), and MSVC refuses to link /MT and /MD objects together. So the rest
+# links it statically too, which also spares testers the VC++ redistributable.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

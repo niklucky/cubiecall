@@ -76,6 +76,7 @@ impl ScreenSharePreset {
 
     /// Average bits per second when your screen is recorded: a little under
     /// what a share sends at most, since a file can take its time.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn recording_bitrate(&self) -> u32 {
         match (self.mode, self.fps) {
             (ContentMode::Text, f) if f <= 5 => 1_000_000,

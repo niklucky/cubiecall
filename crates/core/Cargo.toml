@@ -51,6 +51,11 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGWindow", "CGDirectDisplay"] }
 objc2-screen-capture-kit = { version = "0.3", default-features = false, features = ["std", "SCShareableContent", "SCStream", "SCScreenshotManager", "block2", "dispatch2", "libc", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-media"] }
 
+# The camera on Windows: Media Foundation's source reader (GPUI already
+# builds this version of the crate).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Media_MediaFoundation", "Win32_System_Com"] }
+
 [[example]]
 name = "denoise_eval"
 required-features = ["denoise"]
