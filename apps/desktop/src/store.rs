@@ -1,9 +1,11 @@
 //! Cached server rooms and local call history.
 //!
-//! `~/Library/Application Support/Cubie/local.json`, or `$CUBIE_DATA_DIR/local.json`
-//! (tests and parallel dev copies).
+//! `~/Library/Application Support/Cubie/local.json` (`%APPDATA%\Cubie\local.json`
+//! on Windows), or `$CUBIE_DATA_DIR/local.json` (tests and parallel dev copies).
 
-use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -243,6 +245,7 @@ pub(crate) fn data_override() -> Option<PathBuf> {
 
 /// Move only app-managed state. Recordings and custom folders have absolute
 /// paths in the history and stay where the user put them.
+#[cfg(not(windows))]
 fn support_item(home: &Path, name: &str) -> PathBuf {
     let support = home.join("Library/Application Support");
     let current = support.join("Cubie").join(name);
@@ -260,13 +263,29 @@ fn support_item(home: &Path, name: &str) -> PathBuf {
     current
 }
 
+/// Where the app keeps `name`: Application Support › Cubie on the Mac,
+/// `%APPDATA%\Cubie` on Windows, or `%LOCALAPPDATA%\Cubie` for what's
+/// big and shouldn't follow a roaming profile (`local`).
+fn app_item(name: &str, local: bool) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let base = std::env::var_os(if local { "LOCALAPPDATA" } else { "APPDATA" })?;
+        Some(PathBuf::from(base).join("Cubie").join(name))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = local;
+        let home = std::env::var_os("HOME")?;
+        Some(support_item(Path::new(&home), name))
+    }
+}
+
 impl Store {
     fn path() -> Option<PathBuf> {
         if let Some(dir) = data_override() {
             return Some(dir.join("local.json"));
         }
-        let home = std::env::var_os("HOME")?;
-        Some(support_item(Path::new(&home), "local.json"))
+        app_item("local.json", false)
     }
 
     pub fn load() -> Self {
@@ -529,8 +548,16 @@ pub fn recordings_dir(chosen: Option<&std::path::Path>) -> PathBuf {
     if let Some(dir) = chosen {
         return dir.to_owned();
     }
-    let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
-    PathBuf::from(home).join("Movies/Cubie")
+    #[cfg(windows)]
+    {
+        let home = std::env::var_os("USERPROFILE").unwrap_or_else(|| ".".into());
+        PathBuf::from(home).join("Videos").join("Cubie")
+    }
+    #[cfg(not(windows))]
+    {
+        let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
+        PathBuf::from(home).join("Movies/Cubie")
+    }
 }
 
 /// Where speech models are downloaded to: Application Support › Cubie ›
@@ -545,8 +572,7 @@ pub fn models_dir() -> PathBuf {
     if let Some(dir) = data_override() {
         return dir.join("Models");
     }
-    let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
-    support_item(Path::new(&home), "Models")
+    app_item("Models", true).unwrap_or_else(|| std::env::temp_dir().join("Cubie Models"))
 }
 
 /// "2026-11-09 11.14" for unix seconds, local time: part of a file name.
@@ -629,13 +655,27 @@ fn local_parts(unix_secs: u64) -> (i64, u32, u32) {
     (days, (secs / 3600) as u32, (secs % 3600 / 60) as u32)
 }
 
-/// This Mac's current offset from UTC, in seconds.
+/// This computer's current offset from UTC, in seconds.
 fn utc_offset_secs() -> i64 {
     #[cfg(target_os = "macos")]
     {
         objc2_foundation::NSTimeZone::localTimeZone().secondsFromGMT() as i64
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
+        let mut zone = TIME_ZONE_INFORMATION::default();
+        // SAFETY: writes into `zone`. 2 is TIME_ZONE_ID_DAYLIGHT; biases are
+        // minutes to add to local time to get UTC.
+        let id = unsafe { GetTimeZoneInformation(&mut zone) };
+        let bias = zone.Bias
+            + match id {
+                2 => zone.DaylightBias,
+                _ => zone.StandardBias,
+            };
+        -(bias as i64) * 60
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         0
     }
@@ -659,6 +699,7 @@ mod tests {
     use super::{SavedRoom, Store, civil_from_days, file_size};
 
     #[test]
+    #[cfg(not(windows))]
     fn existing_history_and_models_survive_the_rename() {
         let home = std::env::temp_dir().join(format!("cubie-upgrade-{}", std::process::id()));
         let old = home.join("Library/Application Support/Quipcall");

@@ -34,3 +34,22 @@ objc2-core-video = { version = "0.3.2", default-features = false, features = ["s
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSBundle", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSOperation", "NSPathUtilities", "NSRunLoop", "NSString", "NSTimeZone", "block2"] }
 block2 = "0.6"
 objc2-quartz-core = { version = "0.3", default-features = false, features = ["std", "CALayer", "CAShapeLayer", "CATransaction", "CATransform3D", "objc2-core-foundation", "objc2-core-graphics"] }
+
+# Windows: what GPUI doesn't expose (window shapes and placement, the cursor,
+# menus, Credential Manager), and BGRA frames for GPUI's image sprites.
+[target.'cfg(windows)'.dependencies]
+image = { version = "0.25", default-features = false }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security_Credentials",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_UI_Accessibility",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }

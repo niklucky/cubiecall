@@ -41,7 +41,7 @@ use crate::Shell;
 use crate::assets::Icon;
 use crate::bubble::{self, Bubble, Who};
 use crate::call::{Call, Camera, Member, Mode, NoticeAction, Preparing, PromptKind};
-use crate::mac::{self, Rect};
+use crate::platform::{self, Rect};
 use crate::theme::{
     ACCENT, CARD, DANGER, PILL, RECORDING, SPEAKING, TEXT, TEXT_DIM, first_name, white,
 };
@@ -143,7 +143,7 @@ pub fn open(call: Entity<Call>, cx: &mut App) -> Option<WindowHandle<Capsule>> {
         size(px(s.width), px(s.height)),
     );
     // Transparent: the pill and the cards each draw themselves.
-    let options = mac::floating_options(WindowBounds::Windowed(bounds));
+    let options = platform::floating_options(WindowBounds::Windowed(bounds));
     cx.open_window(options, |window, cx| {
         cx.new(|cx| Capsule::new(call, s, window, cx))
     })
@@ -260,7 +260,7 @@ struct Plan {
 /// A bubble's window.
 struct Slot {
     handle: WindowHandle<Bubble>,
-    native: mac::Native,
+    native: platform::Native,
 }
 
 /// A bubble's height, and whether it rides on the pill.
@@ -299,7 +299,7 @@ impl Sig {
 
 pub struct Capsule {
     call: Entity<Call>,
-    native: Option<mac::Native>,
+    native: Option<platform::Native>,
     /// The people in the row besides you; positions stay put.
     slots: Vec<Entity<Member>>,
     /// The card opened by a click, or the name under the cursor.
@@ -349,7 +349,7 @@ pub struct Capsule {
     /// The mic button is held to talk right now: the widget owes the call a
     /// mute when it's let go, or when the widget goes first.
     mic_held: bool,
-    ghost: Option<(WindowHandle<Ghost>, mac::Native)>,
+    ghost: Option<(WindowHandle<Ghost>, platform::Native)>,
     ghost_opening: bool,
     /// Where the outline should be, and where it is.
     ghost_want: Option<Rect>,
@@ -376,7 +376,7 @@ impl Capsule {
         cx: &mut Context<Self>,
     ) -> Self {
         // Square and shadowless: the pieces round their own corners.
-        mac::make_shape(window, mac::Mask::Rounded(0.0), cx);
+        platform::make_shape(window, platform::Mask::Rounded(0.0), cx);
         let transcript = call.read(cx).transcript.clone();
         let subscriptions = vec![
             cx.observe(&call, |this, _, cx| {
@@ -413,7 +413,7 @@ impl Capsule {
         });
         let mut this = Self {
             call,
-            native: mac::Native::of(window),
+            native: platform::Native::of(window),
             slots: Vec::new(),
             open: None,
             column: false,
@@ -463,7 +463,7 @@ impl Capsule {
             let bubbles: Vec<Slot> = this.bubbles.drain().map(|(_, slot)| slot).collect();
             cx.spawn(async move |cx| {
                 for slot in bubbles {
-                    mac::retire(&slot.native);
+                    platform::retire(&slot.native);
                     let _ = slot
                         .handle
                         .update(cx, |_, window, _| window.remove_window());
@@ -769,7 +769,7 @@ impl Capsule {
                     && (h.h - there.h).abs() < 1.0
             });
             if !arrived || jumping {
-                mac::move_with(
+                platform::move_with(
                     window,
                     wanted,
                     anchor,
@@ -786,11 +786,11 @@ impl Capsule {
                 self.anchor = anchor;
             }
         } else if wanted != self.size || anchor != self.anchor {
-            mac::resize_with(
+            platform::resize_with(
                 window,
                 wanted,
-                mac::Mask::Rounded(0.0),
-                mac::Anchor::Point {
+                platform::Mask::Rounded(0.0),
+                platform::Anchor::Point {
                     before: self.anchor,
                     after: anchor,
                 },
@@ -804,7 +804,7 @@ impl Capsule {
             self.size = wanted;
             self.anchor = anchor;
         }
-        mac::place(self.placements(&plan), cx);
+        platform::place(self.placements(&plan), cx);
         plan
     }
 
@@ -922,7 +922,7 @@ impl Capsule {
     /// past the caption; by a column, in a column beside it, from its foot
     /// up. The ones floating by themselves stay where they were put, at
     /// their size.
-    fn placements(&self, plan: &Plan) -> Vec<mac::Placement> {
+    fn placements(&self, plan: &Plan) -> Vec<platform::Placement> {
         let Some((corner, visible)) = self.corner() else {
             return Vec::new();
         };
@@ -945,7 +945,7 @@ impl Capsule {
                     && parent.as_ref().is_some_and(|p| native.rides_on(p)) == rides
             };
             if !there {
-                out.push(mac::Placement {
+                out.push(platform::Placement {
                     window: native.clone(),
                     frame,
                     radius: Some(radius as f64),
@@ -1050,7 +1050,7 @@ impl Capsule {
             if let Some(slot) = self.bubbles.remove(&who) {
                 // Not from inside this update: AppKit reorders windows.
                 cx.spawn(async move |_, cx| {
-                    mac::retire(&slot.native);
+                    platform::retire(&slot.native);
                     let _ = slot
                         .handle
                         .update(cx, |_, window, _| window.remove_window());
@@ -1134,7 +1134,7 @@ impl Capsule {
                     let frame = native.frame();
                     moved |= (frame.x - start.x).abs() > 3.0 || (frame.y - start.y).abs() > 3.0;
                     let near = moved && this.tucked.is_none() && this.near_pill(&frame, cx);
-                    if mac::mouse_down() {
+                    if platform::mouse_down() {
                         if this.magnet != near {
                             this.magnet = near;
                             cx.notify();
@@ -1180,7 +1180,7 @@ impl Capsule {
     }
 
     /// A bubble dropped by the screen's edge lines up with it.
-    fn snap(&self, native: &mac::Native, frame: Rect, cx: &App) {
+    fn snap(&self, native: &platform::Native, frame: Rect, cx: &App) {
         let Some(visible) = native.visible() else {
             return;
         };
@@ -1197,8 +1197,8 @@ impl Capsule {
             to.y = visible.top() - m - frame.h;
         }
         if to != frame {
-            mac::place(
-                vec![mac::Placement {
+            platform::place(
+                vec![platform::Placement {
                     window: native.clone(),
                     frame: to,
                     radius: None,
@@ -1282,18 +1282,18 @@ impl Capsule {
     fn begin_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.start_window_move();
         self.end_drag(cx);
-        let start = mac::cursor();
+        let start = platform::cursor();
         self.drag_task = Some(cx.spawn(async move |this, cx| {
             let (mut moved, mut last, mut still) = (false, start, Duration::ZERO);
             let mut drag = Drag::new(start);
             loop {
                 cx.background_executor().timer(DRAG_POLL).await;
                 let done = this.update(cx, |this, cx| {
-                    let p = mac::cursor();
+                    let p = platform::cursor();
                     drag = drag.through(p);
                     moved |= (p.0 - start.0).hypot(p.1 - start.1) > 4.0;
                     let zone = moved.then(|| this.zone_at(p, Some(&drag), cx)).flatten();
-                    if !mac::mouse_down() {
+                    if !platform::mouse_down() {
                         this.show_ghost(None, cx);
                         if let Some(zone) = zone {
                             this.drop_in(zone, cx);
@@ -1335,7 +1335,7 @@ impl Capsule {
     fn zone_at(&self, p: (f64, f64), drag: Option<&Drag>, cx: &App) -> Option<Zone> {
         // The screen under the cursor, not the one most of the window is
         // still on: a pill on its way to another display belongs there.
-        let (v, whole) = mac::screen_at(p).or_else(|| {
+        let (v, whole) = platform::screen_at(p).or_else(|| {
             let native = self.native.as_ref()?;
             Some((native.visible()?, native.screen()?))
         })?;
@@ -1347,7 +1347,7 @@ impl Capsule {
                 Edge::Bottom => (p.0, whole.y - 20.0),
                 Edge::Top => (p.0, whole.top() + 20.0),
             };
-            mac::screen_at(past).is_none()
+            platform::screen_at(past).is_none()
         };
         let plan = self.plan(cx);
         let now = self.pill_rect(&plan, self.corner()?.0);
@@ -1485,8 +1485,8 @@ impl Capsule {
         };
         self.ghost_at = at;
         let frame = at.unwrap_or_default();
-        mac::place(
-            vec![mac::Placement {
+        platform::place(
+            vec![platform::Placement {
                 window: native.clone(),
                 frame,
                 radius: Some(ghost_radius(&frame)),
@@ -1536,7 +1536,7 @@ impl Capsule {
                     let Some(open) = &this.open else {
                         return true;
                     };
-                    if mac::cursor_inside(window) == Some(false) {
+                    if platform::cursor_inside(window) == Some(false) {
                         outside += CURSOR_POLL;
                     } else {
                         outside = Duration::ZERO;
@@ -1544,7 +1544,7 @@ impl Capsule {
                     let close = if matches!(open, Drawer::Name(_)) {
                         outside >= HOVER_DELAY
                     } else {
-                        outside >= AWAY || (outside > Duration::ZERO && mac::mouse_down())
+                        outside >= AWAY || (outside > Duration::ZERO && platform::mouse_down())
                     };
                     if close {
                         this.hover_task = None;
@@ -1579,7 +1579,7 @@ impl Capsule {
             while waited < HOLD_AFTER {
                 cx.background_executor().timer(DRAG_POLL).await;
                 waited += DRAG_POLL;
-                if !mac::left_mouse_down() {
+                if !platform::left_mouse_down() {
                     return;
                 }
             }
@@ -1598,7 +1598,7 @@ impl Capsule {
                 return;
             }
             // Until the button comes up, or Settings turns hold to talk off.
-            while mac::left_mouse_down()
+            while platform::left_mouse_down()
                 && this
                     .update(cx, |_, cx| {
                         Shell::global(cx).read(cx).store.call.hold_to_talk
@@ -1642,7 +1642,7 @@ impl Capsule {
             Some(("Leave Call".to_owned(), false)),
         ];
         let (tx, rx) = async_channel::bounded(1);
-        mac::popup_menu(items, tx);
+        platform::popup_menu(items, tx);
         self.menu_task = Some(cx.spawn(async move |this, cx| {
             let Ok(picked) = rx.recv().await else {
                 return;
@@ -1718,8 +1718,8 @@ impl Capsule {
                     let mut frame = slot.native.frame();
                     frame.x -= 200.0;
                     frame.y += 120.0;
-                    mac::place(
-                        vec![mac::Placement {
+                    platform::place(
+                        vec![platform::Placement {
                             window: slot.native.clone(),
                             frame,
                             radius: None,
@@ -1740,7 +1740,7 @@ impl Capsule {
             }
             "unghost" => return self.show_ghost(None, cx),
             "context" => return self.context_menu(cx),
-            "uncontext" => return mac::cancel_menu(),
+            "uncontext" => return platform::cancel_menu(),
             _ => {}
         }
         self.open = match which {
@@ -1782,14 +1782,14 @@ impl Render for Ghost {
     }
 }
 
-fn open_ghost(cx: &mut App) -> Option<(WindowHandle<Ghost>, mac::Native)> {
+fn open_ghost(cx: &mut App) -> Option<(WindowHandle<Ghost>, platform::Native)> {
     let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(MAIN), px(MAIN)));
     let mut native = None;
     let handle = cx
         .open_window(
-            mac::hidden_floating_options(WindowBounds::Windowed(bounds)),
+            platform::hidden_floating_options(WindowBounds::Windowed(bounds)),
             |window, cx| {
-                native = mac::Native::of(window);
+                native = platform::Native::of(window);
                 cx.new(|_| Ghost)
             },
         )
@@ -2940,7 +2940,7 @@ impl Capsule {
         type Action = Box<dyn Fn(&mut Capsule, &mut Window, &mut Context<Capsule>)>;
         let c = self.call.read(cx);
         let camera_off = c.camera == Camera::Off;
-        let can_record = c.recording.is_none();
+        let can_record = crate::call::RECORDS_HERE && c.recording.is_none();
         let can_transcribe = c.can_transcribe();
         let room = if c.room.name.is_empty() {
             "Call".to_owned()
@@ -3092,15 +3092,23 @@ impl Capsule {
         let others = self.call.read(cx).capable(cx);
         let start_label = match (ready, others.is_empty()) {
             (true, true) => "Start".to_owned(),
-            (true, false) => "This Mac".to_owned(),
+            (true, false) => crate::ui::THIS_COMPUTER_TITLE.to_owned(),
             (false, true) => format!(
                 "Download {} and start",
                 crate::store::file_size(model.bytes)
             ),
-            (false, false) => format!("This Mac · {}", crate::store::file_size(model.bytes)),
+            (false, false) => format!(
+                "{} · {}",
+                crate::ui::THIS_COMPUTER_TITLE,
+                crate::store::file_size(model.bytes)
+            ),
         };
         let question = if others.is_empty() {
-            format!("{} on this Mac. Everyone sees it.", model.name)
+            format!(
+                "{} on {}. Everyone sees it.",
+                model.name,
+                crate::ui::THIS_COMPUTER
+            )
         } else {
             "Transcribe on whose Mac? Everyone sees it.".to_owned()
         };
@@ -3188,12 +3196,14 @@ impl Capsule {
         };
         let first = first_name(&prompt.name).to_owned();
         let (question, yes) = match prompt.kind {
-            PromptKind::Asked { handover: false } => {
-                (format!("{first} asks your Mac to transcribe"), "Accept")
-            }
-            PromptKind::Asked { handover: true } => {
-                (format!("{first} asks your Mac to take over"), "Accept")
-            }
+            PromptKind::Asked { handover: false } => (
+                format!("{first} asks {} to transcribe", crate::ui::YOUR_COMPUTER),
+                "Accept",
+            ),
+            PromptKind::Asked { handover: true } => (
+                format!("{first} asks {} to take over", crate::ui::YOUR_COMPUTER),
+                "Accept",
+            ),
             PromptKind::TakeOver => (format!("{first} left. Transcribe here?"), "Transcribe"),
         };
         div()

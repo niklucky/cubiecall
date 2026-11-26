@@ -11,7 +11,7 @@ use gpui::{
 use crate::assets::Icon;
 use crate::call::{Call, Screen};
 use crate::handle::{self, Resizable};
-use crate::mac;
+use crate::platform;
 use crate::theme::TEXT;
 
 pub const WIDTH: f32 = 640.0;
@@ -27,19 +27,19 @@ pub fn open(
     call: Entity<Call>,
     screen: Entity<Screen>,
     bounds: gpui::Bounds<gpui::Pixels>,
-    frame: Option<mac::Rect>,
+    frame: Option<platform::Rect>,
     cx: &mut App,
 ) -> Option<WindowHandle<ScreenWindow>> {
     let width = bounds.size.width / px(1.0);
     let options = match frame {
         // Out of sight until it's there.
-        Some(_) => mac::hidden_floating_options(WindowBounds::Windowed(bounds)),
-        None => mac::floating_options(WindowBounds::Windowed(bounds)),
+        Some(_) => platform::hidden_floating_options(WindowBounds::Windowed(bounds)),
+        None => platform::floating_options(WindowBounds::Windowed(bounds)),
     };
     cx.open_window(options, |window, cx| {
-        if let (Some(frame), Some(native)) = (frame, mac::Native::of(window)) {
-            mac::place(
-                vec![mac::Placement {
+        if let (Some(frame), Some(native)) = (frame, platform::Native::of(window)) {
+            platform::place(
+                vec![platform::Placement {
                     window: native,
                     frame,
                     radius: Some(RADIUS),
@@ -72,7 +72,7 @@ impl ScreenWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        mac::make_shape(window, mac::Mask::Rounded(RADIUS), cx);
+        platform::make_shape(window, platform::Mask::Rounded(RADIUS), cx);
         let subscriptions = [
             cx.observe(&screen, |_, _, cx| cx.notify()),
             cx.observe(&call, |_, _, cx| cx.notify()),
@@ -90,7 +90,7 @@ impl ScreenWindow {
     fn resize_to(
         &mut self,
         width: f32,
-        anchor: mac::Anchor,
+        anchor: platform::Anchor,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -99,10 +99,10 @@ impl ScreenWindow {
             return;
         }
         self.width = width;
-        mac::resize(
+        platform::resize(
             window,
             size(width, width * 9.0 / 16.0),
-            mac::Mask::Rounded(RADIUS),
+            platform::Mask::Rounded(RADIUS),
             anchor,
             cx,
         );
@@ -129,7 +129,7 @@ impl Resizable for ScreenWindow {
         // Keep 16:9; follow whichever edge the cursor pulls further.
         let x = position.x / px(1.0) + HANDLE_INSET;
         let y = (position.y / px(1.0) + HANDLE_INSET) * 16.0 / 9.0;
-        self.resize_to(x.max(y), mac::Anchor::TopLeft, window, cx);
+        self.resize_to(x.max(y), platform::Anchor::TopLeft, window, cx);
     }
 
     fn end_drag(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -154,7 +154,7 @@ impl Render for ScreenWindow {
             .relative()
             .bg(rgb(0x000000))
             .children(frame.map(|f| {
-                gpui::surface(f.0)
+                crate::video::surface(f)
                     .object_fit(ObjectFit::Contain)
                     .size_full()
             }))
@@ -217,12 +217,12 @@ impl Render for ScreenWindow {
             )
             .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
                 let dy = event.delta.pixel_delta(px(16.0)).y / px(1.0);
-                this.resize_to(this.width - dy * 2.0, mac::Anchor::Center, window, cx);
+                this.resize_to(this.width - dy * 2.0, platform::Anchor::Center, window, cx);
             }))
             .on_pinch(cx.listener(|this, event: &PinchEvent, window, cx| {
                 this.resize_to(
                     this.width * (1.0 + event.delta),
-                    mac::Anchor::Center,
+                    platform::Anchor::Center,
                     window,
                     cx,
                 );

@@ -29,7 +29,7 @@ use crate::ui::{
     self, Kind, Tone, avatar, avatar_stack, button, icon, pill, ring, round_button, rounded_video,
     tooltip,
 };
-use crate::video_mac::Frame;
+use crate::video::Frame;
 
 const TITLE: f32 = 48.0;
 const PANEL: f32 = 300.0;
@@ -108,25 +108,27 @@ impl Regular {
         let (question, start) = match (ready, others.is_empty()) {
             (true, true) => (
                 format!(
-                    "Transcribe on this Mac with {}. Everyone sees it.",
+                    "Transcribe on {} with {}. Everyone sees it.",
+                    crate::ui::THIS_COMPUTER,
                     model.name
                 ),
                 "Start".to_owned(),
             ),
             (false, true) => (
                 format!(
-                    "Transcribe on this Mac with {}. Everyone sees it.",
+                    "Transcribe on {} with {}. Everyone sees it.",
+                    crate::ui::THIS_COMPUTER,
                     model.name
                 ),
                 format!("Download {size} and start"),
             ),
             (true, false) => (
                 "Transcribe on whose Mac? Everyone sees it.".to_owned(),
-                "This Mac".to_owned(),
+                crate::ui::THIS_COMPUTER_TITLE.to_owned(),
             ),
             (false, false) => (
                 "Transcribe on whose Mac? Everyone sees it.".to_owned(),
-                format!("This Mac · {size}"),
+                format!("{} · {size}", crate::ui::THIS_COMPUTER_TITLE),
             ),
         };
         // Others whose Macs have a model ready.
@@ -469,11 +471,15 @@ impl Regular {
         let prompt = c.prompt.clone().map(|p| {
             let first = first_name(&p.name).to_owned();
             match p.kind {
-                crate::call::PromptKind::Asked { handover: false } => {
-                    (format!("{first} asks your Mac to transcribe"), "Accept")
-                }
+                crate::call::PromptKind::Asked { handover: false } => (
+                    format!("{first} asks {} to transcribe", crate::ui::YOUR_COMPUTER),
+                    "Accept",
+                ),
                 crate::call::PromptKind::Asked { handover: true } => (
-                    format!("{first} asks your Mac to take over the transcript"),
+                    format!(
+                        "{first} asks {} to take over the transcript",
+                        crate::ui::YOUR_COMPUTER
+                    ),
                     "Accept",
                 ),
                 crate::call::PromptKind::TakeOver => (
@@ -929,34 +935,36 @@ impl Regular {
                         }))
                         .on_click(on(Call::toggle_share)),
                     )
-                    .child({
-                        let (tone, tip) = match &c.recording {
-                            Some(r) if r.is_mine() => {
-                                (Tone::Recording, "Stop recording".to_owned())
-                            }
-                            Some(r) => (
-                                Tone::Recording,
-                                format!(
-                                    "{} is recording the call",
-                                    crate::theme::first_name(&r.name)
-                                ),
-                            ),
-                            None => (Tone::Plain, "Record the call on this Mac".to_owned()),
-                        };
-                        round_button("record", Icon::CircleDot, BUTTON, tone)
-                            .tooltip(tooltip(tip))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let c = this.call.read(cx);
-                                if c.recording.as_ref().is_some_and(|r| r.is_mine()) {
-                                    this.record_menu = false;
-                                    this.call.update(cx, |c, cx| c.stop_recording(cx));
-                                } else if c.can_record() {
-                                    this.record_menu = !this.record_menu;
-                                    this.transcribe_menu = false;
+                    .children(
+                        (crate::call::RECORDS_HERE || c.recording.is_some()).then(|| {
+                            let (tone, tip) = match &c.recording {
+                                Some(r) if r.is_mine() => {
+                                    (Tone::Recording, "Stop recording".to_owned())
                                 }
-                                cx.notify();
-                            }))
-                    })
+                                Some(r) => (
+                                    Tone::Recording,
+                                    format!(
+                                        "{} is recording the call",
+                                        crate::theme::first_name(&r.name)
+                                    ),
+                                ),
+                                None => (Tone::Plain, "Record the call on this Mac".to_owned()),
+                            };
+                            round_button("record", Icon::CircleDot, BUTTON, tone)
+                                .tooltip(tooltip(tip))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let c = this.call.read(cx);
+                                    if c.recording.as_ref().is_some_and(|r| r.is_mine()) {
+                                        this.record_menu = false;
+                                        this.call.update(cx, |c, cx| c.stop_recording(cx));
+                                    } else if c.can_record() {
+                                        this.record_menu = !this.record_menu;
+                                        this.transcribe_menu = false;
+                                    }
+                                    cx.notify();
+                                }))
+                        }),
+                    )
                     .child({
                         let (tone, tip) = match (&c.transcription, c.preparing) {
                             (Some(t), _) if t.mine => {
@@ -972,9 +980,10 @@ impl Regular {
                             (None, Some(Preparing::Loading)) => {
                                 (Tone::Active, "Starting the transcript".to_owned())
                             }
-                            (None, None) => {
-                                (Tone::Plain, "Transcribe the call on this Mac".to_owned())
-                            }
+                            (None, None) => (
+                                Tone::Plain,
+                                format!("Transcribe the call on {}", crate::ui::THIS_COMPUTER),
+                            ),
                         };
                         round_button("transcribe", Icon::Captions, BUTTON, tone)
                             .tooltip(tooltip(tip))

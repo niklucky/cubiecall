@@ -48,6 +48,11 @@ Read README.md first. Plan: docs/PLAN.md. Decisions: docs/ARCHITECTURE.md.
 - To fill a call's history, script a guest's page over DevTools (`http://127.0.0.1:9411/json` for the first guest, `window.cubieRoom` in development): `cubieRoom.localParticipant.setAttributes({"quipcall.recording":"audio"})`, a `"quipcall.transcribing"` claim (`"<model>@<unix ms>"`) and then `publishData` of `{"type":"lines","lines":[…]}` on the topic `quipcall.transcript`, and a canvas `captureStream()` track published with `source: "screen_share"` for a share that captures no screen.
 - After changing `crates/mobile`'s public items, `dev/ios-core.sh` rewrites `apps/ios/Cubie/Generated/cubie_mobile.swift`; names that are Swift keywords (`private`, `public`) come out in backticks, so avoid them.
 
+## Building for Windows
+- From the Mac, check or build with cargo-xwin (`cargo install cargo-xwin`, `brew install llvm lld ninja`), with Homebrew's keg-only LLVM and lld first on PATH for clang-cl, lld-link and llvm-rc: `PATH="/opt/homebrew/opt/llvm@22/bin:/opt/homebrew/opt/lld@22/bin:$PATH" CARGO_TARGET_DIR=target/win cargo xwin clippy --target x86_64-pc-windows-msvc -p cubie-desktop -- -D warnings`. Debug builds only: release needs the Windows SDK's `fxc.exe` for GPUI's shaders, so CI (`release-windows.yml`) makes them.
+- `platform_mac.rs` / `platform_win.rs` and `video_mac.rs` / `video_win.rs` share one API, chosen by `cfg` in `main.rs`. Add to both, or the other platform stops compiling.
+- GPUI embeds the exe's manifest (Common Controls 6, per-monitor DPI); `build.rs` adds only the icon and version. A second manifest fails the link.
+
 ## macOS gotchas
 - Ask for mic and camera access with AVCaptureDevice before WebRTC touches them. A prompt raised by WebRTC itself blocks its audio thread and freezes the call.
 - Any thread that handles libwebrtc Objective-C frames needs an autorelease pool per frame (`autorelease_pool`).

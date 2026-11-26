@@ -949,7 +949,7 @@ impl Home {
                     .tooltip(tooltip(if confirming {
                         "Click again to remove; Restore hidden rooms can undo this"
                     } else {
-                        "Remove from your rooms on this Mac"
+                        "Remove from your rooms on this computer"
                     }))
                     .when(confirming, |v| v.bg(rgb(crate::theme::RAISED_2)))
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1175,7 +1175,11 @@ impl Home {
             (Some(item), Tab::Recordings) if item.recordings.is_empty() => empty_state(
                 Icon::CircleDot,
                 "No recordings",
-                "Press Record during a call to keep its audio on this Mac. Everyone in the call sees that it's recorded.",
+                if crate::call::RECORDS_HERE {
+                    "Press Record during a call to keep its audio on this Mac. Everyone in the call sees that it's recorded."
+                } else {
+                    "Recording comes to Windows later. Someone on a Mac can record the call meanwhile."
+                },
             )
             .into_any_element(),
             (Some(item), Tab::Recordings) => div()
@@ -1406,18 +1410,29 @@ fn recording_row(ix: usize, r: &store::RecordingFile, call_started: u64) -> Stat
 
 /// Open `path` in its app (QuickTime Player for recordings).
 pub fn open_file(path: &std::path::Path) {
-    if let Err(e) = std::process::Command::new("open").arg(path).spawn() {
+    #[cfg(windows)]
+    let opened = std::process::Command::new("explorer").arg(path).spawn();
+    #[cfg(not(windows))]
+    let opened = std::process::Command::new("open").arg(path).spawn();
+    if let Err(e) = opened {
         tracing::warn!("open {}: {e}", path.display());
     }
 }
 
-/// A Finder window with `path` selected.
+/// A Finder (or Explorer) window with `path` selected.
 pub fn show_in_finder(path: &std::path::Path) {
-    if let Err(e) = std::process::Command::new("open")
+    #[cfg(windows)]
+    let shown = {
+        let mut select = std::ffi::OsString::from("/select,");
+        select.push(path);
+        std::process::Command::new("explorer").arg(select).spawn()
+    };
+    #[cfg(not(windows))]
+    let shown = std::process::Command::new("open")
         .arg("-R")
         .arg(path)
-        .spawn()
-    {
+        .spawn();
+    if let Err(e) = shown {
         tracing::warn!("show {}: {e}", path.display());
     }
 }

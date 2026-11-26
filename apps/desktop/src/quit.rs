@@ -18,7 +18,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSNotification, NSNotificationCenter};
 
-use crate::{mac, theme};
+use crate::{platform, theme};
 
 const HOLD: Duration = Duration::from_millis(700);
 const CONFIRM: Duration = Duration::from_secs(2);
@@ -158,12 +158,12 @@ impl QuitGuard {
 
 fn open_overlay(cx: &mut App) -> Option<WindowHandle<QuitOverlay>> {
     let bounds = Bounds::centered(None, size(px(452.0), px(72.0)), cx);
-    let mut options = mac::floating_options(WindowBounds::Windowed(bounds));
+    let mut options = platform::floating_options(WindowBounds::Windowed(bounds));
     options.is_movable = false;
     options.window_background = WindowBackgroundAppearance::Blurred;
     cx.open_window(options, |window, cx| {
-        mac::make_shape(window, mac::Mask::Rounded(RADIUS.into()), cx);
-        mac::center_on_active_screen(window, cx);
+        platform::make_shape(window, platform::Mask::Rounded(RADIUS.into()), cx);
+        platform::center_on_active_screen(window, cx);
         window
             .observe_window_appearance(|window, _| window.refresh())
             .detach();

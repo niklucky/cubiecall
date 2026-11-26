@@ -16,7 +16,9 @@ use std::time::{Duration, Instant};
 use cubie_core::FrameSink;
 use cubie_core::livekit::webrtc::video_frame::{BoxVideoBuffer, VideoBuffer, VideoFrame};
 use cubie_core::pixel_buffer::PixelBufferPool;
-use gpui::SharedString;
+use gpui::{
+    Bounds, ContentMask, IntoElement, ObjectFit, SharedString, Styled as _, canvas, point, px, size,
+};
 use objc2_core_foundation::CFRetained;
 use objc2_core_video::{
     CVPixelBuffer, CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRowOfPlane,
@@ -34,6 +36,11 @@ pub struct Frame(pub CFRetained<CVPixelBuffer>);
 // and released from any thread. We never write to one after publishing it.
 unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}
+
+/// A video frame filling its layout box, drawn as it is.
+pub fn surface(frame: Frame) -> gpui::Surface {
+    gpui::surface(frame.0)
+}
 
 pub struct SurfaceSink {
     label: SharedString,
@@ -244,4 +251,74 @@ const fn chroma_lut() -> [u8; 256] {
         i += 1;
     }
     lut
+}
+
+/// Video cut to a rounded rectangle filling its parent; a circle when
+/// `radius` is half the side.
+///
+/// GPUI clips video only to rectangles, so the frame is drawn once per
+/// horizontal band, each band clipped to the shape's width at its narrower
+/// end. That leaves steps along the curved edges, all within `ring` of the
+/// outline: cover them with an opaque ring that wide.
+///
+/// In a corner of radius `r`, a band from `d0` to `d1` (distances from where
+/// the curve starts, `d1` further out) has its inner corner
+/// `sqrt(r² − d1² + d0²)` from the corner's centre, so bands with
+/// `d1² − d0² ≤ 2rt − t²` stay within `t` of the curve. A 44 px circle takes
+/// about 15 bands, a 96 px one about 25; the straight middle of a rectangle
+/// takes one.
+pub fn rounded(frame: Frame, radius: f32, ring: f32, fit: ObjectFit) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let buffer = frame.0;
+            let image = size(
+                (CVPixelBufferGetWidth(&buffer) as i32).into(),
+                (CVPixelBufferGetHeight(&buffer) as i32).into(),
+            );
+            let video = fit.get_bounds(bounds, image);
+            let (w, h) = (bounds.size.width / px(1.0), bounds.size.height / px(1.0));
+            let r = radius.min(w / 2.0).min(h / 2.0);
+            let (left, top) = (bounds.origin.x / px(1.0), bounds.origin.y / px(1.0));
+            let mut paint = |x0: f32, y0: f32, x1: f32, y1: f32| {
+                if x1 <= x0 || y1 <= y0 {
+                    return;
+                }
+                let band = Bounds::from_corners(
+                    point(px(left + x0), px(top + y0)),
+                    point(px(left + x1), px(top + y1)),
+                );
+                window.with_content_mask(Some(ContentMask { bounds: band }), |window| {
+                    window.paint_surface(video, buffer.clone())
+                });
+            };
+            if r < 0.5 {
+                paint(0.0, 0.0, w, h);
+                return;
+            }
+            // The straight middle; for a circle, nothing.
+            let middle = h - 2.0 * r;
+            if middle >= 0.5 {
+                paint(0.0, r, w, h - r);
+            }
+            // Half a pixel for GPUI snapping masks to device pixels, half for
+            // keeping the band ends inside the outline.
+            let t = (ring - 1.0).max(0.5);
+            let step = 2.0 * r * t - t * t;
+            let mut d0 = 0.0_f32;
+            while d0 < r {
+                let d1 = (d0 * d0 + step).sqrt().min(r);
+                let inset = r - (r * r - d1 * d1).max(0.0).sqrt() + 0.5;
+                if middle < 0.5 && d0 == 0.0 {
+                    // A circle's widest band spans the centre line.
+                    paint(inset, r - d1, w - inset, h - r + d1);
+                } else {
+                    paint(inset, r - d1, w - inset, r - d0);
+                    paint(inset, h - r + d0, w - inset, h - r + d1);
+                }
+                d0 = d1;
+            }
+        },
+    )
+    .size_full()
 }

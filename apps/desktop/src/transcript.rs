@@ -21,7 +21,7 @@ use gpui::{
 use crate::assets::Icon;
 use crate::call::Call;
 use crate::handle::{self, Resizable};
-use crate::mac;
+use crate::platform;
 use crate::store::{self, CallEvent, SaidLine};
 use crate::theme::{ACCENT, RAISED, TEXT, TEXT_DIM, TEXT_FAINT, first_name, glass_tint, white};
 use crate::timeline;
@@ -301,7 +301,7 @@ pub fn open(call: Entity<Call>, cx: &mut App) -> Option<WindowHandle<TranscriptW
         .min(area.origin.x + area.size.width - px(WIDTH + 16.0));
     let y = area.origin.y + area.size.height - px(HEIGHT + 28.0);
     let bounds = Bounds::new(point(x, y), size(px(WIDTH), px(HEIGHT)));
-    let mut options = mac::floating_options(WindowBounds::Windowed(bounds));
+    let mut options = platform::floating_options(WindowBounds::Windowed(bounds));
     options.window_background = WindowBackgroundAppearance::Blurred;
     cx.open_window(options, |window, cx| {
         cx.new(|cx| TranscriptWindow::new(call, window, cx))
@@ -325,7 +325,7 @@ pub struct TranscriptWindow {
 
 impl TranscriptWindow {
     fn new(call: Entity<Call>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        mac::make_shape(window, mac::Mask::Rounded(RADIUS), cx);
+        platform::make_shape(window, platform::Mask::Rounded(RADIUS), cx);
         let transcript = call.read(cx).transcript.clone();
         let (list, splices) = list_state(&transcript, cx);
         let status = call.read(cx).transcript_status(cx);
@@ -531,11 +531,11 @@ impl Resizable for TranscriptWindow {
             return;
         }
         self.size = Point { x: w, y: h };
-        mac::resize(
+        platform::resize(
             window,
             size(w, h),
-            mac::Mask::Rounded(RADIUS),
-            mac::Anchor::TopLeft,
+            platform::Mask::Rounded(RADIUS),
+            platform::Anchor::TopLeft,
             cx,
         );
         cx.notify();

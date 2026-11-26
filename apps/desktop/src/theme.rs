@@ -32,7 +32,9 @@ pub const PILL: u32 = 0x17181d;
 pub const CARD: u32 = 0x1b1c22;
 
 // Older names, still used by the share picker and the fullscreen window.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const SURFACE: u32 = BG;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const SURFACE_RAISED: u32 = RAISED;
 
 /// White at `alpha`: hover and selection washes, glass buttons.
