@@ -342,6 +342,8 @@ Friends on Windows call the Mac users: the same app on GPUI's DirectX 11 backend
 - [ ] Camera through Media Foundation, NV12 to I420; `CUBIE_FAKE_CAMERA` works there too. *Written, not yet run.*
 - [ ] Screen share. *For now libwebrtc's capturer shares the main screen with no picker; next, a picker over Windows.Graphics.Capture.*
 - [ ] Check on a real Windows 10 and 11 machine: sign in, a call with a Mac with video both ways, the widget dragged with bubbles riding on it, a share, two displays at different scales, then memory and CPU (`video_win.rs` copies every frame; measure before optimising)
+- [ ] Clicks through the widget's clear parts. *On the Mac they reach the app underneath; on Windows the space between the pill and its cards takes them. Needs the widget to hand the platform the shapes it draws, for a window region.*
+- [ ] Hold to talk on Windows looks at the keys every 50 ms, and at the bit that says one went down since the last look. *A low-level keyboard hook would see every press, but in an unsigned exe it looks like a keylogger to antivirus heuristics; revisit with code signing.*
 - [ ] Recording (AVAssetWriter on the Mac; Windows hides Record and shows who records), call links (`cubie://`), updates (testers download again for now), code signing (Azure Trusted Signing)
 
 **Done when:** a friend on Windows installs it from the download page and spends a call with Mac users seeing and hearing each other.

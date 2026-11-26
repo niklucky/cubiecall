@@ -71,6 +71,8 @@
       document.getElementById('windows-log').hidden = false;
       document.getElementById('title').textContent = 'Cubie for Mac and Windows';
       document.title = 'Cubie for Mac and Windows';
+      // Shown only now: a link to #windows couldn't scroll to it on load.
+      if (location.hash === '#windows') document.getElementById('windows').scrollIntoView();
     }, () => {});
   </script>
 </body>
