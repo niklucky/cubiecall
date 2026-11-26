@@ -736,13 +736,17 @@ async fn reserve_proxy_uses_its_own_signaling_and_invitation_urls() {
     config.public_url = "https://cubiecall.com".into();
     config.livekit_public_url = "wss://cubiecall.com".into();
     let app = router(state);
-    for (host, origin, signaling) in [
+    for (peer, origin, signaling) in [
         (
-            "cubiecall.com",
+            "203.0.113.1",
             "https://cubiecall.com",
             "wss://cubiecall.com",
         ),
-        ("cubiecall.ru", "https://cubiecall.ru", "wss://cubiecall.ru"),
+        (
+            "94.228.126.139",
+            "https://cubiecall.ru",
+            "wss://cubiecall.ru",
+        ),
     ] {
         for (path, body, prefix) in [
             (
@@ -763,7 +767,8 @@ async fn reserve_proxy_uses_its_own_signaling_and_invitation_urls() {
         ] {
             let req = Request::post(path)
                 .header("x-cubie", "1")
-                .header("x-forwarded-host", host)
+                .header("x-forwarded-host", "cubiecall.ru")
+                .header("x-forwarded-for", peer)
                 .header("origin", origin)
                 .header("authorization", format!("Bearer {admin}"))
                 .header("content-type", "application/json")
@@ -780,6 +785,21 @@ async fn reserve_proxy_uses_its_own_signaling_and_invitation_urls() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn a_custom_origin_ignores_the_production_proxy_address() {
+    let t = Test::new().await;
+    let mut headers = HeaderMap::new();
+    headers.insert("x-forwarded-for", "94.228.126.139".parse().unwrap());
+    assert_eq!(
+        t.state.config.link_origin(&headers),
+        t.state.config.public_url
+    );
+    assert_eq!(
+        t.state.config.signaling_url(&headers),
+        t.state.config.livekit_public_url
+    );
 }
 
 #[tokio::test]

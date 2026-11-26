@@ -556,7 +556,7 @@ fn main() {
         .detach();
 
         #[cfg(target_os = "macos")]
-        update::start();
+        update::start(cx);
         #[cfg(feature = "snapshot")]
         snapshot::start(cx);
         cx.activate(true);

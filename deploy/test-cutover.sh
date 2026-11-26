@@ -132,7 +132,9 @@ grep -qx 'restart cubie-livekit' /mock/service-log
 : >/mock/service-log
 install_app
 grep -qx 'start cubie-livekit' /mock/service-log
-grep -qx reload /mock/service-log
+# An existing site needs the trusted proxy headers before the API restarts.
+test "$(head -n 1 /mock/service-log)" = reload
+grep -qx 'restart cubie-server' /mock/service-log
 test ! -e /opt/cubie/.cutover-pending
 python3 - <<'PY'
 import sqlite3

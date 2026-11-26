@@ -2,7 +2,7 @@ use anyhow::{Context, bail};
 use axum::http::HeaderMap;
 
 const PRODUCTION_ORIGIN: &str = "https://cubiecall.com";
-const RESERVE_HOST: &str = "cubiecall.ru";
+const RESERVE_PROXY: &str = "94.228.126.139";
 const RESERVE_ORIGIN: &str = "https://cubiecall.ru";
 const RESERVE_SIGNALING: &str = "wss://cubiecall.ru";
 
@@ -85,12 +85,13 @@ impl Config {
                 && matches!(origin, RESERVE_ORIGIN | "https://quipcall.com"))
     }
 
-    // Origin nginx sets this header from the verified proxy peer.
+    // Origin nginx overwrites this with the immediate peer, including before
+    // the reserve vhost changes. X-Real-IP is separate and drives rate limits.
     fn via_reserve(&self, headers: &HeaderMap) -> bool {
         self.public_url == PRODUCTION_ORIGIN
             && headers
-                .get("x-forwarded-host")
-                .is_some_and(|host| host == RESERVE_HOST)
+                .get("x-forwarded-for")
+                .is_some_and(|peer| peer == RESERVE_PROXY)
     }
 
     pub fn link_origin(&self, headers: &HeaderMap) -> &str {

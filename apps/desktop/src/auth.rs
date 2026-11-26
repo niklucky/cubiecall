@@ -103,9 +103,10 @@ fn clear(server: &str) {
 }
 pub(crate) use cubie_core::http::RequestError;
 
-const PRIMARY: &str = "https://cubiecall.com";
+pub(crate) const PRIMARY: &str = "https://cubiecall.com";
 const RESERVE: &str = "https://cubiecall.ru";
-static CUBIE: cubie_core::http::Failover = cubie_core::http::Failover::new(PRIMARY, RESERVE);
+pub(crate) static CUBIE: cubie_core::http::Failover =
+    cubie_core::http::Failover::new(PRIMARY, RESERVE);
 
 pub(crate) fn endpoint(server: &str) -> cubie_core::http::Endpoint<&str> {
     use cubie_core::http::Endpoint;

@@ -174,6 +174,14 @@ fi
 app() { sh "$STAGE/deploy/app.sh" "$@"; }
 [ -n "$upgrade" ] || app keep
 
+# Existing Cubie installations need the proxy headers in place before the
+# replacement API starts. First installs and the legacy cutover publish later.
+site_active=
+if [ -z "$upgrade" ] && [ -x "$ROOT/bin/cubie-server" ] && [ -L "$ENABLED_SITE" ] && [ ! -L "$OLD_SITE" ]; then
+    activate_site "$STAGE/deploy/nginx/$DOMAIN.conf" final
+    site_active=1
+fi
+
 put "$STAGE/deploy/livekit.yaml" $ROOT/livekit.yaml 644
 put "$STAGE/deploy/systemd/cubie-livekit.service" /etc/systemd/system/cubie-livekit.service 644
 put "$STAGE/deploy/systemd/cubie-server.service" /etc/systemd/system/cubie-server.service 644
@@ -266,7 +274,7 @@ if [ -n "$upgrade" ]; then
     echo publishing > "$STATE/.from-quipcall.new"
     mv "$STATE/.from-quipcall.new" "$STATE/.from-quipcall"
 fi
-activate_site "$STAGE/deploy/nginx/$DOMAIN.conf" final
+[ -n "$site_active" ] || activate_site "$STAGE/deploy/nginx/$DOMAIN.conf" final
 # Requests can now write to Cubie. Never restore a snapshot after this point.
 trap - EXIT HUP INT TERM
 if [ "$phase" = publishing ]; then

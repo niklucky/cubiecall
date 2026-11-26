@@ -1,12 +1,22 @@
 #!/bin/sh
 # Install or update Cubie:
 #   curl -fsSL https://cubiecall.com/download/install.sh | sh
+#   curl -fsSL https://cubiecall.ru/download/install.sh | sh -s -- --reserve
 set -eu
+primary=https://cubiecall.com
+reserve=https://cubiecall.ru
+if [ "${1:-}" = --reserve ]; then
+    first=$reserve
+    second=$primary
+else
+    first=$primary
+    second=$reserve
+fi
 # hw.optional.arm64 is 1 on Apple Silicon, even in a Terminal running under Rosetta.
 if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
-	URL=https://cubiecall.com/download/Cubie-apple-silicon.zip
+	archive=/download/Cubie-apple-silicon.zip
 else
-	URL=https://cubiecall.com/download/Cubie-intel.zip
+	archive=/download/Cubie-intel.zip
 fi
 
 dest=/Applications
@@ -26,7 +36,8 @@ tmp=$(mktemp -d "$dest/.cubie-install.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 1' HUP INT TERM
 echo "Downloading Cubie…"
-curl -fL --progress-bar "$URL" -o "$tmp/Cubie.zip"
+curl -fL --connect-timeout 5 --progress-bar "$first$archive" -o "$tmp/Cubie.zip" ||
+    curl -fL --connect-timeout 5 --progress-bar "$second$archive" -o "$tmp/Cubie.zip"
 ditto -x -k "$tmp/Cubie.zip" "$tmp"
 if [ ! -x "$tmp/Cubie.app/Contents/MacOS/Cubie" ] || [ "$(bundle_id "$tmp/Cubie.app")" != com.quipcall.desktop ]; then
     echo "The download is missing the Cubie app." >&2

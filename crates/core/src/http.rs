@@ -5,10 +5,11 @@ use serde_json::Value;
 use std::{
     sync::{
         OnceLock,
-        atomic::{AtomicU8, Ordering::Relaxed},
+        atomic::{AtomicBool, Ordering::Relaxed},
     },
     time::Duration,
 };
+use tokio::time::Instant;
 
 /// Local identity for credentials and history. The production aliases share
 /// the original key so installations keep their sign-in and previous calls.
@@ -38,6 +39,9 @@ impl std::error::Error for RequestError {}
 /// Retryable polling failures; credential/proof errors and malformed successes
 /// remain terminal. The caller owns its deadline, backoff and cancellation.
 pub fn transient(error: &anyhow::Error) -> bool {
+    if error.is::<Unreachable>() {
+        return true;
+    }
     if let Some(e) = error.downcast_ref::<RequestError>() {
         return matches!(e.status, 408 | 429 | 500..=599);
     }
@@ -68,15 +72,61 @@ fn client(failover: bool) -> anyhow::Result<&'static reqwest::Client> {
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
-const UNKNOWN: u8 = 0;
-const PRIMARY: u8 = 1;
-const RESERVE: u8 = 2;
+#[derive(Debug)]
+struct Unreachable;
+
+impl std::fmt::Display for Unreachable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Can't reach Cubie")
+    }
+}
+
+impl std::error::Error for Unreachable {}
+
+const PRIMARY_RECHECK: Duration = Duration::from_secs(60);
+const OFFLINE_RECHECK: Duration = Duration::from_secs(1);
+const GATEWAY_RECHECK: Duration = Duration::from_secs(30);
+const MAX_ATTEMPTS: u64 = 3;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Route {
+    Primary,
+    Reserve,
+}
+
+impl Route {
+    fn other(self) -> Self {
+        match self {
+            Self::Primary => Self::Reserve,
+            Self::Reserve => Self::Primary,
+        }
+    }
+}
+
+struct Selection {
+    route: Option<Route>,
+    recheck_at: Option<Instant>,
+    gateway_failure: Option<GatewayFailure>,
+}
+
+struct GatewayFailure {
+    method: reqwest::Method,
+    path: String,
+    expires: Instant,
+}
+
+impl Selection {
+    fn probe_due(&self) -> bool {
+        self.recheck_at.is_none_or(|at| Instant::now() >= at)
+    }
+}
 
 pub struct Failover {
     primary: &'static str,
     reserve: &'static str,
-    selected: AtomicU8,
-    probe: tokio::sync::Mutex<()>,
+    // Links continue to use the last working route even during an outage.
+    last_used_reserve: AtomicBool,
+    selection: tokio::sync::Mutex<Selection>,
 }
 
 impl Failover {
@@ -84,84 +134,189 @@ impl Failover {
         Self {
             primary,
             reserve,
-            selected: AtomicU8::new(UNKNOWN),
-            probe: tokio::sync::Mutex::const_new(()),
+            last_used_reserve: AtomicBool::new(false),
+            selection: tokio::sync::Mutex::const_new(Selection {
+                route: None,
+                recheck_at: None,
+                gateway_failure: None,
+            }),
         }
     }
 
     pub fn origin(&self) -> &'static str {
-        self.origin_for(self.selected.load(Relaxed))
-    }
-
-    fn origin_for(&self, selected: u8) -> &'static str {
-        if selected == RESERVE {
+        if self.last_used_reserve.load(Relaxed) {
             self.reserve
         } else {
             self.primary
         }
     }
 
-    async fn select(&self, client: &reqwest::Client, skip: u8) -> anyhow::Result<u8> {
-        // Concurrent operations share one probe, and a working reserve stays
-        // selected for the process until it fails.
-        let _probe = self.probe.lock().await;
-        let selected = self.selected.load(Relaxed);
-        if selected != UNKNOWN && selected != skip {
-            return Ok(selected);
+    fn origin_for(&self, route: Route) -> &'static str {
+        match route {
+            Route::Primary => self.primary,
+            Route::Reserve => self.reserve,
         }
-        for route in [PRIMARY, RESERVE]
-            .into_iter()
-            .filter(|route| *route != skip)
-        {
-            let health = client
-                .get(format!("{}/api/health", self.origin_for(route)))
-                .timeout(Duration::from_secs(3))
-                .send()
-                .await;
-            if let Ok(response) = health
-                && response.status() == reqwest::StatusCode::OK
-                && response.content_length().is_none_or(|len| len == 2)
-                && response
-                    .bytes()
-                    .await
-                    .is_ok_and(|body| body.as_ref() == b"ok")
-            {
-                self.selected.store(route, Relaxed);
-                return Ok(route);
-            }
-        }
-        anyhow::bail!("Can't reach Cubie")
     }
 
-    async fn send(&self, client: &reqwest::Client, request: &ApiRequest) -> anyhow::Result<Value> {
-        let first = self.select(client, UNKNOWN).await?;
-        let mut route = first;
+    fn remember(&self, selection: &mut Selection, route: Option<Route>) {
+        if selection.route != route {
+            selection.gateway_failure = None;
+        }
+        selection.route = route;
+        selection.recheck_at = match route {
+            Some(Route::Primary) => None,
+            Some(Route::Reserve) => Some(Instant::now() + PRIMARY_RECHECK),
+            None => Some(Instant::now() + OFFLINE_RECHECK),
+        };
+        if let Some(route) = route {
+            self.last_used_reserve
+                .store(route == Route::Reserve, Relaxed);
+        }
+    }
+
+    async fn healthy(&self, client: &reqwest::Client, route: Route) -> bool {
+        let health = client
+            .get(format!("{}/api/health", self.origin_for(route)))
+            .timeout(Duration::from_secs(3))
+            .send()
+            .await;
+        if let Ok(response) = health
+            && response.status() == reqwest::StatusCode::OK
+            && response.content_length().is_none_or(|len| len == 2)
+        {
+            return response
+                .bytes()
+                .await
+                .is_ok_and(|body| body.as_ref() == b"ok");
+        }
+        false
+    }
+
+    async fn select(&self, client: &reqwest::Client) -> Result<Route, Unreachable> {
+        let mut selection = self.selection.lock().await;
+        if selection.route == Some(Route::Primary) || !selection.probe_due() {
+            return selection.route.ok_or(Unreachable);
+        }
+        let route = if self.healthy(client, Route::Primary).await {
+            Some(Route::Primary)
+        } else if selection.route == Some(Route::Reserve)
+            || self.healthy(client, Route::Reserve).await
+        {
+            Some(Route::Reserve)
+        } else {
+            None
+        };
+        self.remember(&mut selection, route);
+        route.ok_or(Unreachable)
+    }
+
+    async fn alternate(
+        &self,
+        client: &reqwest::Client,
+        failed: Route,
+        gateway_error: Option<&ApiRequest>,
+    ) -> Option<Route> {
+        let mut selection = self.selection.lock().await;
+        let other = failed.other();
+        if selection.route == Some(other) {
+            return Some(other);
+        }
+        if selection.route.is_none() && !selection.probe_due() {
+            return None;
+        }
+        // Both domains share an origin. A single gateway error during a
+        // deploy shouldn't move healthy clients. A repeated failure on the
+        // same API operation can mean only that path is affected.
+        if let Some(request) = gateway_error
+            && self.healthy(client, failed).await
+            && !selection.gateway_failure.as_ref().is_some_and(|previous| {
+                previous.method == request.method
+                    && previous.path == request.path
+                    && Instant::now() < previous.expires
+            })
+        {
+            selection.gateway_failure = Some(GatewayFailure {
+                method: request.method.clone(),
+                path: request.path.clone(),
+                expires: Instant::now() + GATEWAY_RECHECK,
+            });
+            return None;
+        }
+        let route = self.healthy(client, other).await.then_some(other);
+        self.remember(&mut selection, route);
+        route
+    }
+
+    pub async fn probe(&'static self) {
+        if let (Ok(runtime), Ok(client)) = (crate::runtime(), client(true)) {
+            let _ = runtime.spawn(self.select(client)).await;
+        }
+    }
+
+    async fn send(
+        &self,
+        client: &reqwest::Client,
+        request: &ApiRequest,
+        retry: bool,
+    ) -> anyhow::Result<Value> {
+        let mut attempt = 1;
+        let mut route = loop {
+            match self.select(client).await {
+                Ok(route) => break route,
+                Err(_) if retry && attempt < MAX_ATTEMPTS => {
+                    tokio::time::sleep(Duration::from_millis(500 * attempt)).await;
+                    attempt += 1;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
+        let mut attempt = 1;
+        let mut switched = false;
         loop {
             let result = request.send(client, self.origin_for(route), false).await;
-            let Err(error) = &result else { return result };
-            let transport = error.downcast_ref::<reqwest::Error>();
-            let failed = transport.is_some_and(|e| {
-                e.is_connect() || e.is_timeout() || e.is_body() || e.is_request() || e.is_decode()
-            }) || error
-                .downcast_ref::<RequestError>()
-                .is_some_and(|e| matches!(e.status, 502..=504));
-            if !failed {
-                return result;
-            }
-            let _ = self
-                .selected
-                .compare_exchange(route, UNKNOWN, Relaxed, Relaxed);
-            // An upstream timeout can happen after a write committed.
-            let safe_to_retry =
-                matches!(request.method, reqwest::Method::GET | reqwest::Method::HEAD)
-                    || transport.is_some_and(reqwest::Error::is_connect);
-            if route != first || !safe_to_retry {
-                return result;
-            }
-            let Ok(other) = self.select(client, route).await else {
+            let Err(error) = &result else {
+                if attempt > 1 {
+                    let mut selection = self.selection.lock().await;
+                    if selection.route.is_none() {
+                        self.remember(&mut selection, Some(route));
+                    }
+                }
                 return result;
             };
-            route = other;
+            let transport = error.downcast_ref::<reqwest::Error>();
+            let status = error.downcast_ref::<RequestError>().map(|e| e.status);
+            let gateway_error = status.is_some_and(|s| matches!(s, 502..=504));
+            let transport_error = transport.is_some_and(|e| {
+                e.is_connect() || e.is_timeout() || e.is_body() || e.is_request() || e.is_decode()
+            });
+            let redirected = status.is_some_and(|s| matches!(s, 300..=399));
+            if !transport_error && !gateway_error && !redirected {
+                return result;
+            }
+            let other = self
+                .alternate(client, route, gateway_error.then_some(request))
+                .await;
+            // General writes may already have committed. Admission alone
+            // opts into retrying ambiguous transport failures.
+            let safe_to_retry =
+                matches!(request.method, reqwest::Method::GET | reqwest::Method::HEAD)
+                    || transport.is_some_and(reqwest::Error::is_connect)
+                    || retry;
+            if !switched
+                && safe_to_retry
+                && attempt < MAX_ATTEMPTS
+                && let Some(other) = other
+            {
+                route = other;
+                switched = true;
+                attempt += 1;
+                continue;
+            }
+            if !retry || !transport_error || attempt >= MAX_ATTEMPTS {
+                return result;
+            }
+            tokio::time::sleep(Duration::from_millis(500 * attempt)).await;
+            attempt += 1;
         }
     }
 }
@@ -200,7 +355,7 @@ impl ApiRequest {
             }
             match req.send().await {
                 Ok(response) => break response,
-                Err(e) if retry && attempt < 3 && (e.is_connect() || e.is_timeout()) => {
+                Err(e) if retry && attempt < MAX_ATTEMPTS && (e.is_connect() || e.is_timeout()) => {
                     tokio::time::sleep(Duration::from_millis(500 * attempt)).await;
                     attempt += 1;
                 }
@@ -270,7 +425,7 @@ impl Endpoint<&str> {
                     };
                     match endpoint {
                         Endpoint::Redundant(failover) => {
-                            failover.send(client(true)?, &request).await
+                            failover.send(client(true)?, &request, retry).await
                         }
                         Endpoint::Direct(server) => {
                             request.send(client(false)?, &server, retry).await
@@ -319,9 +474,18 @@ mod tests {
                 }
                 assert_eq!(authorized, !expected.contains("/api/health"));
                 reader.read_exact(&mut vec![0; length]).unwrap();
+                if status == "timeout" {
+                    std::thread::sleep(Duration::from_millis(200));
+                    continue;
+                }
+                let location = if status.starts_with("302 ") {
+                    "Location: http://127.0.0.1:1/elsewhere\r\n"
+                } else {
+                    ""
+                };
                 write!(
                     socket,
-                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 {status}\r\n{location}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 )
                 .unwrap();
@@ -367,16 +531,15 @@ mod tests {
     }
 
     #[test]
-    fn failover_never_replays_a_write_after_a_gateway_timeout() {
-        let (primary, failed) = api_fixture(&[
+    fn gateway_errors_keep_healthy_primary_and_do_not_replay_writes() {
+        let (primary, server) = api_fixture(&[
             ("GET /api/health HTTP/1.1", "200 OK", "ok"),
             ("POST /api/rooms HTTP/1.1", "504 Gateway Timeout", ""),
-        ]);
-        let (reserve, healthy) = api_fixture(&[
             ("GET /api/health HTTP/1.1", "200 OK", "ok"),
-            ("GET /api/rooms HTTP/1.1", "200 OK", r#"{"rooms":[]}"#),
+            ("GET /api/rooms HTTP/1.1", "502 Bad Gateway", ""),
+            ("GET /api/health HTTP/1.1", "200 OK", "ok"),
         ]);
-        let route = Box::leak(Box::new(Failover::new(primary, reserve)));
+        let route = Box::leak(Box::new(Failover::new(primary, "http://127.0.0.1:1")));
         let endpoint = Endpoint::Redundant(route);
         crate::runtime().unwrap().block_on(async {
             let error = endpoint
@@ -390,15 +553,204 @@ mod tests {
                 .unwrap_err();
             assert_eq!(error.downcast_ref::<RequestError>().unwrap().status, 504);
             assert_eq!(route.origin(), primary);
-            let rooms = endpoint
+            let error = endpoint
+                .request(Some("shared-session"), "/rooms", None, "GET")
+                .await
+                .unwrap_err();
+            assert_eq!(error.downcast_ref::<RequestError>().unwrap().status, 502);
+            assert!(route.selection.lock().await.route == Some(Route::Primary));
+        });
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn repeated_gateway_errors_can_move_the_next_write_to_the_reserve() {
+        let (primary, main) = api_fixture(&[
+            ("GET /api/health HTTP/1.1", "200 OK", "ok"),
+            ("POST /api/rooms HTTP/1.1", "504 Gateway Timeout", ""),
+            ("GET /api/health HTTP/1.1", "200 OK", "ok"),
+            ("POST /api/rooms HTTP/1.1", "504 Gateway Timeout", ""),
+            ("GET /api/health HTTP/1.1", "200 OK", "ok"),
+        ]);
+        let (reserve, backup) = api_fixture(&[
+            ("GET /api/health HTTP/1.1", "200 OK", "ok"),
+            ("POST /api/rooms HTTP/1.1", "200 OK", r#"{"id":"room"}"#),
+        ]);
+        let route = Box::leak(Box::new(Failover::new(primary, reserve)));
+        let endpoint = Endpoint::Redundant(route);
+        crate::runtime().unwrap().block_on(async {
+            let post = || {
+                endpoint.request(
+                    Some("shared-session"),
+                    "/rooms",
+                    Some(serde_json::json!({})),
+                    "POST",
+                )
+            };
+            assert_eq!(
+                post()
+                    .await
+                    .unwrap_err()
+                    .downcast_ref::<RequestError>()
+                    .unwrap()
+                    .status,
+                504
+            );
+            assert_eq!(route.origin(), primary);
+            assert_eq!(
+                post()
+                    .await
+                    .unwrap_err()
+                    .downcast_ref::<RequestError>()
+                    .unwrap()
+                    .status,
+                504
+            );
+            assert_eq!(route.origin(), reserve);
+            assert_eq!(post().await.unwrap()["id"], "room");
+        });
+        main.join().unwrap();
+        backup.join().unwrap();
+    }
+
+    #[test]
+    fn failover_returns_to_primary_when_it_recovers() {
+        let (primary, main) = api_fixture(&[
+            ("GET /api/health HTTP/1.1", "200 OK", "blocked"),
+            ("GET /api/health HTTP/1.1", "200 OK", "ok"),
+            ("GET /api/rooms HTTP/1.1", "200 OK", r#"{"via":"primary"}"#),
+        ]);
+        let (reserve, backup) = api_fixture(&[
+            ("GET /api/health HTTP/1.1", "200 OK", "ok"),
+            ("GET /api/rooms HTTP/1.1", "200 OK", r#"{"via":"reserve"}"#),
+        ]);
+        let route = Box::leak(Box::new(Failover::new(primary, reserve)));
+        let endpoint = Endpoint::Redundant(route);
+        crate::runtime().unwrap().block_on(async {
+            let get = || endpoint.request(Some("shared-session"), "/rooms", None, "GET");
+            assert_eq!(get().await.unwrap()["via"], "reserve");
+            route.selection.lock().await.recheck_at = None;
+            assert_eq!(get().await.unwrap()["via"], "primary");
+            assert_eq!(route.origin(), primary);
+        });
+        main.join().unwrap();
+        backup.join().unwrap();
+    }
+
+    #[test]
+    fn failover_preserves_opted_in_admission_retries() {
+        let (primary, server) = api_fixture(&[
+            ("GET /api/health HTTP/1.1", "200 OK", "ok"),
+            ("POST /api/join HTTP/1.1", "timeout", ""),
+            (
+                "POST /api/join HTTP/1.1",
+                "200 OK",
+                r#"{"token":"call-token"}"#,
+            ),
+        ]);
+        let route = Failover::new(primary, "http://127.0.0.1:1");
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(80))
+            .build()
+            .unwrap();
+        let request = ApiRequest {
+            token: Some("shared-session".into()),
+            path: "/join".into(),
+            body: Some(serde_json::json!({"room":"test"})),
+            method: reqwest::Method::POST,
+        };
+        crate::runtime().unwrap().block_on(async {
+            let result = route.send(&client, &request, true).await.unwrap();
+            assert_eq!(result["token"], "call-token");
+        });
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn offline_callers_share_the_failed_probe_and_keep_the_last_link_origin() {
+        let (primary, main) = api_fixture(&[("GET /api/health HTTP/1.1", "503 Unavailable", "")]);
+        let (reserve, backup) = api_fixture(&[("GET /api/health HTTP/1.1", "503 Unavailable", "")]);
+        let route = Box::leak(Box::new(Failover::new(primary, reserve)));
+        route.last_used_reserve.store(true, Relaxed);
+        let endpoint = Endpoint::Redundant(route);
+        crate::runtime().unwrap().block_on(async {
+            let get = || endpoint.request(Some("shared-session"), "/rooms", None, "GET");
+            let (a, b) = join(get(), get()).await;
+            assert!(transient(&a.unwrap_err()));
+            assert!(transient(&b.unwrap_err()));
+            assert_eq!(route.origin(), reserve);
+            assert!(!route.selection.lock().await.probe_due());
+        });
+        main.join().unwrap();
+        backup.join().unwrap();
+    }
+
+    #[test]
+    fn a_blocked_write_selects_the_reserve_for_the_next_attempt() {
+        let (primary, main) = api_fixture(&[
+            ("GET /api/health HTTP/1.1", "200 OK", "ok"),
+            ("POST /api/rooms HTTP/1.1", "timeout", ""),
+        ]);
+        let (reserve, backup) = api_fixture(&[
+            ("GET /api/health HTTP/1.1", "200 OK", "ok"),
+            ("POST /api/rooms HTTP/1.1", "200 OK", r#"{"id":"room"}"#),
+        ]);
+        let route = Failover::new(primary, reserve);
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(80))
+            .build()
+            .unwrap();
+        let request = ApiRequest {
+            token: Some("shared-session".into()),
+            path: "/rooms".into(),
+            body: Some(serde_json::json!({})),
+            method: reqwest::Method::POST,
+        };
+        crate::runtime().unwrap().block_on(async {
+            let error = route.send(&client, &request, false).await.unwrap_err();
+            assert!(error.downcast_ref::<reqwest::Error>().unwrap().is_timeout());
+            assert_eq!(route.origin(), reserve);
+            assert_eq!(
+                route.send(&client, &request, false).await.unwrap()["id"],
+                "room"
+            );
+        });
+        main.join().unwrap();
+        backup.join().unwrap();
+    }
+
+    #[test]
+    fn unexpected_api_redirects_use_the_other_domain_instead() {
+        let (primary, main) = api_fixture(&[
+            ("GET /api/health HTTP/1.1", "200 OK", "ok"),
+            ("GET /api/rooms HTTP/1.1", "302 Found", ""),
+        ]);
+        let (reserve, backup) = api_fixture(&[
+            ("GET /api/health HTTP/1.1", "200 OK", "ok"),
+            ("GET /api/rooms HTTP/1.1", "200 OK", r#"{"via":"reserve"}"#),
+        ]);
+        let route = Box::leak(Box::new(Failover::new(primary, reserve)));
+        crate::runtime().unwrap().block_on(async {
+            let value = Endpoint::Redundant(route)
                 .request(Some("shared-session"), "/rooms", None, "GET")
                 .await
                 .unwrap();
-            assert_eq!(rooms["rooms"], serde_json::json!([]));
-            assert_eq!(route.origin(), reserve);
+            assert_eq!(value["via"], "reserve");
         });
-        failed.join().unwrap();
-        healthy.join().unwrap();
+        main.join().unwrap();
+        backup.join().unwrap();
+    }
+
+    #[test]
+    fn reserve_reuses_the_production_identity() {
+        assert_eq!(
+            storage_origin("https://cubiecall.ru/"),
+            storage_origin("https://cubiecall.com")
+        );
+        assert_eq!(
+            storage_origin("https://cubiecall.ru.example"),
+            "https://cubiecall.ru.example"
+        );
     }
 
     #[test]
