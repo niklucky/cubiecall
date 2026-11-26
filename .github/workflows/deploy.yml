@@ -2,7 +2,7 @@ name: Deploy server and web
 run-name: Server and web · ${{ github.sha }} · attempt ${{ github.run_attempt }}
 
 # Every push to main that changes the server or the web client is tested,
-# built and put on https://cubiecall.com. The two go together: the web client
+# built and put on the configured site. The two go together: the web client
 # and the API it talks to change in one step on the box (docs/DEPLOY.md).
 on:
   push:
@@ -90,7 +90,12 @@ jobs:
           pnpm check
           pnpm test
       - name: Build
-        run: pnpm build
+        env:
+          VITE_CUBIE_PUBLIC_URL: ${{ vars.CUBIE_PUBLIC_URL }}
+          VITE_CUBIE_LEGACY_URL: ${{ vars.CUBIE_LEGACY_URL }}
+        run: |
+          : "${VITE_CUBIE_PUBLIC_URL:?Missing CUBIE_PUBLIC_URL variable}"
+          pnpm build
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: web
@@ -99,7 +104,7 @@ jobs:
           retention-days: 14
 
   deploy:
-    name: Deploy to cubiecall.com
+    name: Deploy to the public site
     needs: [server, web]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
@@ -107,7 +112,7 @@ jobs:
     # The key is this environment's secret, and the environment accepts main only.
     environment:
       name: production
-      url: https://cubiecall.com
+      url: ${{ vars.CUBIE_PUBLIC_URL }}
     steps:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -144,10 +149,13 @@ jobs:
           tar -czf bundle.tgz -C bundle .
           ssh -T "$DEPLOY_HOST" < bundle.tgz | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Verify the public site
+        env:
+          CUBIE_PUBLIC_URL: ${{ vars.CUBIE_PUBLIC_URL }}
         run: |
           set -eu
-          curl -fsS --retry 5 --retry-all-errors https://cubiecall.com/api/health
-          curl -fsS --retry 5 --retry-all-errors https://cubiecall.com/ | cmp - bundle/web/index.html
+          : "${CUBIE_PUBLIC_URL:?Missing CUBIE_PUBLIC_URL variable}"
+          curl -fsS --retry 5 --retry-all-errors "${CUBIE_PUBLIC_URL%/}/api/health"
+          curl -fsS --retry 5 --retry-all-errors "${CUBIE_PUBLIC_URL%/}/" | cmp - bundle/web/index.html
       - name: Remove deployment credentials
         if: always()
         run: rm -f "$RUNNER_TEMP/cubie-deploy.key" "$RUNNER_TEMP/cubie-known-hosts" "$HOME/.ssh/config"

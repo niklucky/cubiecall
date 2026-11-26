@@ -1,11 +1,9 @@
 #!/bin/sh
-# Install or update Cubie:
-#   curl -fsSL --proto-redir '=https' https://cubiecall.com/download/install.sh | sh
-#   curl -fsSL --proto-redir '=https' https://cubiecall.ru/download/install.sh | sh -s -- --reserve
+# Install or update Cubie from the configured site.
 set -eu
-primary=https://cubiecall.com
-reserve=https://cubiecall.ru
-if [ "${1:-}" = --reserve ]; then
+primary='@PUBLIC_URL@'
+reserve='@RESERVE_URL@'
+if [ "${1:-}" = --reserve ] && [ -n "$reserve" ]; then
     first=$reserve
     second=$primary
 else
@@ -35,7 +33,7 @@ fi
 tmp=$(mktemp -d "$dest/.cubie-install.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 1' HUP INT TERM
-requirement='anchor apple generic and identifier "com.quipcall.desktop" and certificate leaf[subject.OU] = "8BSJZG6B89" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
+requirement='anchor apple generic and identifier "com.quipcall.desktop" and certificate leaf[subject.OU] = "@MAC_TEAM@" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
 fetch_signed_app() {
     mkdir "$1" &&
         curl -fL --proto '=https' --proto-redir '=https' --connect-timeout 5 \
@@ -53,8 +51,8 @@ echo "Downloading Cubie…"
 if fetch_signed_app "$tmp/first" "$first"; then
     app=$tmp/first/Cubie.app
 else
-    echo "Trying the other CubieCall domain…"
-    if ! fetch_signed_app "$tmp/second" "$second"; then
+    [ -z "$second" ] || echo "Trying the other CubieCall domain…"
+    if [ -z "$second" ] || ! fetch_signed_app "$tmp/second" "$second"; then
         echo "Could not download an app with a valid Cubie Developer ID signature." >&2
         exit 1
     fi

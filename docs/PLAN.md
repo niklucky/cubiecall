@@ -151,7 +151,7 @@ Started early (2026-11-03), ahead of Stages 3–6, with open room links. Invite-
 - [x] ~~LiveKit on a single node: one UDP port (7882), TCP fallback (7881)~~ — calls from outside connect over UDP
 - [ ] Built-in TURN/TLS for strict networks (only 443 open)
 - [x] ~~HTTPS, systemd units, server, and static web files~~ — nginx + Let's Encrypt (the box already runs them for other projects, so not Caddy); `make deploy`
-- [x] ~~Russian HTTPS proxy and Mac API failover~~ — `cubiecall.ru` serves the same site, API and signaling. Mac failover is ready for the next release. [Deployment notes](DEPLOY.md#russian-reserve-domain)
+- [x] ~~Russian HTTPS proxy and Mac API failover~~ — `cubiecall.ru` serves the same site, API and signaling. Mac failover is ready for the next release. [Deployment notes](DEPLOY.md#optional-reserve-domain)
 - [ ] SQLite backups
 - [x] ~~macOS build: `.app` bundle, ad-hoc signing for friends~~ — one app per architecture, `curl … | sh` installer, call links (`cubie://join/<room>`); `make release-mac`
 - [x] ~~Quby visual assets: macOS bundle icon, web favicon, transparent 1024px PNG, and editable SVG~~ — wired into packaging and the web build; assets prepared locally for the next release.

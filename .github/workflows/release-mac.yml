@@ -9,6 +9,15 @@ on:
 permissions:
   contents: read
 
+env:
+  CUBIE_PUBLIC_URL: ${{ vars.CUBIE_PUBLIC_URL }}
+  CUBIE_RESERVE_URL: ${{ vars.CUBIE_RESERVE_URL }}
+  CUBIE_STORAGE_ID: ${{ vars.CUBIE_STORAGE_ID }}
+  CUBIE_STORAGE_ALIASES: ${{ vars.CUBIE_STORAGE_ALIASES }}
+  CUBIE_MAC_TEAM_ID: ${{ vars.CUBIE_MAC_TEAM_ID }}
+  CUBIE_SIGNING_IDENTITY: ${{ vars.CUBIE_SIGNING_IDENTITY }}
+  CUBIE_SPARKLE_PUBLIC_KEY: ${{ vars.CUBIE_SPARKLE_PUBLIC_KEY }}
+
 concurrency:
   group: release-mac-${{ github.ref }}
   cancel-in-progress: false
@@ -50,7 +59,6 @@ jobs:
     env:
       CUBIE_VERSION: ${{ needs.metadata.outputs.version }}
       CUBIE_BUILD: ${{ needs.metadata.outputs.build }}
-      CUBIE_SERVER: https://cubiecall.com
       MACOSX_DEPLOYMENT_TARGET: '12.3'
       CARGO_BUILD_JOBS: '2'
     steps:
@@ -180,7 +188,7 @@ jobs:
         run: |
           gh release create "$RELEASE_TAG" --verify-tag --title "Cubie $CUBIE_VERSION" --generate-notes \
             target/mac/Cubie-*.zip target/mac/SHA256SUMS
-          printf 'Published **%s (build %s)** to https://cubiecall.com/download/\n' "$CUBIE_VERSION" "$CUBIE_BUILD" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Published **%s (build %s)** to %s/download/\n' "$CUBIE_VERSION" "$CUBIE_BUILD" "${CUBIE_PUBLIC_URL%/}" >> "$GITHUB_STEP_SUMMARY"
       - name: Remove deployment credentials
         if: always()
         run: rm -f "$RUNNER_TEMP/cubie-release.key" "$RUNNER_TEMP/cubie-known-hosts" "$HOME/.ssh/config"

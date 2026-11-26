@@ -11,7 +11,9 @@
       /** To a room's door. */ onroom: (id: string) => void;
       /** Straight into a call just made. */ onstart: (room: CallRoom) => void;
       onsignout: () => Promise<void> } = $props();
-  const origin = ['https://quipcall.com', 'https://cubycall.com'].includes(location.origin) ? 'https://cubiecall.com' : location.origin;
+  const origin = location.origin === import.meta.env.VITE_CUBIE_LEGACY_URL
+    ? import.meta.env.VITE_CUBIE_PUBLIC_URL || location.origin
+    : location.origin;
   const link = (id: string) => `${origin}/?room=${id}`;
   let rooms = $state<CallRoom[]>([]);
   let detail = $state<RoomDetail | null>(null);

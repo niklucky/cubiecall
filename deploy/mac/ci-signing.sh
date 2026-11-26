@@ -5,6 +5,7 @@ umask 077
 : "${RUNNER_TEMP:?}" "${GITHUB_ENV:?}"
 : "${MACOS_CERTIFICATE:?}" "${MACOS_CERTIFICATE_PASSWORD:?}"
 : "${APPLE_ID:?}" "${APPLE_NOTARY_PASSWORD:?}" "${SPARKLE_PRIVATE_KEY:?}"
+: "${CUBIE_MAC_TEAM_ID:?}"
 keychain="$RUNNER_TEMP/cubie-signing.keychain-db"
 certificate="$RUNNER_TEMP/cubie-signing.p12"
 sparkle_key="$RUNNER_TEMP/cubie-sparkle-key"
@@ -30,5 +31,5 @@ sparkle=$(deploy/mac/sparkle.sh)
 # notarytool's noninteractive CI mode accepts the password as an argument;
 # GitHub masks it in logs and the temporary runner is isolated. Never enable tracing.
 xcrun notarytool store-credentials cubie-notary --keychain "$keychain" \
-    --apple-id "$APPLE_ID" --team-id 8BSJZG6B89 --password "$APPLE_NOTARY_PASSWORD"
+    --apple-id "$APPLE_ID" --team-id "$CUBIE_MAC_TEAM_ID" --password "$APPLE_NOTARY_PASSWORD"
 rm -f "$certificate"

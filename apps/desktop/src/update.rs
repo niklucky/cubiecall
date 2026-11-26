@@ -14,7 +14,17 @@ use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_se
 use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
 use objc2_foundation::{NSBundle, NSMutableURLRequest, NSObject, NSString, NSURL};
 
-use crate::auth::{CUBIE, PRIMARY};
+use crate::{SERVER, auth::FAILOVER};
+
+async fn update_origin(previous: &'static str) -> &'static str {
+    match FAILOVER
+        .get()
+        .filter(|route| route.primary() == SERVER.trim_end_matches('/'))
+    {
+        Some(route) => route.reachable_origin(previous).await,
+        None => SERVER,
+    }
+}
 
 struct UpdateState {
     feed: String,
@@ -37,7 +47,7 @@ define_class!(
         #[unsafe(method_id(feedURLStringForUpdater:))]
         fn feed_url(&self, _updater: &AnyObject) -> Retained<NSString> {
             let state = self.ivars();
-            let url = update_url(&state.feed, state.origin.get());
+            let url = update_url(&state.feed, SERVER, state.origin.get());
             NSString::from_str(url.as_deref().unwrap_or(&state.feed))
         }
 
@@ -51,7 +61,7 @@ define_class!(
             let Some(current) = request.URL().and_then(|url| url.absoluteString()) else {
                 return;
             };
-            if let Some(url) = update_url(&current.to_string(), self.ivars().origin.get())
+            if let Some(url) = update_url(&current.to_string(), SERVER, self.ivars().origin.get())
                 && let Some(url) = NSURL::URLWithString(&NSString::from_str(&url))
             {
                 request.setURL(Some(&url));
@@ -67,7 +77,7 @@ define_class!(
             let delay = Duration::try_from_secs_f64((delay - 8.0).max(0.0)).unwrap_or_default();
             state.scheduled_probe.replace(Some(state.app.spawn(async move |cx| {
                 cx.background_executor().timer(delay).await;
-                origin.set(CUBIE.reachable_origin(origin.get()).await);
+                origin.set(update_origin(origin.get()).await);
             })));
         }
 
@@ -98,7 +108,7 @@ define_class!(
             let origin = state.origin.clone();
             let checking = state.checking.clone();
             state.app.spawn(async move |_| {
-                origin.set(CUBIE.reachable_origin(origin.get()).await);
+                origin.set(update_origin(origin.get()).await);
                 checking.set(false);
                 UPDATER.with(|updater| {
                     if let Some((controller, _)) = updater.get() {
@@ -111,9 +121,11 @@ define_class!(
     }
 );
 
-fn update_url(url: &str, origin: &str) -> Option<String> {
-    let path = url.strip_prefix(PRIMARY)?.strip_prefix("/download/")?;
-    Some(format!("{origin}/download/{path}"))
+fn update_url(url: &str, primary: &str, origin: &str) -> Option<String> {
+    let path = url
+        .strip_prefix(primary.trim_end_matches('/'))?
+        .strip_prefix("/download/")?;
+    Some(format!("{}/download/{path}", origin.trim_end_matches('/')))
 }
 
 thread_local! {
@@ -134,7 +146,7 @@ pub fn start(cx: &mut App) {
     cx.spawn(async move |cx| {
         // Even a signed-out Mac checks which host it can reach before
         // Sparkle makes its first feed request.
-        let origin = CUBIE.reachable_origin(CUBIE.origin()).await;
+        let origin = update_origin(SERVER).await;
         if let Err(error) = start_updater(&NSBundle::mainBundle(), feed, origin, cx.clone()) {
             tracing::warn!("starting software updates: {error:#}");
         }
@@ -224,22 +236,22 @@ mod tests {
 
     #[test]
     fn the_reserve_serves_the_feed_and_signed_archive_at_the_same_paths() {
+        let primary = "https://call.example.test";
+        let reserve = "https://backup.example.test";
         for path in [
             "current/appcast-apple-silicon.xml",
             "releases/120/Cubie-apple-silicon.zip",
         ] {
             assert_eq!(
-                update_url(
-                    &format!("{PRIMARY}/download/{path}"),
-                    "https://cubiecall.ru"
-                ),
-                Some(format!("https://cubiecall.ru/download/{path}"))
+                update_url(&format!("{primary}/download/{path}"), primary, reserve),
+                Some(format!("{reserve}/download/{path}"))
             );
         }
         assert_eq!(
             update_url(
-                "https://cubiecall.com.example/download/update.zip",
-                "https://cubiecall.ru"
+                "https://call.example.test.untrusted.test/download/update.zip",
+                primary,
+                reserve
             ),
             None
         );

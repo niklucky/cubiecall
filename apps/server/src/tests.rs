@@ -88,6 +88,8 @@ impl Test {
             bind: "127.0.0.1:0".into(),
             public_url: "http://127.0.0.1:5173".into(),
             database_url: format!("sqlite://{}", dir.path().join("test.db").display()),
+            legacy_url: None,
+            reserve: None,
             livekit_api_key: "test".into(),
             livekit_api_secret: "test-secret-that-is-at-least-32-characters".into(),
             livekit_public_url: "ws://localhost:7980".into(),
@@ -689,16 +691,28 @@ async fn contact_lookup_names_accounts_by_hash_only_for_users() {
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }
 
+fn configure_public_origins(state: &mut AppState) {
+    let config = Arc::make_mut(&mut state.config);
+    config.public_url = "https://call.example.test".into();
+    config.legacy_url = Some("https://legacy.example.test".into());
+    config.livekit_public_url = "wss://call.example.test".into();
+    config.reserve = Some(config::Reserve {
+        origin: "https://backup.example.test".into(),
+        signaling: "wss://backup.example.test".into(),
+        proxy: "192.0.2.10".parse().unwrap(),
+    });
+}
+
 #[tokio::test]
 async fn email_signin_returns_to_the_requesting_browser_origin() {
     let t = Test::new().await;
     let mut state = t.state.clone();
-    Arc::make_mut(&mut state.config).public_url = "https://cubiecall.com".into();
+    configure_public_origins(&mut state);
     let app = router(state.clone());
     for origin in [
-        "https://quipcall.com",
-        "https://cubiecall.com",
-        "https://cubiecall.ru",
+        "https://legacy.example.test",
+        "https://call.example.test",
+        "https://backup.example.test",
     ] {
         let req = Request::post("/api/auth/request")
             .header("x-cubie", "1")
@@ -732,20 +746,18 @@ async fn reserve_proxy_uses_its_own_signaling_and_invitation_urls() {
     let admin = t.admin().await;
     let room = t.room(&admin, "private").await;
     let mut state = t.state.clone();
-    let config = Arc::make_mut(&mut state.config);
-    config.public_url = "https://cubiecall.com".into();
-    config.livekit_public_url = "wss://cubiecall.com".into();
+    configure_public_origins(&mut state);
     let app = router(state);
     for (peer, origin, signaling) in [
         (
             "203.0.113.1",
-            "https://cubiecall.com",
-            "wss://cubiecall.com",
+            "https://call.example.test",
+            "wss://call.example.test",
         ),
         (
-            "94.228.126.139",
-            "https://cubiecall.ru",
-            "wss://cubiecall.ru",
+            "192.0.2.10",
+            "https://backup.example.test",
+            "wss://backup.example.test",
         ),
     ] {
         for (path, body, prefix) in [
@@ -767,7 +779,7 @@ async fn reserve_proxy_uses_its_own_signaling_and_invitation_urls() {
         ] {
             let req = Request::post(path)
                 .header("x-cubie", "1")
-                .header("x-forwarded-host", "cubiecall.ru")
+                .header("x-forwarded-host", "backup.example.test")
                 .header("x-forwarded-for", peer)
                 .header("origin", origin)
                 .header("authorization", format!("Bearer {admin}"))
@@ -791,7 +803,7 @@ async fn reserve_proxy_uses_its_own_signaling_and_invitation_urls() {
 async fn a_custom_origin_ignores_the_production_proxy_address() {
     let t = Test::new().await;
     let mut headers = HeaderMap::new();
-    headers.insert("x-forwarded-for", "94.228.126.139".parse().unwrap());
+    headers.insert("x-forwarded-for", "192.0.2.10".parse().unwrap());
     assert_eq!(
         t.state.config.link_origin(&headers),
         t.state.config.public_url
@@ -808,7 +820,10 @@ async fn csrf_and_email_rate_limits() {
     for headers in [
         vec![],
         vec![("x-cubie", "1"), ("origin", "https://evil.example")],
-        vec![("x-quipcall", "1"), ("origin", "https://quipcall.com")],
+        vec![
+            ("x-quipcall", "1"),
+            ("origin", "https://legacy.example.test"),
+        ],
     ] {
         let mut req = Request::builder()
             .method("POST")
@@ -826,21 +841,21 @@ async fn csrf_and_email_rate_limits() {
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
     }
     let mut production = t.state.clone();
-    Arc::make_mut(&mut production.config).public_url = "https://cubiecall.com".into();
+    configure_public_origins(&mut production);
     let production = router(production);
     for (header, origin, expected) in [
-        ("x-cubie", "https://cubiecall.com", StatusCode::OK),
-        ("x-quipcall", "https://quipcall.com", StatusCode::OK),
-        ("x-cubie", "https://quipcall.com", StatusCode::OK),
-        ("x-cubie", "https://cubiecall.ru", StatusCode::OK),
+        ("x-cubie", "https://call.example.test", StatusCode::OK),
+        ("x-quipcall", "https://legacy.example.test", StatusCode::OK),
+        ("x-cubie", "https://legacy.example.test", StatusCode::OK),
+        ("x-cubie", "https://backup.example.test", StatusCode::OK),
         (
             "x-cubie",
-            "https://cubiecall.ru.evil.example",
+            "https://backup.example.test.evil.example",
             StatusCode::FORBIDDEN,
         ),
         (
             "x-cubie",
-            "https://quipcall.com.evil.example",
+            "https://legacy.example.test.evil.example",
             StatusCode::FORBIDDEN,
         ),
     ] {

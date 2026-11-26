@@ -18,6 +18,8 @@
 # newer than the last).
 set -eu
 cd "$(dirname "$0")/../.."
+. ./deploy/site-env.sh
+export CUBIE_SERVER="${CUBIE_SERVER:-${CUBIE_PUBLIC_URL:?set the public URL for the iOS build}}"
 
 team=${CUBIE_IOS_TEAM:-${QUIPCALL_IOS_TEAM:?set CUBIE_IOS_TEAM to the Apple developer team id}}
 bundle=${CUBIE_IOS_BUNDLE:-${QUIPCALL_IOS_BUNDLE:-com.cubiecall.ios}}
@@ -47,6 +49,7 @@ log=$out/release-archive.log
 if ! xcodebuild -project apps/ios/Cubie.xcodeproj -scheme Cubie -configuration Release \
 	-destination 'generic/platform=iOS' -derivedDataPath "$out" -archivePath "$archive" \
 	DEVELOPMENT_TEAM="$team" PRODUCT_BUNDLE_IDENTIFIER="$bundle" \
+	CUBIE_SERVER="$CUBIE_SERVER" \
 	CURRENT_PROJECT_VERSION="$build" "$@" archive >"$log" 2>&1 || [ ! -d "$archive" ]; then
 	grep -E "error:|warning: .*(sign|provision)" "$log" >&2 || true
 	echo "release: the archive failed (all of it: $log)" >&2

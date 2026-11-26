@@ -65,8 +65,7 @@ impl Args {
     }
 }
 
-/// The server release builds talk to, baked in at build time:
-/// `CUBIE_SERVER=https://cubiecall.com cargo build --release` (see deploy/).
+/// The release build's primary server.
 const SERVER: &str = match option_env!("CUBIE_SERVER") {
     Some(url) => url,
     None => "http://127.0.0.1:8080",
@@ -90,15 +89,25 @@ fn parse_args() -> Args {
         regular: false,
     };
     let mut it = std::env::args().skip(1);
+    let mut explicit_server = false;
+    let mut explicit_web = false;
+    let mut reserve = None;
     while let Some(flag) = it.next() {
         match flag.as_str() {
             "--camera" => args.camera = true,
             "--regular" => args.regular = true,
-            "--server" | "--web" | "--room" | "--name" => {
+            "--server" | "--reserve" | "--web" | "--room" | "--name" => {
                 let Some(value) = it.next() else { usage() };
                 match flag.as_str() {
-                    "--server" => args.server = value,
-                    "--web" => args.web = value,
+                    "--server" => {
+                        args.server = value;
+                        explicit_server = true;
+                    }
+                    "--reserve" => reserve = Some(value),
+                    "--web" => {
+                        args.web = value;
+                        explicit_web = true;
+                    }
                     "--room" => args.room = Some(value),
                     _ => {
                         args.name = value;
@@ -108,6 +117,24 @@ fn parse_args() -> Args {
             }
             _ => usage(),
         }
+    }
+    if explicit_server && !explicit_web {
+        args.web = args.server.clone();
+    }
+    if !explicit_server && reserve.is_none() {
+        reserve = option_env!("CUBIE_RESERVE_URL")
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+    }
+    if let Some(reserve) = reserve {
+        let primary = args.server.trim_end_matches('/');
+        let reserve = reserve.trim_end_matches('/');
+        if !https_origin(primary) || !https_origin(reserve) || primary.eq_ignore_ascii_case(reserve)
+        {
+            eprintln!("Failover requires two distinct HTTPS origins.");
+            usage();
+        }
+        let _ = auth::FAILOVER.set(cubie_core::http::Failover::new(primary, reserve));
     }
     args.session = auth::load(&args.server);
     #[cfg(feature = "snapshot")]
@@ -125,6 +152,18 @@ fn parse_args() -> Args {
         );
     }
     args
+}
+
+fn https_origin(value: &str) -> bool {
+    cubie_core::http::Url::parse(value).is_ok_and(|url| {
+        url.scheme() == "https"
+            && url.path() == "/"
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && value.eq_ignore_ascii_case(&url.origin().ascii_serialization())
+    })
 }
 
 /// The account's full name ("Jane Appleseed"), else the login name.
@@ -154,7 +193,7 @@ fn room_from_link(url: &str) -> Option<String> {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: cubie-desktop [--server URL] [--web URL] [--name NAME] [--room ROOM] [--camera] [--regular]"
+        "usage: cubie-desktop [--server URL] [--reserve URL] [--web URL] [--name NAME] [--room ROOM] [--camera] [--regular]"
     );
     std::process::exit(2);
 }

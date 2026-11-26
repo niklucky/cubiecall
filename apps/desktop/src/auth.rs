@@ -103,28 +103,27 @@ fn clear(server: &str) {
 }
 pub(crate) use cubie_core::http::RequestError;
 
-pub(crate) const PRIMARY: &str = "https://cubiecall.com";
-const RESERVE: &str = "https://cubiecall.ru";
-pub(crate) static CUBIE: cubie_core::http::Failover =
-    cubie_core::http::Failover::new(PRIMARY, RESERVE);
+pub(crate) static FAILOVER: std::sync::OnceLock<cubie_core::http::Failover> =
+    std::sync::OnceLock::new();
 
 pub(crate) fn endpoint(server: &str) -> cubie_core::http::Endpoint<&str> {
     use cubie_core::http::Endpoint;
-    if server.trim_end_matches('/') == PRIMARY {
-        Endpoint::Redundant(&CUBIE)
+    if let Some(route) = FAILOVER
+        .get()
+        .filter(|route| route.primary() == server.trim_end_matches('/'))
+    {
+        Endpoint::Redundant(route)
     } else {
         Endpoint::Direct(server)
     }
 }
 
 pub(crate) fn web_origin<'a>(server: &str, web: &'a str) -> &'a str {
-    if web.trim_end_matches('/') != PRIMARY {
-        return web;
-    }
     match endpoint(server) {
-        cubie_core::http::Endpoint::Redundant(route) => route.origin(),
-        cubie_core::http::Endpoint::Direct(server) if server.trim_end_matches('/') == RESERVE => {
-            RESERVE
+        cubie_core::http::Endpoint::Redundant(route)
+            if web.trim_end_matches('/') == route.primary() =>
+        {
+            route.origin()
         }
         _ => web,
     }

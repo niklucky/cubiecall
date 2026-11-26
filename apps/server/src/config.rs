@@ -1,10 +1,27 @@
 use anyhow::{Context, bail};
 use axum::http::HeaderMap;
+use std::net::IpAddr;
+use url::Url;
 
-const PRODUCTION_ORIGIN: &str = "https://cubiecall.com";
-const RESERVE_PROXY: &str = "94.228.126.139";
-const RESERVE_ORIGIN: &str = "https://cubiecall.ru";
-const RESERVE_SIGNALING: &str = "wss://cubiecall.ru";
+#[derive(Clone)]
+pub struct Reserve {
+    pub origin: String,
+    pub signaling: String,
+    pub proxy: IpAddr,
+}
+
+impl Reserve {
+    fn parse(origin: &str, proxy: &str) -> anyhow::Result<Self> {
+        let origin = public_origin("CUBIE_RESERVE_URL", origin, false)?;
+        Ok(Self {
+            signaling: origin.replacen("https://", "wss://", 1),
+            origin,
+            proxy: proxy
+                .parse()
+                .context("CUBIE_RESERVE_PROXY_IP must be an IP address")?,
+        })
+    }
+}
 
 #[derive(Clone)]
 pub struct Config {
@@ -15,6 +32,8 @@ pub struct Config {
     pub livekit_api_secret: String,
     pub database_url: String,
     pub public_url: String,
+    pub legacy_url: Option<String>,
+    pub reserve: Option<Reserve>,
     pub resend_api_key: Option<String>,
     pub mail_from: String,
     pub bootstrap_email: Option<String>,
@@ -24,10 +43,35 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
+        let public_url = public_origin(
+            "CUBIE_PUBLIC_URL",
+            &env("CUBIE_PUBLIC_URL").unwrap_or_else(|| "http://127.0.0.1:5173".into()),
+            true,
+        )?;
+        let legacy_url = env("CUBIE_LEGACY_URL")
+            .map(|url| public_origin("CUBIE_LEGACY_URL", &url, false))
+            .transpose()?;
+        let reserve = match (env("CUBIE_RESERVE_URL"), env("CUBIE_RESERVE_PROXY_IP")) {
+            (None, None) => None,
+            (Some(url), Some(proxy)) => Some(Reserve::parse(&url, &proxy)?),
+            _ => bail!("Set CUBIE_RESERVE_URL and CUBIE_RESERVE_PROXY_IP together"),
+        };
+        if let Some(reserve) = &reserve
+            && (reserve.origin == public_url || legacy_url.as_deref() == Some(&reserve.origin))
+        {
+            bail!("CUBIE_RESERVE_URL must identify a distinct origin");
+        }
+        let url = Url::parse(&public_url)?;
+        let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
         let cfg = Self {
             bind: env("CUBIE_BIND").unwrap_or_else(|| "127.0.0.1:8080".into()),
-            livekit_public_url: env("LIVEKIT_PUBLIC_URL")
-                .unwrap_or_else(|| "ws://127.0.0.1:7880".into()),
+            livekit_public_url: env("LIVEKIT_PUBLIC_URL").unwrap_or_else(|| {
+                if local {
+                    "ws://127.0.0.1:7880".into()
+                } else {
+                    public_url.replacen("https://", "wss://", 1)
+                }
+            }),
             livekit_api_url: env("LIVEKIT_API_URL")
                 .unwrap_or_else(|| "http://127.0.0.1:7880".into()),
             livekit_api_key: env("LIVEKIT_API_KEY").context("LIVEKIT_API_KEY is not set")?,
@@ -42,31 +86,23 @@ impl Config {
                     "sqlite://dev/data/cubie.db".into()
                 }
             }),
-            public_url: env("CUBIE_PUBLIC_URL")
-                .unwrap_or_else(|| "http://127.0.0.1:5173".into())
-                .trim_end_matches('/')
-                .into(),
+            public_url,
+            legacy_url,
+            reserve,
             resend_api_key: env("RESEND_API_KEY"),
-            mail_from: env("CUBIE_MAIL_FROM")
-                .unwrap_or_else(|| "Cubie <login@cubiecall.com>".into()),
+            mail_from: env("CUBIE_MAIL_FROM").unwrap_or_else(|| {
+                let host = if local {
+                    "example.test"
+                } else {
+                    url.host_str().unwrap_or("example.test")
+                };
+                format!("Cubie <login@{host}>")
+            }),
             bootstrap_email: env("CUBIE_BOOTSTRAP_EMAIL").map(|s| s.trim().to_lowercase()),
             mail_dir: env("CUBIE_MAIL_DIR").map(Into::into),
         };
         if cfg.livekit_api_secret.len() < 32 {
             bail!("LIVEKIT_API_SECRET must be at least 32 characters");
-        }
-        let url = url::Url::parse(&cfg.public_url)?;
-        let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
-        if url.scheme() != "https" && !(url.scheme() == "http" && local) {
-            bail!("CUBIE_PUBLIC_URL must use HTTPS (except localhost)");
-        }
-        if url.path() != "/"
-            || url.query().is_some()
-            || url.fragment().is_some()
-            || !url.username().is_empty()
-            || url.password().is_some()
-        {
-            bail!("CUBIE_PUBLIC_URL must be an origin without a path or credentials");
         }
         if cfg.mail_dir.is_some() && !local {
             bail!("CUBIE_MAIL_DIR is only allowed on localhost");
@@ -81,34 +117,53 @@ impl Config {
     }
     pub fn trusts_origin(&self, origin: &str) -> bool {
         origin == self.public_url
-            || (self.public_url == PRODUCTION_ORIGIN
-                && matches!(origin, RESERVE_ORIGIN | "https://quipcall.com"))
+            || self.legacy_url.as_deref() == Some(origin)
+            || self
+                .reserve
+                .as_ref()
+                .is_some_and(|reserve| reserve.origin == origin)
     }
 
     // Origin nginx overwrites this with the immediate peer, including before
     // the reserve vhost changes. X-Real-IP is separate and drives rate limits.
-    fn via_reserve(&self, headers: &HeaderMap) -> bool {
-        self.public_url == PRODUCTION_ORIGIN
-            && headers
-                .get("x-forwarded-for")
-                .is_some_and(|peer| peer == RESERVE_PROXY)
+    fn via_reserve(&self, headers: &HeaderMap) -> Option<&Reserve> {
+        let peer = headers
+            .get("x-forwarded-for")?
+            .to_str()
+            .ok()?
+            .parse::<IpAddr>()
+            .ok()?;
+        self.reserve
+            .as_ref()
+            .filter(|reserve| reserve.proxy == peer)
     }
 
     pub fn link_origin(&self, headers: &HeaderMap) -> &str {
-        if self.via_reserve(headers) {
-            RESERVE_ORIGIN
-        } else {
-            &self.public_url
-        }
+        self.via_reserve(headers)
+            .map_or(&self.public_url, |reserve| &reserve.origin)
     }
 
     pub fn signaling_url(&self, headers: &HeaderMap) -> &str {
-        if self.via_reserve(headers) {
-            RESERVE_SIGNALING
-        } else {
-            &self.livekit_public_url
-        }
+        self.via_reserve(headers)
+            .map_or(&self.livekit_public_url, |reserve| &reserve.signaling)
     }
+}
+
+fn public_origin(key: &str, value: &str, allow_local: bool) -> anyhow::Result<String> {
+    let url = Url::parse(value).with_context(|| format!("Invalid {key}"))?;
+    let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+    if url.scheme() != "https" && !(allow_local && url.scheme() == "http" && local) {
+        bail!("{key} must use HTTPS (except the local primary)");
+    }
+    if url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        bail!("{key} must be an origin without a path or credentials");
+    }
+    Ok(url.origin().ascii_serialization())
 }
 fn env(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|v| !v.is_empty())

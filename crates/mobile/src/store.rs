@@ -288,7 +288,11 @@ mod tests {
         assert!(again.moments(1000).is_empty());
         assert_eq!(again.line("contact-1").as_deref(), Some("room-1"));
         // Another server's store is another file.
-        assert!(Store::open(dir, "https://cubiecall.com").calls().is_empty());
+        assert!(
+            Store::open(dir, "https://call.example.test")
+                .calls()
+                .is_empty()
+        );
 
         again.wipe();
         assert!(Store::open(dir, "http://127.0.0.1:8180").calls().is_empty());
@@ -297,10 +301,10 @@ mod tests {
     }
 
     #[test]
-    fn production_aliases_reopen_pre_rename_history() {
+    fn a_custom_server_reopens_existing_history() {
         let dir = std::env::temp_dir().join(format!("cubie-alias-{}", std::process::id()));
         let dir = dir.to_str().unwrap();
-        let key = "store-https---quipcall-com";
+        let key = "store-https---legacy-example-test";
         let moment = Moment {
             at: 1,
             kind: MomentKind::Joined,
@@ -320,17 +324,11 @@ mod tests {
             serde_json::to_vec(&[&moment]).unwrap(),
         )
         .unwrap();
-        for server in [
-            "https://cubiecall.com",
-            "https://cubycall.com/",
-            "https://quipcall.com",
-        ] {
-            let store = Store::open(dir, server);
-            assert_eq!(store.calls(), [call(1000)]);
-            assert_eq!(store.moments(1000), std::slice::from_ref(&moment));
-        }
+        let store = Store::open(dir, "https://legacy.example.test");
+        assert_eq!(store.calls(), [call(1000)]);
+        assert_eq!(store.moments(1000), std::slice::from_ref(&moment));
         assert!(
-            Store::open(dir, "https://cubiecall.com.example")
+            Store::open(dir, "https://other.example.test")
                 .calls()
                 .is_empty()
         );

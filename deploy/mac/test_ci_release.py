@@ -50,23 +50,24 @@ class ReleaseMetadataTest(unittest.TestCase):
 
 
 class SignedReleaseTest(unittest.TestCase):
+    public_url = "https://call.example.test"
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.original_public = release.PUBLIC_KEY
-        self.addCleanup(setattr, release, "PUBLIC_KEY", self.original_public)
         self.private = self.root / "private.pem"
         subprocess.run(["openssl", "genpkey", "-algorithm", "ED25519", "-out", str(self.private)],
                        check=True, capture_output=True)
         public = subprocess.run(["openssl", "pkey", "-in", str(self.private), "-pubout", "-outform", "DER"],
                                 check=True, capture_output=True).stdout
-        release.PUBLIC_KEY = base64.b64encode(public[-32:]).decode()
+        self.public_key = base64.b64encode(public[-32:]).decode()
         (self.root / "version.txt").write_text("1.2.3 (1101)\n")
         self.archive = self.root / "Cubie-apple-silicon.zip"
         with zipfile.ZipFile(self.archive, "w") as bundle:
             info = {"CFBundleIdentifier": "com.quipcall.desktop", "CFBundleShortVersionString": "1.2.3",
-                    "CFBundleVersion": "1101", "SUPublicEDKey": release.PUBLIC_KEY}
+                    "CFBundleVersion": "1101", "SUPublicEDKey": self.public_key,
+                    "SUFeedURL": f"{self.public_url}/download/current/appcast-apple-silicon.xml"}
             bundle.writestr("Cubie.app/Contents/Info.plist", plistlib.dumps(info))
             bundle.writestr("Cubie.app/Contents/MacOS/Cubie", struct.pack("<II", 0xFEEDFACF, 0x100000C))
         (self.root / "Cubie-apple-silicon-notary-log.json").write_text(json.dumps({"status": "Accepted"}))
@@ -74,7 +75,7 @@ class SignedReleaseTest(unittest.TestCase):
         signature = self.sign(contents)
         feed = (f'<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><item>'
                 f'<sparkle:version>1101</sparkle:version><sparkle:shortVersionString>1.2.3</sparkle:shortVersionString>'
-                f'<enclosure url="https://cubiecall.com/download/releases/1101/{self.archive.name}" '
+                f'<enclosure url="{self.public_url}/download/releases/1101/{self.archive.name}" '
                 f'length="{len(contents)}" sparkle:edSignature="{signature}"/></item></channel></rss>').encode()
         self.feed = self.root / "appcast-apple-silicon.xml"
         self.feed.write_bytes(feed + f'<!-- sparkle-signatures:\nedSignature: {self.sign(feed)}\nlength: {len(feed)}\n-->'.encode())
@@ -86,28 +87,32 @@ class SignedReleaseTest(unittest.TestCase):
                                 capture_output=True, check=True)
         return base64.b64encode(result.stdout).decode()
 
+    def verify(self, *args, **kwargs):
+        return release.verify(self.root, ["apple-silicon"], *args,
+                              public_url=self.public_url, public_key=self.public_key, **kwargs)
+
     def test_valid_signed_release(self):
-        self.assertEqual(len(release.verify(self.root, ["apple-silicon"], "1.2.3", "1101")), 3)
+        self.assertEqual(len(self.verify("1.2.3", "1101")), 3)
 
     def test_modified_feed_is_rejected(self):
         self.feed.write_bytes(self.feed.read_bytes().replace(b"1.2.3", b"1.2.4"))
         with self.assertRaisesRegex(ValueError, "signature verification failed"):
-            release.verify(self.root, ["apple-silicon"])
+            self.verify()
 
     def test_modified_archive_is_rejected(self):
         with zipfile.ZipFile(self.archive, "a") as bundle:
             bundle.writestr("Cubie.app/injected-file", "unexpected")
         with self.assertRaisesRegex(ValueError, "archive length"):
-            release.verify(self.root, ["apple-silicon"])
+            self.verify()
 
     def test_build_mismatch_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Unexpected build"):
-            release.verify(self.root, ["apple-silicon"], expected_build="1102")
+            self.verify(expected_build="1102")
 
     def test_unaccepted_notarization_is_rejected(self):
         (self.root / "Cubie-apple-silicon-notary-log.json").write_text('{"status":"Invalid"}')
         with self.assertRaisesRegex(ValueError, "Apple did not accept"):
-            release.verify(self.root, ["apple-silicon"])
+            self.verify()
 
 
 if __name__ == "__main__":

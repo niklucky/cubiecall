@@ -7,11 +7,10 @@ Wants=network-online.target
 User=cubie
 Group=cubie
 EnvironmentFile=/opt/cubie/secrets.env
+EnvironmentFile=/opt/cubie/public.env
 Environment=CUBIE_WORKER_HOLD=/opt/cubie/.cutover-pending
 Environment=CUBIE_BIND=127.0.0.1:4601
-Environment=LIVEKIT_PUBLIC_URL=wss://cubiecall.com
 Environment=LIVEKIT_API_URL=http://127.0.0.1:7880
-Environment=CUBIE_PUBLIC_URL=https://cubiecall.com
 Environment=CUBIE_DATABASE_URL=sqlite:///var/lib/cubie/cubie.db
 StateDirectory=cubie
 StateDirectoryMode=0700

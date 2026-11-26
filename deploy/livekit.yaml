@@ -2,7 +2,7 @@
 # /opt/cubie/secrets.env (generated on the box by install.sh).
 port: 7880
 bind_addresses:
-  - 127.0.0.1         # signalling only via nginx: wss://cubiecall.com/rtc
+  - 127.0.0.1         # signaling only via the deployment's nginx site
 rtc:
   udp_port: 7882      # all media over one UDP port
   tcp_port: 7881      # ICE over TCP when a network blocks UDP

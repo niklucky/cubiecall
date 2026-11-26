@@ -4,16 +4,18 @@
 # Layout: /opt/cubie/{bin,web,download}, secrets.env (API keys, made here
 # once), livekit.yaml, previous/ (what the last deploy replaced, for a
 # rollback: docs/DEPLOY.md), ci/ (the key GitHub Actions deploys with);
-# systemd units cubie-livekit and cubie-server; nginx site cubiecall.com;
+# systemd units cubie-livekit and cubie-server; the configured nginx site;
 # the cubie and cubie-deploy accounts and the second one's sudo rule
 # (deploy/ci-access.sh). Nothing else on the box is touched.
 set -eu
 umask 022
 STAGE=$(cd "$(dirname "$0")/.." && pwd)
 ROOT=/opt/cubie
-DOMAIN=cubiecall.com
+RENDERED=$STAGE/deploy/rendered
+. "$RENDERED/settings.env"
 OLD_ROOT=/opt/quipcall
-OLD_SITE=/etc/nginx/sites-enabled/quipcall.com.conf
+OLD_SITE=
+if [ -n "$LEGACY_HOST" ]; then OLD_SITE=/etc/nginx/sites-enabled/$LEGACY_HOST.conf; fi
 STATE=/var/lib/cubie
 OLD_STATE=/var/lib/quipcall
 SITE=/etc/nginx/sites-available/$DOMAIN.conf
@@ -90,7 +92,7 @@ chmod 755 "$ROOT" "$ROOT/download"
 
 # The old site keeps serving its HTTPS app until the new names have a
 # certificate. Both ACME sites must see the same challenge files meanwhile.
-if [ -d /var/www/quipcall-acme ] && [ ! -e /var/www/cubie-acme ]; then
+if [ -n "$LEGACY_HOST" ] && [ -d /var/www/quipcall-acme ] && [ ! -e /var/www/cubie-acme ]; then
     ln -s /var/www/quipcall-acme /var/www/cubie-acme
 fi
 mkdir -p /var/www/cubie-acme
@@ -98,7 +100,7 @@ mkdir -p /var/www/cubie-acme
 # The legacy directory is the rollback copy. A marker in the new directory
 # distinguishes a previous copy made by this installer from an unrelated DB.
 upgrade=
-if [ -d "$OLD_STATE" ]; then
+if [ -n "$LEGACY_HOST" ] && [ -d "$OLD_STATE" ]; then
     if [ -e "$STATE" ]; then
         case "$phase" in
             unpublished|publishing|live) ;;
@@ -116,10 +118,11 @@ if [ -d "$OLD_STATE" ]; then
         done
     fi
 fi
-if [ -f "$OLD_ROOT/secrets.env" ] && [ ! -f "$ROOT/secrets.env" ]; then
+if [ -n "$LEGACY_HOST" ] && [ -f "$OLD_ROOT/secrets.env" ] && [ ! -f "$ROOT/secrets.env" ]; then
     install -m 600 "$OLD_ROOT/secrets.env" "$ROOT/secrets.env"
 fi
 for archive in "$OLD_ROOT"/download/Quipcall-*.zip; do
+    [ -n "$LEGACY_HOST" ] || break
     [ -f "$archive" ] || continue
     [ -f "$ROOT/download/${archive##*/}" ] || install -m 644 "$archive" "$ROOT/download/"
 done
@@ -127,19 +130,19 @@ done
 # A first install needs a temporary HTTP site. On upgrade the old active
 # vhost already serves challenges for its own two names.
 if [ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
-    bootstrap="$STAGE/deploy/nginx/$DOMAIN.acme.conf"
+    bootstrap="$RENDERED/origin.acme.conf"
     if [ -e "$OLD_SITE" ]; then
-        sed 's/ quipcall.com www.quipcall.com;/;/' "$bootstrap" > "$STAGE/bootstrap.conf"
-        bootstrap="$STAGE/bootstrap.conf"
+        bootstrap="$RENDERED/origin-upgrade.acme.conf"
     fi
     activate_site "$bootstrap" bootstrap
 fi
 
-# All three public domains must validate. Add their www aliases as DNS
+# All configured origins must validate. Add their www aliases as DNS
 # becomes available, and retain any already covered by the current certificate.
-set -- -d "$DOMAIN" -d cubycall.com -d quipcall.com
+set --
+for host in $ORIGIN_NAMES; do set -- "$@" -d "$host"; done
 cert="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
-for host in "www.$DOMAIN" www.cubycall.com www.quipcall.com; do
+for host in $WWW_NAMES; do
     if getent ahosts "$host" >/dev/null ||
         { [ -s "$cert" ] && openssl x509 -in "$cert" -noout -ext subjectAltName | tr ', ' '\n' | grep -Fxq "DNS:$host"; }; then
         set -- "$@" -d "$host"
@@ -147,6 +150,11 @@ for host in "www.$DOMAIN" www.cubycall.com www.quipcall.com; do
         echo "Deferring TLS for $host until its DNS record exists."
     fi
 done
+if [ -n "$ACME_EMAIL" ]; then
+    set -- "$@" --email "$ACME_EMAIL"
+else
+    set -- "$@" --register-unsafely-without-email
+fi
 certbot certonly --cert-name "$DOMAIN" --webroot -w /var/www/cubie-acme "$@" \
     --key-type ecdsa --keep-until-expiring --expand --non-interactive --agree-tos
 
@@ -178,15 +186,21 @@ app() { sh "$STAGE/deploy/app.sh" "$@"; }
 # replacement API starts. First installs and the legacy cutover publish later.
 site_active=
 if [ -z "$upgrade" ] && [ -x "$ROOT/bin/cubie-server" ] && [ -L "$ENABLED_SITE" ] && [ ! -L "$OLD_SITE" ]; then
-    activate_site "$STAGE/deploy/nginx/$DOMAIN.conf" final
+    activate_site "$RENDERED/origin.conf" final
     site_active=1
 fi
 
 put "$STAGE/deploy/livekit.yaml" $ROOT/livekit.yaml 644
 put "$STAGE/deploy/systemd/cubie-livekit.service" /etc/systemd/system/cubie-livekit.service 644
 put "$STAGE/deploy/systemd/cubie-server.service" /etc/systemd/system/cubie-server.service 644
+put "$RENDERED/public.env" "$ROOT/public.env" 644
 app swap "$STAGE"
-install -m 644 "$STAGE/deploy/download/index.html" "$STAGE/deploy/download/install.sh" $ROOT/download/
+put "$RENDERED/download/index.html" "$ROOT/download/index.html" 644
+if [ -f "$RENDERED/download/install.sh" ]; then
+    put "$RENDERED/download/install.sh" "$ROOT/download/install.sh" 644
+else
+    rm -f "$ROOT/download/install.sh"
+fi
 
 systemctl daemon-reload
 if [ -n "$upgrade" ]; then
@@ -274,7 +288,7 @@ if [ -n "$upgrade" ]; then
     echo publishing > "$STATE/.from-quipcall.new"
     mv "$STATE/.from-quipcall.new" "$STATE/.from-quipcall"
 fi
-[ -n "$site_active" ] || activate_site "$STAGE/deploy/nginx/$DOMAIN.conf" final
+[ -n "$site_active" ] || activate_site "$RENDERED/origin.conf" final
 # Requests can now write to Cubie. Never restore a snapshot after this point.
 trap - EXIT HUP INT TERM
 if [ "$phase" = publishing ]; then
@@ -288,6 +302,11 @@ eventually curl -fsS --resolve $DOMAIN:443:127.0.0.1 https://$DOMAIN/api/health 
 	exit 1
 }
 app mark
-# GitHub Actions deploys the server and web client from here on.
-sh "$STAGE/deploy/ci-access.sh"
+if [ -f "$STAGE/deploy/ci-deploy.pub" ]; then
+    sh "$STAGE/deploy/ci-access.sh"
+else
+    # Self-hosters can roll back without granting SSH access to CI.
+    install -m 755 "$STAGE/deploy/app.sh" "$ROOT/bin/cubie-app.new"
+    mv "$ROOT/bin/cubie-app.new" "$ROOT/bin/cubie-app"
+fi
 echo "deployed: https://$DOMAIN"

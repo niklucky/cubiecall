@@ -5,10 +5,10 @@
 #
 #   deploy/mac/package.sh            build and notarize only
 #   deploy/mac/package.sh --appcast  build and sign the update feeds locally
-#   deploy/mac/package.sh --upload   build and publish at https://cubiecall.com/download/
+#   deploy/mac/package.sh --upload   build and publish on the configured site
 #
 # CUBIE_BUILD overrides the commit-count build number for an uncommitted release.
-# CUBIE_SERVER picks the server the app talks to (default https://cubiecall.com).
+# CUBIE_PUBLIC_URL selects the deployment (CUBIE_SERVER also works for local builds).
 # CUBIE_SIGNING_IDENTITY overrides the Developer ID certificate fingerprint.
 # CUBIE_SIGNING_KEYCHAIN optionally selects a keychain (default: search list).
 # CUBIE_NOTARY_PROFILE selects notarytool credentials (default: cubie-notary).
@@ -16,6 +16,7 @@
 # --arch apple-silicon|intel builds one architecture for a CI job.
 set -eu
 cd "$(dirname "$0")/../.."
+. ./deploy/site-env.sh
 
 mode=
 architecture=all
@@ -37,10 +38,12 @@ if [ "$mode" = --upload ] && [ "$architecture" != all ]; then
     exit 1
 fi
 
-HOST=${CUBIE_HOST:-${QUIPCALL_HOST:-root@testron.dev}}
-PRODUCTION_SERVER=https://cubiecall.com
-DOWNLOAD_URL=$PRODUCTION_SERVER/download
-export CUBIE_SERVER="${CUBIE_SERVER:-${QUIPCALL_SERVER:-$PRODUCTION_SERVER}}"
+export CUBIE_SERVER="${CUBIE_SERVER:-${CUBIE_PUBLIC_URL:-${QUIPCALL_SERVER:-http://127.0.0.1:8080}}}"
+export CUBIE_PUBLIC_URL="${CUBIE_PUBLIC_URL:-$CUBIE_SERVER}"
+DOWNLOAD_URL=${CUBIE_PUBLIC_URL%/}/download
+if [ "${CUBIE_SERVER%/}" != "${CUBIE_PUBLIC_URL%/}" ]; then
+    unset CUBIE_RESERVE_URL CUBIE_STORAGE_ID CUBIE_STORAGE_ALIASES
+fi
 # ScreenCaptureKit arrived in 12.3. Below 10.14.4 the linker would also point
 # Swift overlays (libswiftCoreMedia) at @rpath, which doesn't exist in the app.
 export MACOSX_DEPLOYMENT_TARGET=12.3
@@ -59,15 +62,20 @@ if [ -z "${CUBIE_PACKAGE_LOCKED:-}" ]; then
 fi
 
 sparkle=
-if [ "${CUBIE_SERVER%/}" = "$PRODUCTION_SERVER" ]; then
+public_key=${CUBIE_SPARKLE_PUBLIC_KEY:-}
+if [ -n "$public_key" ] && [ "${CUBIE_SERVER%/}" = "${CUBIE_PUBLIC_URL%/}" ]; then
+    case "$CUBIE_PUBLIC_URL" in https://*) ;; *) echo 'Sparkle requires an HTTPS public URL' >&2; exit 1 ;; esac
+    printf '%s\n' "$public_key" | grep -Eqx '[A-Za-z0-9+/]{43}=' || {
+        echo 'Invalid CUBIE_SPARKLE_PUBLIC_KEY' >&2; exit 1;
+    }
     sparkle=$(deploy/mac/sparkle.sh)
 elif [ -n "$mode" ]; then
-    echo "The Cubie release feeds are for $PRODUCTION_SERVER. Build custom-server archives with make mac-app." >&2
+    echo 'Publishing requires CUBIE_SPARKLE_PUBLIC_KEY and matching server and public URLs.' >&2
     exit 1
 fi
 account=com.quipcall.desktop
-identity=${CUBIE_SIGNING_IDENTITY:-FB9D41EDF844DF368B68B049D8A9895D5C5F0B96}
-team=8BSJZG6B89
+identity=${CUBIE_SIGNING_IDENTITY:?set the Developer ID Application certificate fingerprint}
+team=${CUBIE_MAC_TEAM_ID:?set the Apple developer team ID}
 profile=${CUBIE_NOTARY_PROFILE:-cubie-notary}
 # Refuse a missing, development or self-signed identity before building.
 set --
@@ -88,7 +96,6 @@ if [ -n "${CUBIE_NOTARY_KEYCHAIN:-}" ]; then
 fi
 xcrun notarytool history "$@" --output-format json >/dev/null
 if [ -n "$mode" ]; then
-    public_key=$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' deploy/mac/Info.plist)
     if ! signing_key=$("$sparkle/bin/generate_keys" --account "$account" -p) ||
         [ "$signing_key" != "$public_key" ]; then
         echo "Restore the Cubie Sparkle signing key to your login Keychain (see docs/DEPLOY.md)." >&2
@@ -131,10 +138,13 @@ for pair in $pairs; do
 	sed -e "s/@VERSION@/$VERSION/" -e "s/@BUILD@/$BUILD/" -e "s/@MIN_MACOS@/$MACOSX_DEPLOYMENT_TARGET/" -e "s/@ICON@/$ICON/" -e "s/@ARCH@/$name/" \
 		deploy/mac/Info.plist >"$app/Contents/Info.plist"
 	if [ -n "$sparkle" ]; then
+		/usr/libexec/PlistBuddy -c "Set :SUFeedURL $DOWNLOAD_URL/current/appcast-$name.xml" "$app/Contents/Info.plist"
+		/usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $public_key" "$app/Contents/Info.plist"
 		cp "$sparkle/LICENSE" "$app/Contents/Resources/Sparkle-LICENSE.txt"
 		ditto "$sparkle/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 	else
 		/usr/libexec/PlistBuddy -c 'Delete :SUFeedURL' "$app/Contents/Info.plist"
+		/usr/libexec/PlistBuddy -c 'Delete :SUPublicEDKey' "$app/Contents/Info.plist"
 	fi
 
 	# Everything the app loads must ship with macOS: no @rpath / @executable_path.

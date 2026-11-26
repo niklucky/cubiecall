@@ -11,16 +11,35 @@ use std::{
 };
 use tokio::time::Instant;
 
-/// Local identity for credentials and history. The production aliases share
-/// the original key so installations keep their sign-in and previous calls.
-/// Custom servers retain their own keys.
+/// Release builds can keep an existing storage key across a domain change.
 pub fn storage_origin(server: &str) -> &str {
-    match server.trim_end_matches('/') {
-        "https://cubiecall.com"
-        | "https://cubiecall.ru"
-        | "https://cubycall.com"
-        | "https://quipcall.com" => "https://quipcall.com",
-        _ => server,
+    local_identity(
+        server,
+        option_env!("CUBIE_STORAGE_ID"),
+        option_env!("CUBIE_SERVER"),
+        option_env!("CUBIE_RESERVE_URL"),
+        option_env!("CUBIE_STORAGE_ALIASES").unwrap_or_default(),
+    )
+}
+
+fn local_identity<'a>(
+    server: &'a str,
+    identity: Option<&'a str>,
+    primary: Option<&str>,
+    reserve: Option<&str>,
+    aliases: &str,
+) -> &'a str {
+    let origin = server.trim_end_matches('/');
+    if let Some(identity) = identity.filter(|id| !id.is_empty())
+        && primary
+            .into_iter()
+            .chain(reserve)
+            .chain(aliases.split_whitespace())
+            .any(|configured| configured.trim_end_matches('/') == origin)
+    {
+        identity
+    } else {
+        server
     }
 }
 
@@ -123,18 +142,18 @@ impl Selection {
 }
 
 pub struct Failover {
-    primary: &'static str,
-    reserve: &'static str,
+    primary: String,
+    reserve: String,
     // Links continue to use the last working route even during an outage.
     last_used_reserve: AtomicBool,
     selection: tokio::sync::Mutex<Selection>,
 }
 
 impl Failover {
-    pub const fn new(primary: &'static str, reserve: &'static str) -> Self {
+    pub fn new(primary: impl Into<String>, reserve: impl Into<String>) -> Self {
         Self {
-            primary,
-            reserve,
+            primary: primary.into(),
+            reserve: reserve.into(),
             last_used_reserve: AtomicBool::new(false),
             selection: tokio::sync::Mutex::const_new(Selection {
                 route: None,
@@ -144,18 +163,22 @@ impl Failover {
         }
     }
 
-    pub fn origin(&self) -> &'static str {
+    pub fn primary(&self) -> &str {
+        &self.primary
+    }
+
+    pub fn origin(&self) -> &str {
         if self.last_used_reserve.load(Relaxed) {
-            self.reserve
+            &self.reserve
         } else {
-            self.primary
+            &self.primary
         }
     }
 
-    fn origin_for(&self, route: Route) -> &'static str {
+    fn origin_for(&self, route: Route) -> &str {
         match route {
-            Route::Primary => self.primary,
-            Route::Reserve => self.reserve,
+            Route::Primary => &self.primary,
+            Route::Reserve => &self.reserve,
         }
     }
 
@@ -274,9 +297,9 @@ impl Failover {
             return runtime
                 .spawn(async move {
                     if self.healthy(client, Route::Primary).await {
-                        self.primary
+                        self.primary.as_str()
                     } else if self.healthy(client, Route::Reserve).await {
-                        self.reserve
+                        self.reserve.as_str()
                     } else {
                         previous
                     }
@@ -909,14 +932,31 @@ mod tests {
     }
 
     #[test]
-    fn reserve_reuses_the_production_identity() {
+    fn configured_origins_share_the_existing_identity() {
+        let identity = |origin| {
+            local_identity(
+                origin,
+                Some("previous-installation"),
+                Some("https://call.example.test"),
+                Some("https://backup.example.test"),
+                "https://alias.example.test https://legacy.example.test",
+            )
+        };
+        for origin in [
+            "https://call.example.test",
+            "https://backup.example.test/",
+            "https://alias.example.test",
+            "https://legacy.example.test",
+        ] {
+            assert_eq!(identity(origin), "previous-installation");
+        }
         assert_eq!(
-            storage_origin("https://cubiecall.ru/"),
-            storage_origin("https://cubiecall.com")
+            identity("https://backup.example.test.untrusted.test"),
+            "https://backup.example.test.untrusted.test"
         );
         assert_eq!(
-            storage_origin("https://cubiecall.ru.example"),
-            "https://cubiecall.ru.example"
+            local_identity("https://self-host.example.test/", None, None, None, ""),
+            "https://self-host.example.test/"
         );
     }
 
