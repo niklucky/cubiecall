@@ -8,6 +8,7 @@
 //! top, and each display its own scale ([`Desktop`] converts).
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -27,12 +28,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_LWIN, VK_MBUTTON, VK_MENU, VK_RBUTTON, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CHILDID_SELF, CreatePopupMenu, DestroyMenu, EVENT_OBJECT_LOCATIONCHANGE,
-    EnumThreadWindows, GetCursorPos, GetSystemMetrics, GetWindowRect, HTCAPTION, IsIconic,
-    IsWindowVisible, KillTimer, MB_OK, MF_CHECKED, MF_SEPARATOR, MF_STRING, OBJID_WINDOW,
-    PostMessageW, SC_MOVE, SM_SWAPBUTTON, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE,
-    SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WINEVENT_OUTOFCONTEXT, WM_NULL,
+    AppendMenuW, CHILDID_SELF, CreatePopupMenu, DestroyMenu, EVENT_OBJECT_DESTROY,
+    EVENT_OBJECT_LOCATIONCHANGE, EnumThreadWindows, GetCursorPos, GetSystemMetrics, GetWindowRect,
+    HTCAPTION, IsIconic, IsWindowVisible, KillTimer, MB_OK, MF_CHECKED, MF_SEPARATOR, MF_STRING,
+    OBJID_WINDOW, PostMessageW, SC_MOVE, SM_SWAPBUTTON, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
+    SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetTimer, SetWindowPos,
+    ShowWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WINEVENT_OUTOFCONTEXT, WM_NULL,
     WM_SYSCOMMAND,
 };
 use windows::core::{BOOL, PCWSTR};
@@ -55,7 +56,7 @@ impl Native {
     }
 
     pub fn frame(&self) -> Rect {
-        window_rect(self.0).map_or_else(Rect::default, |r| Desktop::now().to_points(r))
+        window_rect(self.0).map_or_else(Rect::default, |r| Desktop::now().to_whole_points(r))
     }
 
     /// The usable part of the screen the window is on: without the taskbar.
@@ -101,7 +102,7 @@ pub struct Placement {
 
 /// A window that moves with another. macOS does this for child windows;
 /// Win32 only keeps owned windows above their owner, so we follow the
-/// parent's moves ourselves ([`follow`]).
+/// parent's moves ourselves ([`watch_windows`]).
 struct Rider {
     child: HWND,
     parent: HWND,
@@ -109,9 +110,18 @@ struct Rider {
     offset: (i32, i32),
 }
 
+/// A shaped window's corner radius, and the size its region was cut for:
+/// a region is in pixels and doesn't follow the window's size.
+#[derive(Clone, Copy, PartialEq)]
+struct Shape {
+    radius: f64,
+    size: (i32, i32),
+}
+
 thread_local! {
     static RIDERS: RefCell<Vec<Rider>> = const { RefCell::new(Vec::new()) };
-    static HOOK: Cell<Option<HWINEVENTHOOK>> = const { Cell::new(None) };
+    static SHAPES: RefCell<HashMap<usize, Shape>> = RefCell::new(HashMap::new());
+    static HOOKS: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Put windows where they go, on the next turn of the event loop (see
@@ -197,7 +207,24 @@ fn ride(child: HWND, parent: HWND) {
             }),
         }
     });
-    watch_moves();
+    watch_windows();
+}
+
+/// The riders of `parent` stay where they are while we move it ourselves:
+/// whatever moved it places them in the same turn (`resize_with`'s
+/// `after`), and leaves out those already in place. Their offsets are
+/// taken again now, or the hook would move those by the parent's move.
+fn keep_riders(parent: HWND) {
+    let Some(p) = window_rect(parent) else {
+        return;
+    };
+    RIDERS.with(|r| {
+        for rider in r.borrow_mut().iter_mut().filter(|r| r.parent == parent) {
+            if let Some(c) = window_rect(rider.child) {
+                rider.offset = (c.left - p.left, c.top - p.top);
+            }
+        }
+    });
 }
 
 fn unride(child: HWND) {
@@ -207,35 +234,42 @@ fn unride(child: HWND) {
     });
 }
 
-/// Follow every move of a window that others ride on. The hook's events
-/// arrive through this thread's message queue, after whatever moved the
-/// window has returned, so a rider [`place_now`] has just put in its new
-/// place is already where it belongs and stays put.
-fn watch_moves() {
-    if HOOK.get().is_some() {
+/// Watch our windows: when one moves, those riding on it follow; when one
+/// changes size (a resize, a display at another scale), its region is cut
+/// again; when one goes away, it's forgotten. The hooks' events arrive
+/// through this thread's message queue, after whatever moved the window has
+/// returned, so a rider [`place_now`] has just put in place stays put.
+fn watch_windows() {
+    if HOOKS.replace(true) {
         return;
     }
-    // SAFETY: an out-of-context hook for our own process; `follow` runs on
-    // this thread, from its message loop.
-    let hook = unsafe {
-        SetWinEventHook(
+    for (event, callback) in [
+        (
             EVENT_OBJECT_LOCATIONCHANGE,
-            EVENT_OBJECT_LOCATIONCHANGE,
-            None,
-            Some(follow),
-            std::process::id(),
-            0,
-            WINEVENT_OUTOFCONTEXT,
-        )
-    };
-    if hook.is_invalid() {
-        tracing::warn!("can't follow window moves: bubbles won't move with the widget");
-        return;
+            on_location as unsafe extern "system" fn(_, _, _, _, _, _, _),
+        ),
+        (EVENT_OBJECT_DESTROY, on_destroy),
+    ] {
+        // SAFETY: an out-of-context hook for our own process; the callback
+        // runs on this thread, from its message loop.
+        let hook = unsafe {
+            SetWinEventHook(
+                event,
+                event,
+                None,
+                Some(callback),
+                std::process::id(),
+                0,
+                WINEVENT_OUTOFCONTEXT,
+            )
+        };
+        if hook.is_invalid() {
+            tracing::warn!("can't watch windows (event {event:#x}): bubbles may not follow");
+        }
     }
-    HOOK.set(Some(hook));
 }
 
-unsafe extern "system" fn follow(
+unsafe extern "system" fn on_location(
     _hook: HWINEVENTHOOK,
     _event: u32,
     hwnd: HWND,
@@ -246,6 +280,9 @@ unsafe extern "system" fn follow(
 ) {
     if object != OBJID_WINDOW.0 || child != CHILDID_SELF as i32 {
         return;
+    }
+    if let Some(shape) = SHAPES.with(|s| s.borrow().get(&key(hwnd)).copied()) {
+        apply_mask(hwnd, &Mask::Rounded(shape.radius));
     }
     let moves: Vec<(HWND, i32, i32)> = RIDERS.with(|r| {
         let riders = r.borrow();
@@ -279,6 +316,27 @@ unsafe extern "system" fn follow(
             )
         };
     }
+}
+
+unsafe extern "system" fn on_destroy(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    hwnd: HWND,
+    object: i32,
+    child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    if object != OBJID_WINDOW.0 || child != CHILDID_SELF as i32 {
+        return;
+    }
+    // A handle can be reused by a window made later.
+    unride(hwnd);
+    SHAPES.with(|s| s.borrow_mut().remove(&key(hwnd)));
+}
+
+fn key(hwnd: HWND) -> usize {
+    hwnd.0 as usize
 }
 
 thread_local! {
@@ -552,12 +610,26 @@ fn apply_mask(hwnd: HWND, mask: &Mask) {
     let Some(r) = window_rect(hwnd) else {
         return;
     };
-    let Mask::Rounded(radius) = mask;
-    let d = (2.0 * radius * window_scale(hwnd)).round() as i32;
-    // SAFETY: the system owns the region once it's set; until then, and if
-    // setting it fails, it's ours to delete.
+    let Mask::Rounded(radius) = *mask;
+    let shape = Shape {
+        radius,
+        size: (r.right - r.left, r.bottom - r.top),
+    };
+    // Cut once per size and radius: a region is redrawn when it's set.
+    let old = SHAPES.with(|s| s.borrow_mut().insert(key(hwnd), shape));
+    if old == Some(shape) {
+        return;
+    }
+    // SAFETY: our own window. The system owns the region once it's set;
+    // until then, and if setting it fails, it's ours to delete.
     unsafe {
-        let region = CreateRoundRectRgn(0, 0, r.right - r.left + 1, r.bottom - r.top + 1, d, d);
+        // Square corners need no region, and none can go stale.
+        if radius <= 0.0 {
+            SetWindowRgn(hwnd, None, true);
+            return;
+        }
+        let d = (2.0 * radius * window_scale(hwnd)).round() as i32;
+        let region = CreateRoundRectRgn(0, 0, shape.size.0 + 1, shape.size.1 + 1, d, d);
         if region.is_invalid() {
             return;
         }
@@ -578,7 +650,10 @@ pub fn make_shape(window: &Window, mask: Mask, cx: &App) {
     };
     tracing::debug!("floating window {:?}: {mask:?}", hwnd.0);
     cx.foreground_executor()
-        .spawn(async move { apply_mask(hwnd, &mask) })
+        .spawn(async move {
+            watch_windows();
+            apply_mask(hwnd, &mask);
+        })
         .detach();
 }
 
@@ -758,6 +833,8 @@ fn contains(outer: &Rect, inner: &Rect) -> bool {
 /// counterpart here that our bugs have needed.
 pub fn log_window_events() {}
 
+/// Move and size one of our windows, recut its shape for the new size, and
+/// keep the windows riding on it where they are (see [`keep_riders`]).
 fn set_rect(hwnd: HWND, r: RECT) {
     // SAFETY: our own window, on its own thread.
     let _ = unsafe {
@@ -771,6 +848,10 @@ fn set_rect(hwnd: HWND, r: RECT) {
             SWP_NOZORDER | SWP_NOACTIVATE,
         )
     };
+    keep_riders(hwnd);
+    if let Some(shape) = SHAPES.with(|s| s.borrow().get(&key(hwnd)).copied()) {
+        apply_mask(hwnd, &Mask::Rounded(shape.radius));
+    }
 }
 
 fn window_rect(hwnd: HWND) -> Option<RECT> {
@@ -940,6 +1021,24 @@ impl Desktop {
         }
     }
 
+    /// `r` in whole points when those land on exactly these pixels. The
+    /// widget places windows at whole points; at 125% or 150% their pixels
+    /// read back as fractions, and it would place them again every time.
+    fn to_whole_points(&self, r: RECT) -> Rect {
+        let exact = self.to_points(r);
+        let whole = Rect {
+            x: exact.x.round(),
+            y: exact.y.round(),
+            w: exact.w.round(),
+            h: exact.h.round(),
+        };
+        if self.to_pixels(whole) == r {
+            whole
+        } else {
+            exact
+        }
+    }
+
     fn to_pixels(&self, r: Rect) -> RECT {
         let Some(d) = self.display_at(r.x + r.w / 2.0, r.y + r.h / 2.0) else {
             return RECT::default();
@@ -1017,6 +1116,27 @@ mod tests {
                 // A window's size in points is its size over its display's scale.
                 let pts = desktop.to_points(r);
                 assert!((pts.w - 450.0 / d.scale).abs() < 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn whole_points_read_back_whole_at_fractional_scales() {
+        for scale in [1.25, 1.5, 1.75] {
+            let desktop = Desktop::new(vec![(
+                rect(0, 0, 2880, 1560),
+                rect(0, 0, 2880, 1620),
+                scale,
+            )]);
+            for x in 95..110 {
+                let placed = Rect {
+                    x: x as f64,
+                    y: 301.0,
+                    w: 300.0,
+                    h: 52.0,
+                };
+                let pixels = desktop.to_pixels(placed);
+                assert_eq!(desktop.to_whole_points(pixels), placed, "x {x} at {scale}");
             }
         }
     }

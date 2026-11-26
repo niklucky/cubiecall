@@ -97,7 +97,7 @@ pub fn open(id: Option<String>, cx: &mut App) {
                 }
                 .into(),
             ),
-            appears_transparent: true,
+            appears_transparent: crate::ui::SEE_THROUGH_TITLEBAR,
             ..Default::default()
         }),
         ..Default::default()

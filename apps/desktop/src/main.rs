@@ -1,6 +1,18 @@
 // Release builds on Windows are a GUI app: no console window beside it.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+/// A shortcut with the system's main modifier: ⌘ on the Mac, Ctrl on
+/// Windows. GPUI's `cmd-` is the Windows key there.
+macro_rules! primary {
+    ($key:literal) => {
+        if cfg!(target_os = "macos") {
+            concat!("cmd-", $key)
+        } else {
+            concat!("ctrl-", $key)
+        }
+    };
+}
+
 mod assets;
 mod auth;
 mod bubble;

@@ -51,7 +51,7 @@ pub fn open(call: Entity<Call>, cx: &mut App) -> Option<WindowHandle<Regular>> {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
             title: Some(title.into()),
-            appears_transparent: true,
+            appears_transparent: crate::ui::SEE_THROUGH_TITLEBAR,
             ..Default::default()
         }),
         window_min_size: Some(size(px(560.0), px(400.0))),

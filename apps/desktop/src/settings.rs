@@ -26,7 +26,7 @@ use crate::ui::{Kind, button};
 actions!(settings, [OpenSettings]);
 
 pub fn bind_keys(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("cmd-,", OpenSettings, None)]);
+    cx.bind_keys([KeyBinding::new(primary!(","), OpenSettings, None)]);
     cx.on_action(|_: &OpenSettings, cx| open(cx));
 }
 
@@ -43,7 +43,7 @@ pub fn open(cx: &mut App) {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
             title: Some("Settings".into()),
-            appears_transparent: true,
+            appears_transparent: crate::ui::SEE_THROUGH_TITLEBAR,
             ..Default::default()
         }),
         window_min_size: Some(size(px(480.0), px(420.0))),

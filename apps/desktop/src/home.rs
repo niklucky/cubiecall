@@ -29,7 +29,7 @@ pub fn open(cx: &mut App) -> Option<WindowHandle<Home>> {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
             title: Some("Cubie".into()),
-            appears_transparent: true,
+            appears_transparent: crate::ui::SEE_THROUGH_TITLEBAR,
             ..Default::default()
         }),
         window_min_size: Some(size(px(720.0), px(460.0))),
@@ -845,7 +845,11 @@ impl Home {
                     )
                     .child(
                         icon_button("settings", Icon::Settings, 28.0)
-                            .tooltip(tooltip("Settings (⌘,)"))
+                            .tooltip(tooltip(if cfg!(windows) {
+                                "Settings (Ctrl+,)"
+                            } else {
+                                "Settings (⌘,)"
+                            }))
                             .on_click(|_, _, cx| crate::settings::open(cx)),
                     ),
             )
@@ -1421,11 +1425,14 @@ pub fn open_file(path: &std::path::Path) {
 
 /// A Finder (or Explorer) window with `path` selected.
 pub fn show_in_finder(path: &std::path::Path) {
+    // Explorer reads `/select,"…"` only unquoted before the path, and Rust
+    // would quote the whole argument once the path has a space.
     #[cfg(windows)]
     let shown = {
-        let mut select = std::ffi::OsString::from("/select,");
-        select.push(path);
-        std::process::Command::new("explorer").arg(select).spawn()
+        use std::os::windows::process::CommandExt as _;
+        std::process::Command::new("explorer")
+            .raw_arg(format!("/select,\"{}\"", path.display()))
+            .spawn()
     };
     #[cfg(not(windows))]
     let shown = std::process::Command::new("open")

@@ -20,6 +20,11 @@ pub const THIS_COMPUTER: &str = if cfg!(windows) { "this PC" } else { "this Mac"
 pub const THIS_COMPUTER_TITLE: &str = if cfg!(windows) { "This PC" } else { "This Mac" };
 pub const YOUR_COMPUTER: &str = if cfg!(windows) { "your PC" } else { "your Mac" };
 
+/// Our content under a see-through title bar. AppKit still draws its
+/// buttons over it; Windows draws none for a hidden title bar (no close,
+/// no drag), so there windows keep the system's own.
+pub const SEE_THROUGH_TITLEBAR: bool = cfg!(target_os = "macos");
+
 pub fn icon(icon: Icon, size: f32, color: impl Into<Hsla>) -> gpui::Svg {
     svg()
         .path(icon.path())

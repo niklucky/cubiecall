@@ -665,14 +665,16 @@ fn utc_offset_secs() -> i64 {
     {
         use windows::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
         let mut zone = TIME_ZONE_INFORMATION::default();
-        // SAFETY: writes into `zone`. 2 is TIME_ZONE_ID_DAYLIGHT; biases are
-        // minutes to add to local time to get UTC.
+        // SAFETY: writes into `zone`. Biases are minutes to add to local time
+        // to get UTC; the standard or daylight one counts only when the
+        // answer says which applies (1 standard, 2 daylight, 0 neither).
         let id = unsafe { GetTimeZoneInformation(&mut zone) };
-        let bias = zone.Bias
-            + match id {
-                2 => zone.DaylightBias,
-                _ => zone.StandardBias,
-            };
+        let bias = match id {
+            0 => zone.Bias,
+            1 => zone.Bias + zone.StandardBias,
+            2 => zone.Bias + zone.DaylightBias,
+            _ => return 0,
+        };
         -(bias as i64) * 60
     }
     #[cfg(not(any(target_os = "macos", windows)))]

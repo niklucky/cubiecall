@@ -366,6 +366,12 @@ impl Device {
                 nv12.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
                 nv12.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)?;
                 nv12.SetUINT64(&MF_MT_FRAME_SIZE, pack(mode.width, mode.height))?;
+                // The mode's rate too: without it the reader may pick a slow
+                // native NV12 mode of the same size (720p at 5 fps on many
+                // USB 2 cameras) instead of decoding the fast MJPG one.
+                if let Ok(rate) = mode.media_type.GetUINT64(&MF_MT_FRAME_RATE) {
+                    nv12.SetUINT64(&MF_MT_FRAME_RATE, rate)?;
+                }
                 reader
                     .SetCurrentMediaType(STREAM, None, &nv12)
                     .map_err(|e| explain(e, "convert the camera's frames to NV12"))?;
@@ -521,11 +527,19 @@ fn to_i420(sample: &IMFSample, format: &Format) -> anyhow::Result<Option<I420Buf
                 &mut len,
             )
         }?;
-        let i420 = (pitch > 0).then(|| {
-            // SAFETY: locked above; the slice ends where the buffer does.
+        // A first row outside the buffer, or no memory at all, isn't a frame.
+        let laid_out = pitch > 0
+            && len > 0
+            && !scan0.is_null()
+            && !start.is_null()
+            && (scan0 as usize) >= (start as usize)
+            && (scan0 as usize) < (start as usize) + len as usize;
+        let i420 = laid_out.then(|| {
+            // SAFETY: locked above; `scan0` is inside `start..start + len`,
+            // and the slice ends where the buffer does.
             let data = unsafe {
-                let skip = scan0.offset_from(start).max(0) as usize;
-                std::slice::from_raw_parts(scan0, (len as usize).saturating_sub(skip))
+                let skip = scan0 as usize - start as usize;
+                std::slice::from_raw_parts(scan0, len as usize - skip)
             };
             nv12_to_i420(data, pitch as usize, format)
         });
@@ -537,9 +551,13 @@ fn to_i420(sample: &IMFSample, format: &Format) -> anyhow::Result<Option<I420Buf
     let mut len = 0u32;
     // SAFETY: valid out-pointers; while locked, `data..data + len` is valid.
     unsafe { buffer.Lock(&mut data, None, Some(&mut len)) }?;
-    // SAFETY: locked above.
-    let bytes = unsafe { std::slice::from_raw_parts(data, len as usize) };
-    let i420 = nv12_to_i420(bytes, format.stride, format);
+    let i420 = (!data.is_null() && len > 0)
+        .then(|| {
+            // SAFETY: locked above, non-null and `len` bytes long.
+            let bytes = unsafe { std::slice::from_raw_parts(data, len as usize) };
+            nv12_to_i420(bytes, format.stride, format)
+        })
+        .flatten();
     // SAFETY: pairs the lock above; `bytes` is gone.
     unsafe { buffer.Unlock() }?;
     Ok(i420)
