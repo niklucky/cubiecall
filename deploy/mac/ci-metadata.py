@@ -31,9 +31,14 @@ def resolve(event, ref, run_number, run_attempt, cargo_text):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check-tag", help="Validate a tag without GitHub environment variables")
+    parser.add_argument("--build-only", action="store_true",
+                        help="Resolve like a manual run, which never publishes (Windows pull requests)")
     args = parser.parse_args()
-    event = "push" if args.check_tag else os.environ["GITHUB_EVENT_NAME"]
-    ref = "refs/tags/" + args.check_tag if args.check_tag else os.environ["GITHUB_REF"]
+    if args.build_only:
+        event = "workflow_dispatch"
+    else:
+        event = "push" if args.check_tag else os.environ["GITHUB_EVENT_NAME"]
+    ref = "refs/tags/" + args.check_tag if args.check_tag else os.environ.get("GITHUB_REF", "")
     try:
         values = resolve(event, ref, int(os.environ.get("GITHUB_RUN_NUMBER", "1")),
                          int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")), Path("Cargo.toml").read_text())

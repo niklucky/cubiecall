@@ -4,7 +4,7 @@ The alpha uses one VPS (`root@testron.dev`, Debian 13, shared with other project
 
 ```sh
 git push origin main          # server + web client, tested and deployed by GitHub Actions
-git push origin v0.1.1        # the Mac app, built and published by GitHub Actions
+git push origin v0.1.1        # the Mac and Windows apps, built and published by GitHub Actions
 make deploy                   # from this Mac: server + web client + VPS config
 make release-mac              # from this Mac: the Mac app
 make mac-app                  # build only → target/mac/
@@ -48,7 +48,7 @@ Browser handoffs use `quipcall://` to open installed apps from either release. T
 | `https://cubiecall.com/` | web client (`/opt/cubie/web`, static) |
 | `/api/` | `cubie-server` on `127.0.0.1:4601` |
 | `/rtc` | LiveKit signalling (WebSocket) on `127.0.0.1:7880` |
-| `/download/` | Mac app, install script, instructions page (`/opt/cubie/download`) |
+| `/download/` | Mac and Windows apps, install script, instructions page (`/opt/cubie/download`) |
 | UDP `7882` | LiveKit media, all participants on one port |
 | TCP `7881` | LiveKit media over TCP, for networks that block UDP |
 
@@ -148,6 +148,19 @@ The first Sparkle-enabled release needs a one-time install from the download pag
 The publisher puts immutable ZIPs at `/download/releases/<build>/` and switches both architecture feeds at `/download/current/` together. Existing manual download URLs point to the current release. Keep earlier ZIPs available for copies of Cubie that already fetched an earlier appcast. Local builds default to the Git commit count; after CI takes over, set `CUBIE_BUILD` explicitly higher than `/download/version.txt` for any local recovery release. `CUBIE_VERSION` overrides the displayed version; otherwise the Cargo workspace version is used. If a failed publish already placed the numbered release directory on the server, retry with a higher `CUBIE_BUILD`.
 
 The app logs to `~/Library/Logs/Cubie/cubie.log` when started from Finder (the previous run is kept as `cubie.previous.log`).
+
+## Windows app (unsigned test builds)
+
+The **Release Windows app** workflow (`.github/workflows/release-windows.yml`) builds `Cubie.exe` for 64-bit Windows on `windows-2025` with Rust 1.99.0. A `vX.Y.Z` tag runs it alongside the Mac release and publishes it. Actions → **Release Windows app** → **Run workflow** only builds: the zip is the run's `windows-x64` artifact, for trying a build before tagging. As with the Mac's, a manual run never publishes.
+
+The build isn't signed. Testers unzip it and open `Cubie.exe`; SmartScreen then says "Windows protected your PC", and **More info** → **Run anyway** opens it (once per downloaded copy). The zip's `README.txt` and the download page say so. There are no automatic updates on Windows yet: testers download the zip again for a newer build.
+
+- Release builds need a Windows host: GPUI compiles its shaders with the Windows SDK's `fxc.exe` then. On this Mac, `cargo xwin` (`cargo install cargo-xwin`, `brew install llvm lld ninja`) checks and builds debug builds only: `PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH" cargo xwin build --target x86_64-pc-windows-msvc -p cubie-desktop`.
+- libwebrtc for Windows comes built against the static C runtime (`/MT`), and MSVC won't link it with `/MD` code, so `.cargo/config.toml` links everything statically (`+crt-static`). Testers need no Visual C++ redistributable. The workflow sets `TRANSCRIBE_CMAKE_ARGS=-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` so transcribe.cpp's CMake build agrees.
+- `apps/desktop/build.rs` embeds the icon (`apps/desktop/assets/Cubie.ico`, made by `dev/generate-branding.mjs` from the Mac icon's cube) and the version (`CUBIE_VERSION`, `CUBIE_BUILD`), with the Windows SDK's `rc.exe` or, cross-compiling, `llvm-rc` (`RC` names another). The manifest (Common Controls 6, which GPUI's `TaskDialogIndirect` needs, and per-monitor DPI) is GPUI's own.
+- `deploy/windows/package.py` makes `Cubie-windows-x64.zip` (`Cubie.exe` and `README.txt`). The build job then checks the zip, the version resource, and that `Cubie.exe` starts at all: an unknown flag makes it print its usage and exit 2 before any window opens.
+
+Publishing uses the Mac release's SSH access (`MACOS_DEPLOY_KEY`, `MACOS_DEPLOY_KNOWN_HOSTS`, `CUBIE_RELEASE_HOST`) and its staging directory, and touches none of the Mac's files. `deploy/windows/upload.sh` checks the zip's SHA-256 on the host; `deploy/windows/publish.sh` keeps each build at `/download/windows/releases/<build>/Cubie-windows-x64.zip`, switches `/download/windows/current` to it, and points the stable https://cubiecall.com/download/Cubie-windows-x64.zip there. The host refuses a build number that isn't newer than `/download/windows/current/version.txt`. Build numbers come from `deploy/mac/ci-metadata.py` with this workflow's own run number, so they don't match the Mac's for the same tag. The workflow runs `deploy/windows/test-publish.sh` (Linux) first. The zip isn't attached to the GitHub Release (the Mac workflow makes that), and the download page with the Windows link goes live with the Mac release from the same tag, or with `make deploy`.
 
 ## Logs and status
 

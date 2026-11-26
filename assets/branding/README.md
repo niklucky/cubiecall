@@ -12,6 +12,7 @@ The approved Quby character has a continuous pastel cube surface, a black rounde
 | `quby-app-icon-transparent-1024.png` | 1024 × 1024 export of the transparent icon |
 | `../../apps/desktop/assets/QubyTransparent.icns` | The app's icon now: the transparent cube, 16–1024 pixel representations |
 | `../../apps/desktop/assets/Quby.icns` | The earlier icon, the cube on the black tile, kept to switch back |
+| `../../apps/desktop/assets/Cubie.ico` | The Windows app's icon: the same transparent cube, 16–256 pixel images, embedded in `Cubie.exe` by `apps/desktop/build.rs` |
 | `../../apps/web/public/favicon.ico` | Browser ICO with 16, 24, 32, 48, 64, 128, and 256 pixel images |
 | `../../apps/web/public/favicon.svg` | Vector favicon, tightly framed so the face remains readable |
 | `../../apps/web/public/favicon-32.png` | 32 pixel favicon PNG |

@@ -333,9 +333,21 @@ Set to the least we think can work. We raise a line only when a real call hits i
 - [ ] Sharing the phone's screen (ReplayKit, a media projection)
 - [ ] iPad and landscape layouts
 
+## Windows desktop (unsigned test builds)
+
+Friends on Windows call the Mac users: the same app on GPUI's DirectX 11 backend, unsigned (SmartScreen asks once), from the download page. Built and packaged by `.github/workflows/release-windows.yml`; a pull request that touches the app builds the zip as an artifact, a release tag publishes it next to the Mac app.
+
+- [x] ~~The engine on Windows: libwebrtc, DeepFilterNet and transcribe.cpp (on the CPU), linked against the static C runtime so testers need no redistributable~~ *Cross-checked from the Mac with `cargo xwin` (debug builds only: release builds need Windows' `fxc.exe` for GPUI's shaders, so CI makes them). The exe imports only system DLLs.*
+- [ ] Desktop UI on Windows. *Written, compiles and links; not yet run on Windows (no Windows machine here). `platform_win.rs` stands in for `platform_mac.rs`: floating windows cut to their shape with window regions, bubbles that follow the widget through a WinEvent hook (Win32 has no child windows that move with their parent), the cursor and keys by polling, a native menu. `video_win.rs` draws each frame as a BGRA sprite (GPUI's DirectX renderer has no video surface), which rounds its own corners. Session in Credential Manager; data in `%APPDATA%\Cubie`, models and logs in `%LOCALAPPDATA%\Cubie`. Hold to talk is the right Ctrl key (a lone Alt opens the menu of the app in front).*
+- [ ] Camera through Media Foundation, NV12 to I420; `CUBIE_FAKE_CAMERA` works there too. *Written, not yet run.*
+- [ ] Screen share. *For now libwebrtc's capturer shares the main screen with no picker; next, a picker over Windows.Graphics.Capture.*
+- [ ] Check on a real Windows 10 and 11 machine: sign in, a call with a Mac with video both ways, the widget dragged with bubbles riding on it, a share, two displays at different scales, then memory and CPU (`video_win.rs` copies every frame; measure before optimising)
+- [ ] Recording (AVAssetWriter on the Mac; Windows hides Record and shows who records), call links (`cubie://`), updates (testers download again for now), code signing (Azure Trusted Signing)
+
+**Done when:** a friend on Windows installs it from the download page and spends a call with Mac users seeing and hearing each other.
+
 ## Later
 
-- [ ] Windows desktop (Windows.Graphics.Capture, GPUI on DirectX 11)
 - [ ] Linux desktop (screen capture through PipeWire and the desktop portal)
 - [ ] Server-side transcriber (headless bot on the VPS or a GPU box)
 - [ ] Upload recordings to the server so everyone in the room gets them (needs Stage 3)

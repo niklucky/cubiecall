@@ -70,22 +70,28 @@ writeFileSync(join(web, 'favicon.svg'), favicon);
 writeFileSync(join(web, 'favicon-32.png'), render(favicon, 32));
 
 // ICO directory plus PNG-encoded images: sizes used by browsers and Windows.
-const sizes = [16, 24, 32, 48, 64, 128, 256];
-const images = sizes.map(size => render(favicon, size));
-const header = Buffer.alloc(6 + sizes.length * 16);
-header.writeUInt16LE(1, 2);
-header.writeUInt16LE(sizes.length, 4);
-let offset = header.length;
-for (let i = 0; i < sizes.length; i++) {
-  const at = 6 + i * 16;
-  header[at] = header[at + 1] = sizes[i] === 256 ? 0 : sizes[i];
-  header.writeUInt16LE(1, at + 4);
-  header.writeUInt16LE(32, at + 6);
-  header.writeUInt32LE(images[i].length, at + 8);
-  header.writeUInt32LE(offset, at + 12);
-  offset += images[i].length;
+function ico(svg, path) {
+  const sizes = [16, 24, 32, 48, 64, 128, 256];
+  const images = sizes.map(size => render(svg, size));
+  const header = Buffer.alloc(6 + sizes.length * 16);
+  header.writeUInt16LE(1, 2);
+  header.writeUInt16LE(sizes.length, 4);
+  let offset = header.length;
+  for (let i = 0; i < sizes.length; i++) {
+    const at = 6 + i * 16;
+    header[at] = header[at + 1] = sizes[i] === 256 ? 0 : sizes[i];
+    header.writeUInt16LE(1, at + 4);
+    header.writeUInt16LE(32, at + 6);
+    header.writeUInt32LE(images[i].length, at + 8);
+    header.writeUInt32LE(offset, at + 12);
+    offset += images[i].length;
+  }
+  writeFileSync(path, Buffer.concat([header, ...images]));
 }
-writeFileSync(join(web, 'favicon.ico'), Buffer.concat([header, ...images]));
+ico(favicon, join(web, 'favicon.ico'));
+// The Windows app's icon (Cubie.exe, via apps/desktop/build.rs): the same
+// transparent cube as the Mac app's.
+ico(cube, join(desktop, 'Cubie.ico'));
 
 function icns(svg, name) {
   const temp = mkdtempSync(join(tmpdir(), 'quby-icons-'));
