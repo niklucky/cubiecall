@@ -712,6 +712,15 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
                 }
             })
         }
+        // A camera that didn't start (access off, say) isn't on, even if
+        // the button said so while it was queued for joining again.
+        Event::Error(message) if message.starts_with("camera") => {
+            call.camera_on.store(false, Ordering::Relaxed);
+            vec![
+                CallEvent::Notice { message },
+                CallEvent::YourCamera { on: false },
+            ]
+        }
         Event::Error(message) => one(CallEvent::Notice { message }),
         // A phone neither shares its screen, records nor transcribes (yet),
         // and asks no Mac to.

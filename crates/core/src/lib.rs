@@ -310,6 +310,9 @@ struct State {
     /// with the call: one for a connection that's gone stops by itself.
     camera_starting: Option<u64>,
     camera_starts: u64,
+    /// Turned off before that start was done: it stops when it's done,
+    /// unless it's turned on again first.
+    camera_unwanted: bool,
     screen: Option<screen::ScreenShare>,
     /// Remote video publications, for per-tile quality control.
     videos: HashMap<TrackKey, RemoteTrackPublication>,
@@ -598,9 +601,15 @@ impl Engine {
     pub fn start_camera(&self, preview: Option<Arc<dyn FrameSink>>) {
         let start = {
             let mut s = self.state.lock();
-            if s.camera.is_some() || s.camera_starting.is_some() {
+            if s.camera.is_some() {
                 return;
             }
+            // One start at a time: the one under way is wanted again.
+            if s.camera_starting.is_some() {
+                s.camera_unwanted = false;
+                return;
+            }
+            s.camera_unwanted = false;
             s.camera_starts += 1;
             s.camera_starting = Some(s.camera_starts);
             s.camera_starts
@@ -625,11 +634,14 @@ impl Engine {
                 // Left or joined again meanwhile, and this start is forgotten.
                 let (room, connection) = {
                     let s = state.lock();
-                    anyhow::ensure!(s.camera_starting == Some(start), Gone);
+                    anyhow::ensure!(s.camera_starting == Some(start) && !s.camera_unwanted, Gone);
                     (s.room.clone().context("not in a call")?, s.connection)
                 };
-                let ours =
-                    |s: &State| s.connection == connection && s.camera_starting == Some(start);
+                let ours = |s: &State| {
+                    s.connection == connection
+                        && s.camera_starting == Some(start)
+                        && !s.camera_unwanted
+                };
                 let camera = camera::Camera::start(&room, preview)
                     .await
                     .map_err(|e| if ours(&state.lock()) { e } else { Gone.into() })?;
@@ -673,6 +685,8 @@ impl Engine {
     pub fn stop_camera(&self) {
         let (room, camera) = {
             let mut s = self.state.lock();
+            // A start under way stops once it's done, without a word.
+            s.camera_unwanted = s.camera_starting.is_some();
             (s.room.clone(), s.camera.take())
         };
         let events = self.events.clone();
@@ -2294,6 +2308,7 @@ fn forget_call(s: &mut State) {
     s.handed_to = None;
     s.start = Start::No;
     s.camera_starting = None;
+    s.camera_unwanted = false;
     s.videos.clear();
     s.mics.clear();
     for (_, task) in s.mic_streams.drain() {

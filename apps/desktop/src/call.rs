@@ -371,10 +371,10 @@ pub struct Call {
     /// That start is under way: if another Mac took the transcript over
     /// meanwhile, it gives way without a word.
     resuming_transcript: bool,
-    /// Which of your transcripts runs (the engine's id), and the one of a
-    /// lost connection still finishing its last words.
+    /// Which of your transcripts runs (the engine's id), and those of lost
+    /// connections still finishing their last words.
     transcript_id: Option<u64>,
-    draining: Option<u64>,
+    draining: Vec<u64>,
     connected_at: Option<(SystemTime, Instant)>,
     people: BTreeSet<String>,
     /// Who joined, left, shared and recorded, for the call's timeline.
@@ -539,7 +539,7 @@ impl Call {
             transcribe_on_connect: false,
             resuming_transcript: false,
             transcript_id: None,
-            draining: None,
+            draining: Vec::new(),
             connected_at: None,
             people: BTreeSet::new(),
             events: Vec::new(),
@@ -646,7 +646,7 @@ impl Call {
         self.resuming_transcript = false;
         self.handover = None;
         if let Some(t) = self.transcription.take_if(|t| t.mine) {
-            self.draining = self.transcript_id.take();
+            self.draining.extend(self.transcript_id.take());
             self.log(t.name, Happened::StoppedTranscribing, cx);
         }
         let mic = self.mic_on && !self.held;
@@ -1367,7 +1367,7 @@ impl Call {
     /// Your Mac's transcripts still have words on the way: yours now, or
     /// a lost connection's.
     fn words_to_come(&self) -> bool {
-        self.draining.is_some() || self.transcription.as_ref().is_some_and(|t| t.mine)
+        !self.draining.is_empty() || self.transcription.as_ref().is_some_and(|t| t.mine)
     }
 
     /// After leaving, a transcript's last words are in: keep the call once
@@ -1888,10 +1888,10 @@ impl Call {
                 // Lines don't change anything else on screen.
                 return;
             }
-            // The lost connection's transcript, done: it was taken care of
+            // A lost connection's transcript, done: it was taken care of
             // when the connection went, and another may run now.
-            Event::TranscriptionStopped { id, .. } if self.draining == Some(id) => {
-                self.draining = None;
+            Event::TranscriptionStopped { id, .. } if self.draining.contains(&id) => {
+                self.draining.retain(|d| *d != id);
                 self.words_are_in(cx);
             }
             // Not the transcript you run now.
