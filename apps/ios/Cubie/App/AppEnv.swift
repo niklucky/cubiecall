@@ -4,8 +4,7 @@ import Foundation
 ///
 /// Launch arguments, for development (`-key value`, read through
 /// `UserDefaults`):
-/// - `-server <url>` and `-web <url>`: another server than cubiecall.com, and
-///   its site (they differ only in development).
+/// - `-server <url>` and `-web <url>`: override the bundled server and its site.
 /// - `-session <token>`: debug builds only, use this session for the run.
 /// - `-room <id>`: join this room at launch.
 /// - `-mic YES`: let the Simulator open the microphone (it's the Mac's).
@@ -23,8 +22,11 @@ final class AppEnv {
 
     private init() {
         let defaults = UserDefaults.standard
-        let server = defaults.string(forKey: "server") ?? "https://cubiecall.com"
-        let web = defaults.string(forKey: "web") ?? server
+        let bundled = Bundle.main.object(forInfoDictionaryKey: "CubieServer") as? String
+        let configured = defaults.string(forKey: "server")
+            ?? bundled.flatMap { $0.hasPrefix("https://") || $0.hasPrefix("http://") ? $0 : nil }
+        let server = configured ?? "http://127.0.0.1:8080"
+        let web = defaults.string(forKey: "web") ?? configured ?? "http://127.0.0.1:5173"
 
         #if DEBUG
         if let log = defaults.string(forKey: "log") {

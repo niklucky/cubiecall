@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CubieServer</key>
+	<string>$(CUBIE_SERVER)</string>
 	<!-- The rest of the Info.plist is generated from the target's build settings. -->
 	<key>UIApplicationSceneManifest</key>
 	<dict>

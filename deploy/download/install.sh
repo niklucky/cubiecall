@@ -1,12 +1,20 @@
 #!/bin/sh
-# Install or update Cubie:
-#   curl -fsSL https://cubiecall.com/download/install.sh | sh
+# Install or update Cubie from the configured site.
 set -eu
+primary='@PUBLIC_URL@'
+reserve='@RESERVE_URL@'
+if [ "${1:-}" = --reserve ] && [ -n "$reserve" ]; then
+    first=$reserve
+    second=$primary
+else
+    first=$primary
+    second=$reserve
+fi
 # hw.optional.arm64 is 1 on Apple Silicon, even in a Terminal running under Rosetta.
 if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
-	URL=https://cubiecall.com/download/Cubie-apple-silicon.zip
+	archive=/download/Cubie-apple-silicon.zip
 else
-	URL=https://cubiecall.com/download/Cubie-intel.zip
+	archive=/download/Cubie-intel.zip
 fi
 
 dest=/Applications
@@ -25,12 +33,30 @@ fi
 tmp=$(mktemp -d "$dest/.cubie-install.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 1' HUP INT TERM
+requirement='anchor apple generic and identifier "com.quipcall.desktop" and certificate leaf[subject.OU] = "@MAC_TEAM@" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
+fetch_signed_app() {
+    mkdir "$1" &&
+        curl -fL --proto '=https' --proto-redir '=https' --connect-timeout 5 \
+            --speed-limit 1024 --speed-time 10 --max-time 900 --progress-bar \
+            "$2$archive" -o "$1/Cubie.zip" &&
+        ditto -x -k "$1/Cubie.zip" "$1" &&
+        [ -d "$1/Cubie.app" ] && [ ! -L "$1/Cubie.app" ] &&
+        [ -x "$1/Cubie.app/Contents/MacOS/Cubie" ] &&
+        [ "$(bundle_id "$1/Cubie.app")" = com.quipcall.desktop ] &&
+        /usr/bin/codesign --verify --deep --strict "$1/Cubie.app" &&
+        /usr/bin/codesign --verify --strict -R="$requirement" "$1/Cubie.app"
+}
+
 echo "Downloading Cubie…"
-curl -fL --progress-bar "$URL" -o "$tmp/Cubie.zip"
-ditto -x -k "$tmp/Cubie.zip" "$tmp"
-if [ ! -x "$tmp/Cubie.app/Contents/MacOS/Cubie" ] || [ "$(bundle_id "$tmp/Cubie.app")" != com.quipcall.desktop ]; then
-    echo "The download is missing the Cubie app." >&2
-    exit 1
+if fetch_signed_app "$tmp/first" "$first"; then
+    app=$tmp/first/Cubie.app
+else
+    [ -z "$second" ] || echo "Trying the other CubieCall domain…"
+    if [ -z "$second" ] || ! fetch_signed_app "$tmp/second" "$second"; then
+        echo "Could not download an app with a valid Cubie Developer ID signature." >&2
+        exit 1
+    fi
+    app=$tmp/second/Cubie.app
 fi
 
 # Only replace the old bundle when it belongs to this app.
@@ -46,7 +72,7 @@ if [ -d "$dest/Cubie.app" ] && pgrep -xq Cubie; then
 	sleep 1
 fi
 if [ -d "$dest/Cubie.app" ]; then
-    if ! /usr/bin/osascript -l JavaScript - "$dest/Cubie.app" "$tmp/Cubie.app" <<'JS'
+    if ! /usr/bin/osascript -l JavaScript - "$dest/Cubie.app" "$app" <<'JS'
 ObjC.import('Foundation');
 function run(paths) {
     const url = path => $.NSURL.fileURLWithPath(path);
@@ -62,7 +88,7 @@ JS
         exit 1
     fi
 else
-    mv "$tmp/Cubie.app" "$dest/Cubie.app"
+    mv "$app" "$dest/Cubie.app"
 fi
 if [ "$legacy_id" = com.quipcall.desktop ]; then
     rm -rf "$legacy"

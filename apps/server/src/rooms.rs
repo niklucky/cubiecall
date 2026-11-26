@@ -200,7 +200,7 @@ pub async fn invite(
         .execute(&s.db)
         .await?;
     Ok(Json(
-        json!({"url":format!("{}/#roomInvite={token}",s.config.public_url)}),
+        json!({"url":format!("{}/#roomInvite={token}",s.config.link_origin(&h))}),
     ))
 }
 pub async fn revoke_invite(
@@ -453,7 +453,7 @@ pub async fn join(
     tx.commit().await?;
     Ok(Json(cubie_protocol::JoinInfo {
         room_name: Some(r.name),
-        url: s.config.livekit_public_url.clone(),
+        url: s.config.signaling_url(&h).to_owned(),
         token,
         identity,
     }))

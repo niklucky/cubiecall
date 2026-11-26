@@ -1,0 +1,71 @@
+# Russian edge. The upstream is Cubie's origin VPS, authenticated as
+# @PRIMARY_HOST@ over TLS. Use IPv4 to match the edge trust rules at the origin.
+upstream cubie_ru_origin {
+    server @UPSTREAM_IP@:443;
+}
+
+map $http_upgrade $cubie_ru_connection {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name @RESERVE_HOST@;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/cubie-acme;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 308 https://@RESERVE_HOST@$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name @RESERVE_HOST@;
+
+    ssl_certificate /etc/letsencrypt/live/@RESERVE_HOST@/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/@RESERVE_HOST@/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    access_log /var/log/nginx/@RESERVE_HOST@.access.log combined;
+    error_log /var/log/nginx/@RESERVE_HOST@.error.log warn;
+
+    proxy_ssl_server_name on;
+    proxy_ssl_name @PRIMARY_HOST@;
+    proxy_ssl_verify on;
+    proxy_ssl_verify_depth 3;
+    proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+    proxy_set_header Host @PRIMARY_HOST@;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+    proxy_connect_timeout 5s;
+    proxy_redirect https://@PRIMARY_HOST@/ https://@RESERVE_HOST@/;
+
+    location /rtc {
+        # LiveKit signaling URLs can contain bearer tokens.
+        access_log off;
+        error_log /var/log/nginx/@RESERVE_HOST@.error.log crit;
+        proxy_pass https://cubie_ru_origin;
+        # A location with proxy_set_header replaces the inherited header set.
+        proxy_set_header Host @PRIMARY_HOST@;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $cubie_ru_connection;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        proxy_buffering off;
+    }
+
+    location / {
+        proxy_pass https://cubie_ru_origin;
+    }
+}

@@ -1,5 +1,7 @@
 # Local development tasks. `make dev` runs LiveKit + the server; run `make web` / `make desktop` in other terminals.
+ifneq ($(filter dev livekit server web desktop,$(MAKECMDGOALS)),)
 include dev/dev.env
+endif
 export
 
 .PHONY: dev livekit server web desktop check fmt deploy mac-app release-mac vendor ios-core ios-sim release-ios
@@ -51,7 +53,7 @@ fmt: vendor
 
 # The former unauthenticated GET /api/join is intentionally gone.
 
-# Server, web client and VPS config → https://cubiecall.com (docs/DEPLOY.md).
+# Server, web client and VPS config for the configured deployment.
 deploy: vendor
 	deploy/deploy.sh
 
@@ -59,6 +61,6 @@ deploy: vendor
 mac-app: vendor
 	deploy/mac/package.sh
 
-# Build the Mac app and publish it at https://cubiecall.com/download/.
+# Build the Mac app and publish it on the configured site.
 release-mac: vendor
 	deploy/mac/package.sh --upload

@@ -31,11 +31,15 @@ make desktop           # sign in with your email and a code; credentials stay in
 make check             # clippy + svelte-check
 ```
 
-The iPhone app needs `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`. `make ios-sim` builds it for the Simulator; or run `make ios-core` once and open `apps/ios/Cubie.xcodeproj` (set your team under Signing to run on a phone). It talks to cubiecall.com unless launched with `-server <api> -web <site>`.
+The iPhone app needs `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`. `make ios-sim` builds it for the Simulator; or run `make ios-core` once and open `apps/ios/Cubie.xcodeproj` (set your team under Signing to run on a phone). A release uses its configured server. For a local build use the localhost defaults or pass `-server <api> -web <site>`.
 
 For local sign-in use `admin@example.test`; type the code from `dev/data/mail` (no email is sent). Create rooms while signed in. Auth/deployment details: [DEPLOY.md](docs/DEPLOY.md).
 
 To add a low-level LiveKit test participant (bypasses application auth): `lk room join --url ws://127.0.0.1:7880 --api-key cubie-dev --api-secret cubie-dev-secret-0123456789abcdef --identity bot --publish-demo spike`
+
+## Self-host
+
+Configure your primary domain in `deploy/site.env.local`. A reserve domain is optional. The [deployment guide](docs/DEPLOY.md#self-host-on-one-domain) covers the VPS, authentication, and native builds.
 
 ## Ship
 

@@ -21,9 +21,9 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>@MIN_MACOS@</string>
 	<key>SUFeedURL</key>
-	<string>https://cubiecall.com/download/current/appcast-@ARCH@.xml</string>
+	<string></string>
 	<key>SUPublicEDKey</key>
-	<string>nD/dsXZ8NtuxUGQCLhsblljZ8WMsUfdpLcRe0JB6/Vw=</string>
+	<string></string>
 	<key>SUVerifyUpdateBeforeExtraction</key>
 	<true/>
 	<key>SURequireSignedFeed</key>

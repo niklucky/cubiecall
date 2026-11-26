@@ -188,7 +188,43 @@ mod vault {
         let _ = unsafe { CredDeleteW(&HSTRING::from(target(server)), CRED_TYPE_GENERIC, None) };
     }
 }
-pub(crate) use cubie_core::http::{RequestError, request};
+pub(crate) use cubie_core::http::RequestError;
+
+pub(crate) static FAILOVER: std::sync::OnceLock<cubie_core::http::Failover> =
+    std::sync::OnceLock::new();
+
+pub(crate) fn endpoint(server: &str) -> cubie_core::http::Endpoint<&str> {
+    use cubie_core::http::Endpoint;
+    if let Some(route) = FAILOVER
+        .get()
+        .filter(|route| route.primary() == server.trim_end_matches('/'))
+    {
+        Endpoint::Redundant(route)
+    } else {
+        Endpoint::Direct(server)
+    }
+}
+
+pub(crate) fn web_origin<'a>(server: &str, web: &'a str) -> &'a str {
+    match endpoint(server) {
+        cubie_core::http::Endpoint::Redundant(route)
+            if web.trim_end_matches('/') == route.primary() =>
+        {
+            route.origin()
+        }
+        _ => web,
+    }
+}
+
+pub(crate) fn request(
+    server: &str,
+    token: Option<&str>,
+    path: &str,
+    body: Option<serde_json::Value>,
+    method: &str,
+) -> impl Future<Output = anyhow::Result<serde_json::Value>> + Send + 'static + use<> {
+    endpoint(server).request(token, path, body, method)
+}
 
 /// A completion can only modify the operation generation that started it.
 pub struct Generation<T> {

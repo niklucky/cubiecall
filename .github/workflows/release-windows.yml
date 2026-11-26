@@ -13,6 +13,11 @@ on:
 permissions:
   contents: read
 
+env:
+  CUBIE_PUBLIC_URL: ${{ vars.CUBIE_PUBLIC_URL }}
+  CUBIE_RESERVE_URL: ${{ vars.CUBIE_RESERVE_URL }}
+  CUBIE_MAC_TEAM_ID: ${{ vars.CUBIE_MAC_TEAM_ID }}
+
 concurrency:
   group: release-windows-${{ github.ref }}
   cancel-in-progress: false
@@ -49,6 +54,8 @@ jobs:
           fi
       - name: Test atomic website publication
         run: deploy/windows/test-publish.sh
+      - name: Validate the download configuration
+        run: python3 deploy/render-site.py --downloads-only "$RUNNER_TEMP/site"
 
   build:
     name: Build x64
@@ -58,7 +65,9 @@ jobs:
     env:
       CUBIE_VERSION: ${{ needs.metadata.outputs.version }}
       CUBIE_BUILD: ${{ needs.metadata.outputs.build }}
-      CUBIE_SERVER: https://cubiecall.com
+      CUBIE_SERVER: ${{ vars.CUBIE_PUBLIC_URL }}
+      CUBIE_STORAGE_ID: ${{ vars.CUBIE_STORAGE_ID }}
+      CUBIE_STORAGE_ALIASES: ${{ vars.CUBIE_STORAGE_ALIASES }}
       # libwebrtc comes built against the static C runtime, so everything
       # links it statically (.cargo/config.toml); this says so to
       # transcribe.cpp's CMake build too, whatever the generator.
@@ -174,14 +183,17 @@ jobs:
         run: |
           set -eu
           check() {
-            curl -fLsS --retry 3 --connect-timeout 15 --max-time 300 "https://cubiecall.com/download/$1" -o "$RUNNER_TEMP/live"
-            test "$(sha256sum < "$RUNNER_TEMP/live")" = "$(sha256sum < "$2")" || { echo "Published content mismatch: $1" >&2; exit 1; }
-            echo "Verified https://cubiecall.com/download/$1"
+            local url="${1%/}/download/$2"
+            curl -fLsS --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 15 --max-time 300 "$url" -o "$RUNNER_TEMP/live"
+            test "$(sha256sum < "$RUNNER_TEMP/live")" = "$(sha256sum < "$3")" || { echo "Published content mismatch: $url" >&2; exit 1; }
+            echo "Verified $url"
           }
-          check Cubie-windows-x64.zip target/windows/Cubie-windows-x64.zip
-          check "windows/releases/$CUBIE_BUILD/Cubie-windows-x64.zip" target/windows/Cubie-windows-x64.zip
-          check windows/current/version.txt target/windows/version.txt
-          printf 'Published Windows **%s (build %s)** to https://cubiecall.com/download/\n' "$CUBIE_VERSION" "$CUBIE_BUILD" >> "$GITHUB_STEP_SUMMARY"
+          for origin in "$CUBIE_PUBLIC_URL" ${CUBIE_RESERVE_URL:+"$CUBIE_RESERVE_URL"}; do
+            check "$origin" Cubie-windows-x64.zip target/windows/Cubie-windows-x64.zip
+            check "$origin" "windows/releases/$CUBIE_BUILD/Cubie-windows-x64.zip" target/windows/Cubie-windows-x64.zip
+            check "$origin" windows/current/version.txt target/windows/version.txt
+            printf 'Published Windows **%s (build %s)** to %s/download/\n' "$CUBIE_VERSION" "$CUBIE_BUILD" "${origin%/}" >> "$GITHUB_STEP_SUMMARY"
+          done
       - name: Remove deployment credentials
         if: always()
         run: rm -f "$RUNNER_TEMP/cubie-release.key" "$RUNNER_TEMP/cubie-known-hosts" "$HOME/.ssh/config"

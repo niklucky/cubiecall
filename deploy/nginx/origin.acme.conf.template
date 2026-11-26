@@ -1,9 +1,9 @@
 # First deploy only: serves the ACME challenge until a certificate exists,
-# then deploy/install.sh swaps in cubiecall.com.conf.
+# then deploy/install.sh swaps in @PRIMARY_HOST@.conf.
 server {
     listen 80;
     listen [::]:80;
-    server_name cubiecall.com www.cubiecall.com cubycall.com www.cubycall.com quipcall.com www.quipcall.com;
+    server_name @ACME_HOSTS@;
 
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/cubie-acme;
@@ -11,6 +11,6 @@ server {
     }
 
     location / {
-        return 307 https://cubiecall.com$request_uri;
+        return 307 https://@PRIMARY_HOST@$request_uri;
     }
 }

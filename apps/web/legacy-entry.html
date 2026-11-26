@@ -4,16 +4,17 @@
   <meta charset="utf-8">
   <title>Cubie</title>
   <meta name="referrer" content="no-referrer">
+  <meta name="cubie-primary" content="%VITE_CUBIE_PUBLIC_URL%">
   <script>
     // Links issued before the cutover put the token in a fragment, which
     // nginx cannot inspect. Verify it on the original browser cookie's host.
     const fragment = location.hash;
     const destination = new URLSearchParams(fragment.slice(1)).has('magic')
       ? '/signin'
-      : 'https://cubiecall.com/';
+      : document.querySelector('meta[name="cubie-primary"]').content + '/';
     location.replace(destination + fragment);
   </script>
-  <noscript><meta http-equiv="refresh" content="0;url=https://cubiecall.com/"></noscript>
+  <noscript><meta http-equiv="refresh" content="0;url=%VITE_CUBIE_PUBLIC_URL%/"></noscript>
 </head>
-<body><a href="https://cubiecall.com/">Open Cubie</a></body>
+<body><a href="%VITE_CUBIE_PUBLIC_URL%/">Open Cubie</a></body>
 </html>

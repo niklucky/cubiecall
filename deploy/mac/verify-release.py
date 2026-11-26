@@ -4,6 +4,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import plistlib
 import re
@@ -14,7 +15,6 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 SPARKLE = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
-PUBLIC_KEY = plistlib.loads(Path("deploy/mac/Info.plist").read_bytes())["SUPublicEDKey"]
 
 
 def require(condition, message):
@@ -22,10 +22,10 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def verify_signature(message, signature):
+def verify_signature(message, signature, public_key):
     signature = base64.b64decode(signature, validate=True)
     require(len(signature) == 64, "Invalid Ed25519 signature length")
-    public = base64.b64decode(PUBLIC_KEY, validate=True)
+    public = base64.b64decode(public_key, validate=True)
     require(len(public) == 32, "Invalid Sparkle public key")
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -40,7 +40,8 @@ def verify_signature(message, signature):
         require(result.returncode == 0, "Sparkle signature verification failed")
 
 
-def verify(root, architectures, expected_version=None, expected_build=None):
+def verify(root, architectures, expected_version=None, expected_build=None, *, public_url, public_key):
+    public_url = public_url.rstrip("/")
     metadata = re.fullmatch(r"([0-9]+\.[0-9]+\.[0-9]+) \(([1-9][0-9]*)\)\n?", (root / "version.txt").read_text())
     require(metadata is not None, "Invalid version.txt")
     version, build = metadata.groups()
@@ -60,7 +61,8 @@ def verify(root, architectures, expected_version=None, expected_build=None):
             require(info["CFBundleIdentifier"] == "com.quipcall.desktop", "Wrong bundle identifier")
             require(info["CFBundleShortVersionString"] == version, "ZIP version mismatch")
             require(info["CFBundleVersion"] == build, "ZIP build mismatch")
-            require(info["SUPublicEDKey"] == PUBLIC_KEY, "Sparkle public key changed")
+            require(info["SUPublicEDKey"] == public_key, "Sparkle public key changed")
+            require(info["SUFeedURL"] == f"{public_url}/download/current/appcast-{arch}.xml", "Wrong feed URL")
             with bundle.open("Cubie.app/Contents/MacOS/Cubie") as binary:
                 magic, cpu = struct.unpack("<II", binary.read(8))
             require(magic == 0xFEEDFACF and cpu == {"apple-silicon": 0x100000C, "intel": 0x1000007}[arch], "ZIP architecture mismatch")
@@ -69,7 +71,7 @@ def verify(root, architectures, expected_version=None, expected_build=None):
         require(signature is not None, "Appcast is not signed")
         length = int(signature[2])
         require(length == signature.start(), "Appcast signed length mismatch")
-        verify_signature(feed[:length], signature[1])
+        verify_signature(feed[:length], signature[1], public_key)
         items = ET.fromstring(feed).findall("./channel/item")
         require(len(items) == 1, "Expected exactly one release in each architecture feed")
         item = items[0]
@@ -77,10 +79,10 @@ def verify(root, architectures, expected_version=None, expected_build=None):
         require(item.findtext(SPARKLE + "shortVersionString") == version, "Appcast version mismatch")
         enclosure = item.find("enclosure")
         require(enclosure is not None, "Missing enclosure")
-        require(enclosure.attrib["url"] == f"https://cubiecall.com/download/releases/{build}/{archive.name}", "Wrong download URL")
+        require(enclosure.attrib["url"] == f"{public_url}/download/releases/{build}/{archive.name}", "Wrong download URL")
         contents = archive.read_bytes()
         require(int(enclosure.attrib["length"]) == len(contents), "Wrong archive length")
-        verify_signature(contents, enclosure.attrib[SPARKLE + "edSignature"])
+        verify_signature(contents, enclosure.attrib[SPARKLE + "edSignature"], public_key)
         files.extend([archive.name, feed_path.name])
         print(f"{arch}: accepted notarization, correct version/build/architecture, valid appcast and ZIP signatures")
     return files
@@ -95,7 +97,10 @@ if __name__ == "__main__":
     parser.add_argument("--write-checksums", action="store_true")
     args = parser.parse_args()
     try:
-        files = verify(args.directory, [args.arch] if args.arch else ["apple-silicon", "intel"], args.version, args.build)
+        files = verify(
+            args.directory, [args.arch] if args.arch else ["apple-silicon", "intel"], args.version, args.build,
+            public_url=os.environ["CUBIE_PUBLIC_URL"], public_key=os.environ["CUBIE_SPARKLE_PUBLIC_KEY"],
+        )
         if args.write_checksums:
             (args.directory / "SHA256SUMS").write_text("".join(
                 f"{hashlib.sha256((args.directory / name).read_bytes()).hexdigest()}  {name}\n" for name in files))

@@ -2,9 +2,12 @@
 # Exercise the first production cutover using a disposable Linux filesystem.
 set -eu
 cd "$(dirname "$0")/.."
-docker run --rm -i --network none -v "$PWD/deploy:/source:ro" python:3.11-slim-bookworm sh -se <<'CONTAINER'
+docker run --rm -i --network none -e CUBIE_TEST_FRESH_SITE="${CUBIE_TEST_FRESH_SITE:-}" \
+    -v "$PWD/deploy:/source:ro" python:3.11-slim-bookworm sh -se <<'CONTAINER'
 mkdir -p /bundle/web /etc/sudoers.d /opt/cubie/bin /opt/quipcall /var/lib/quipcall /etc/nginx/sites-enabled /etc/nginx/sites-available /etc/systemd/system /etc/letsencrypt/live/cubiecall.com /mock/bin /mock/units
 cp -R /source /bundle/deploy
+CUBIE_PUBLIC_URL=https://cubiecall.com CUBIE_LEGACY_URL=https://quipcall.com CUBIE_REDIRECT_HOSTS=cubycall.com \
+    python3 /bundle/deploy/render-site.py /bundle/deploy/rendered
 touch /bundle/cubie-server /etc/letsencrypt/live/cubiecall.com/fullchain.pem
 echo legacy > /etc/nginx/sites-available/quipcall.com.conf
 ln -s ../sites-available/quipcall.com.conf /etc/nginx/sites-enabled/quipcall.com.conf
@@ -69,6 +72,30 @@ chmod +x /mock/bin/certbot
 for name in nginx sleep journalctl visudo; do ln -s /bin/true "/mock/bin/$name"; done
 chmod +x /mock/bin/systemctl /mock/bin/curl /opt/cubie/bin/livekit-server
 export PATH=/mock/bin:$PATH
+if [ "$CUBIE_TEST_FRESH_SITE" = 1 ]; then
+    CUBIE_PUBLIC_URL=https://call.example.test python3 /bundle/deploy/render-site.py /bundle/deploy/rendered
+    rm /bundle/deploy/ci-deploy.pub
+    rm -r /etc/nginx/sites-enabled/quipcall.com.conf /opt/quipcall /var/lib/quipcall
+    printf '%s\n' 'RESEND_API_KEY=fixture' 'CUBIE_MAIL_FROM="Cubie <login@call.example.test>"' \
+        'CUBIE_BOOTSTRAP_EMAIL=admin@call.example.test' > /bundle/deploy/auth.env
+    cat >/mock/bin/certbot <<'SH'
+#!/bin/sh
+for host in call.example.test www.call.example.test; do
+    case " $* " in *" -d $host "*) ;; *) exit 1 ;; esac
+done
+case " $* " in *"cubiecall.com"*|*"quipcall.com"*) exit 1 ;; esac
+SH
+    sh /bundle/deploy/install.sh
+    test -L /etc/nginx/sites-enabled/call.example.test.conf
+    test -x /opt/cubie/bin/cubie-app
+    test ! -e /opt/cubie/ci/.ssh/authorized_keys
+    test ! -e /opt/cubie/download/install.sh
+    test ! -f /bundle/deploy/rendered/reserve.conf
+    grep -qx 'CUBIE_PUBLIC_URL=https://call.example.test' /opt/cubie/public.env
+    grep -qx 'CUBIE_RESERVE_URL=' /opt/cubie/public.env
+    echo 'Single-origin install without GitHub access passed.'
+    exit
+fi
 python3 - <<'PY'
 import os, sqlite3
 db = sqlite3.connect('/var/lib/quipcall/quipcall.db')
@@ -132,7 +159,9 @@ grep -qx 'restart cubie-livekit' /mock/service-log
 : >/mock/service-log
 install_app
 grep -qx 'start cubie-livekit' /mock/service-log
-grep -qx reload /mock/service-log
+# An existing site needs the trusted proxy headers before the API restarts.
+test "$(head -n 1 /mock/service-log)" = reload
+grep -qx 'restart cubie-server' /mock/service-log
 test ! -e /opt/cubie/.cutover-pending
 python3 - <<'PY'
 import sqlite3

@@ -1,4 +1,4 @@
-# cubiecall.com: web client, API and LiveKit signalling behind TLS.
+# @PRIMARY_HOST@: web client, API and LiveKit signalling behind TLS.
 # Media doesn't pass through nginx: clients reach LiveKit directly on
 # UDP 7882 (TCP 7881 when UDP is blocked).
 
@@ -7,28 +7,33 @@ map $http_upgrade $cubie_connection {
     ''      close;
 }
 
+# Retain the reserve marker for the previous API binary during an upgrade.
+map $realip_remote_addr $cubie_forwarded_host {
+@RESERVE_PEER_MAP@
+    default       "";
+}
+
 # The old host's secure session cookie is only visible over HTTPS.
 map $host $cubie_https_host {
-    default cubiecall.com;
-    quipcall.com quipcall.com;
-    www.quipcall.com quipcall.com;
+    default @PRIMARY_HOST@;
+@LEGACY_HTTP_MAP@
 }
 
 # Old email links used /#magic=... and have no request query or cookie.
 map "$host:$cookie_qc_session:$request_uri" $cubie_check_fragment {
     default 0;
-    "quipcall.com::/" 1;
+@LEGACY_FRAGMENT_MAP@
 }
 
 map "$host:$cookie_qc_session" $cubie_redirect_web {
     default 0;
-    "quipcall.com:" 1;
+@LEGACY_GUEST_MAP@
 }
 
 server {
     listen 80;
     listen [::]:80;
-    server_name cubiecall.com www.cubiecall.com cubycall.com www.cubycall.com quipcall.com www.quipcall.com;
+    server_name @CERTIFICATE_HOSTS@;
 
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/cubie-acme;
@@ -43,10 +48,10 @@ server {
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
-    server_name www.cubiecall.com www.cubycall.com www.quipcall.com;
+    server_name @WWW_HOSTS@;
 
-    ssl_certificate /etc/letsencrypt/live/cubiecall.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/cubiecall.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/@PRIMARY_HOST@/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/@PRIMARY_HOST@/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
 
     return 308 https://$cubie_https_host$request_uri;
@@ -55,10 +60,10 @@ server {
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
-    server_name cubiecall.com cubycall.com quipcall.com;
+    server_name @ORIGIN_HOSTS@;
 
-    ssl_certificate /etc/letsencrypt/live/cubiecall.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/cubiecall.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/@PRIMARY_HOST@/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/@PRIMARY_HOST@/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
 
     add_header Strict-Transport-Security "max-age=31536000" always;
@@ -76,7 +81,7 @@ server {
 
     # Sign-in must set the cookie on the origin that issued the email.
     location = /signin {
-        if ($host = cubycall.com) { return 308 https://cubiecall.com$request_uri; }
+@CANONICAL_REDIRECTS@
         try_files /index.html =404;
         expires -1;
     }
@@ -93,11 +98,15 @@ server {
     }
 
     location /api/ {
+@RESERVE_REAL_IP@
         proxy_pass http://127.0.0.1:4601;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $cubie_forwarded_host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $remote_addr;
+        # The API identifies the edge by this immediate peer. X-Real-IP
+        # above is the browser's address, restored only for the trusted edge.
+        proxy_set_header X-Forwarded-For $realip_remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
@@ -133,7 +142,7 @@ server {
 
     location / {
         # Native API and WebSocket requests use the locations above directly.
-        if ($host = cubycall.com) { return 308 https://cubiecall.com$request_uri; }
+@CANONICAL_REDIRECTS@
         # Existing guests can only present their host-bound session here.
         # A temporary redirect avoids caching the cookie-dependent decision.
         if ($cubie_check_fragment) { rewrite ^ /legacy-entry.html last; }
@@ -143,7 +152,7 @@ server {
             add_header X-Content-Type-Options nosniff always;
             add_header Cache-Control "private, no-store" always;
             add_header Referrer-Policy no-referrer always;
-            return 307 https://cubiecall.com$request_uri;
+            return 307 https://@PRIMARY_HOST@$request_uri;
         }
         try_files $uri /index.html;
         expires -1;

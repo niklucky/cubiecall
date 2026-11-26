@@ -5,7 +5,8 @@
 
 Writes Cubie-windows-x64.zip (Cubie.exe and README.txt), version.txt
 ("0.1.0 (1234)", as the Mac's) and SHA256SUMS. CUBIE_VERSION and CUBIE_BUILD
-name the version, as they do for the build itself.
+name the version, as they do for the build itself. CUBIE_PUBLIC_URL and the
+optional CUBIE_RESERVE_URL supply the download links in the README.
 """
 import hashlib
 import os
@@ -29,12 +30,13 @@ Cubie for Windows (test build)
 Cubie asks for the email you were invited with and sends it a code.
 Windows 10 or 11, 64-bit.
 
-Cubie doesn't update itself on Windows yet. For a newer version, download
-it again from https://cubiecall.com/download/ and replace Cubie.exe.
+Cubie doesn't update itself on Windows yet. To update, replace Cubie.exe
+with the one from a new download:
+{download_links}
 
 Something broke? Send the log: %LOCALAPPDATA%\\Cubie\\Logs\\cubie.log
 (paste the path into File Explorer's address bar).
-""".replace("\n", "\r\n")
+"""
 
 
 def workspace_version():
@@ -52,16 +54,23 @@ def main():
         raise SystemExit(f"Not a Windows executable: {exe}")
     version = os.environ.get("CUBIE_VERSION") or workspace_version()
     build = os.environ.get("CUBIE_BUILD", "")
+    public = os.environ.get("CUBIE_PUBLIC_URL", "")
+    reserve = os.environ.get("CUBIE_RESERVE_URL", "")
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         raise SystemExit(f"Version must be X.Y.Z, not {version!r}")
     if not re.fullmatch(r"[0-9]+", build):
         raise SystemExit("Set CUBIE_BUILD to the build number")
+    if not public:
+        raise SystemExit("Set CUBIE_PUBLIC_URL to the primary HTTPS origin")
+
+    links = "\n".join(f"  {origin.rstrip('/')}/download/" for origin in (public, reserve) if origin)
+    readme = README.format(download_links=links).replace("\n", "\r\n")
 
     out.mkdir(parents=True, exist_ok=True)
     archive = out / ZIP
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         z.write(exe, "Cubie.exe")
-        z.writestr("README.txt", README)
+        z.writestr("README.txt", readme)
     # Bytes, not text: written on Windows, these would get CRLF, which the
     # publisher's build-number match and sha256sum on the host don't take.
     (out / "version.txt").write_bytes(f"{version} ({build})\n".encode())

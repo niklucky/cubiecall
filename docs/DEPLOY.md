@@ -10,7 +10,21 @@ make release-mac              # from this Mac: the Mac app
 make mac-app                  # build only → target/mac/
 ```
 
-Set `CUBIE_HOST=user@host` for `make deploy` to deploy somewhere else.
+## Self-host on one domain
+
+On an x86-64 Linux VPS with systemd, install nginx, Certbot, Python 3, and the usual SSH and curl tools. The initial deployment connects over SSH as root. Point your domain at the box. Allow HTTP and HTTPS and LiveKit's media ports (UDP 7882 and TCP 7881).
+
+```sh
+cp deploy/site.env.example deploy/site.env.local
+cp deploy/auth.env.example deploy/auth.env.local
+# Set CUBIE_HOST and CUBIE_PUBLIC_URL in site.env.local.
+# Set the Resend key, verified sender, and bootstrap email in auth.env.local.
+make deploy
+```
+
+`deploy/site.env.local` holds public settings and is read by the deployment and release scripts. Export the same settings in the shell or set `CUBIE_SITE_ENV` to use a different file. The installer renders the nginx site and download page and writes public runtime settings to `/opt/cubie/public.env`. The server binary is independent of the domain. The server derives its LiveKit signaling URL from the primary origin when `LIVEKIT_PUBLIC_URL` is unset. Set that variable if you run the API with separate signaling.
+
+The single-origin setup needs no reserve, alias, or GitHub credentials. To build your own Mac executable against it, run `make vendor`, then `CUBIE_SERVER=https://call.example.com cargo build --release -p cubie-desktop`. The desktop also accepts `--server`; supply `--reserve` explicitly if you want failover with an overridden primary. For development without build settings the API and web client keep their localhost defaults.
 
 ## Order of a release
 
@@ -58,13 +72,23 @@ Browser handoffs use `quipcall://` to open installed apps from either release. T
 - `/opt/cubie/secrets.env` (root, 0600) holds the LiveKit API key and secret. `install.sh` generates it on the first deploy and it never leaves the box. It also holds the auth settings below. Rotate LiveKit keys in place; do not delete the email configuration.
 - No host firewall. LiveKit binds only to `eth0` (public IPv4 + IPv6), not to the Docker bridges.
 
+## Optional reserve domain
+
+Set `CUBIE_RESERVE_URL` to the reserve HTTPS origin, `CUBIE_RESERVE_PROXY_IP` to the edge IPv4 address as seen by the origin, and `CUBIE_RESERVE_UPSTREAM_IP` to the origin IPv4 address as seen by the edge. The edge forwards the website, API, downloads, and LiveKit WebSocket signaling over TLS verified against the primary hostname. Both domains serve the same deployment and use the same accounts and rooms. Browser cookies remain host-specific.
+
+Source your site settings and run `python3 deploy/render-site.py target/site`. On the edge, enable the generated `reserve.acme.conf` and reload nginx after `nginx -t`. Once DNS is live, issue the reserve certificate with `certbot certonly --webroot -w /var/www/cubie-acme -d <reserve-host>` and replace the challenge vhost with `reserve.conf`. The edge needs `/var/www/cubie-acme` and a renewal hook that runs `nginx -t && systemctl reload nginx`. Rerender if either VPS address changes. Leave the three settings empty for an installation with one domain.
+
+Apply the reviewed origin configuration with `make deploy` before merging the API change or publishing the Mac build. The installer reloads nginx before starting the updated API. Apply the rendered edge config separately. GitHub's server workflow only replaces the API and web app.
+
+A Mac release built with a reserve checks the primary first and rechecks it in the background while using the reserve. Sparkle uses the reachable domain for the signed feed and archive. Audio and video connect to the origin's LiveKit media ports. If the networks you serve block those ports or the origin IP, they need a reachable TURN relay.
+
 ## How `make deploy` works
 
 `deploy/deploy.sh` builds locally and runs `deploy/install.sh` on the box:
 
 1. The server, cross-compiled to a static Linux binary with `cargo zigbuild` (`x86_64-unknown-linux-musl`; Zig compiles bundled SQLite and TLS C code), and the web client (`pnpm build`). Install `zig` and `cargo-zigbuild` on the build Mac first.
 2. One tarball over SSH to a private temporary directory under `/opt/cubie-incoming.*`, removed afterwards.
-3. `install.sh` (idempotent): user and directories, LiveKit at the pinned version, keys, configs, units, the server and web files (`deploy/app.sh`), nginx site, health checks (`/api/health` through nginx, LiveKit on 7880), then the account GitHub Actions deploys with (`deploy/ci-access.sh`).
+3. `install.sh` (idempotent): user and directories, LiveKit at the pinned version, keys, configs, units, the server and web files (`deploy/app.sh`), nginx site, health checks (`/api/health` through nginx, LiveKit on 7880), and, if `CUBIE_CI_PUBLIC_KEY_FILE` is set, the account GitHub Actions deploys with.
 
 Guard rails, because the box is shared:
 - LiveKit restarts only when its binary, config or unit changed. A restart drops every call in progress. The API server always restarts; that takes milliseconds and keeps calls alive.
@@ -78,11 +102,11 @@ The **Deploy server and web** workflow (`.github/workflows/deploy.yml`) runs on 
 1. Two jobs on `ubuntu-24.04`: `cargo test -p cubie-server`, then the static binary (`x86_64-unknown-linux-musl`, compiled with `musl-tools` and Rust 1.99.0); `pnpm check`, `pnpm test`, then `pnpm build`. A failed test deploys nothing.
 2. The deploy job sends one bundle over SSH: `cubie-server`, `web/` and `revision` (the commit).
 3. On the box `deploy/app.sh receive` checks the bundle (those three, plain files only), keeps what it replaces in `/opt/cubie/previous`, swaps the server and the web client, restarts the server and waits for `/api/health`. If it doesn't answer in half a minute, the previous server, web client and database go back and the run fails. The same build sent again changes nothing.
-4. The job then checks `https://cubiecall.com/api/health` and that the public page is the one it built.
+4. The job checks `/api/health` and the public page at the configured `CUBIE_PUBLIC_URL`.
 
 It deploys the application only. nginx, the systemd units, LiveKit, certificates, `secrets.env`, the download page and the installer itself change with `make deploy`, which uses the same `deploy/app.sh` steps and the same lock, so the two can't run into each other.
 
-What it may do on the box is one thing. Its SSH key signs in as `cubie-deploy`, an account with no files of its own (its `authorized_keys` in `/opt/cubie/ci` belongs to root) and no shell session: every connection runs `sudo /opt/cubie/bin/cubie-app receive`, whatever it asked for, and the rule in `/etc/sudoers.d/cubie-deploy` allows that command alone. Nothing in a bundle runs as root; the server runs as `cubie`. `deploy/ci-access.sh` sets this up on every `make deploy`, from the public key in `deploy/ci-deploy.pub`.
+What it may do on the box is one thing. Its SSH key signs in as `cubie-deploy`, an account with no files of its own (its `authorized_keys` in `/opt/cubie/ci` belongs to root) and no shell session: every connection runs `sudo /opt/cubie/bin/cubie-app receive`, whatever it asked for, and the rule in `/etc/sudoers.d/cubie-deploy` allows that command alone. Nothing in a bundle runs as root; the server runs as `cubie`. Set `CUBIE_CI_PUBLIC_KEY_FILE` to your CI public key to provision this access. The official deployment supplies `deploy/ci-deploy.pub`. A fresh install with no key file provisions no CI account.
 
 On GitHub the key lives in the `production` environment, which accepts the `main` branch only, so a workflow on another branch can't read it:
 
@@ -92,7 +116,15 @@ On GitHub the key lives in the `production` environment, which accepts the `main
 | `DEPLOY_KNOWN_HOSTS` (secret) | The box's host key, from the release Mac's `known_hosts` |
 | `CUBIE_DEPLOY_HOST` (variable) | `cubie-deploy@testron.dev` |
 
-To replace the key: `ssh-keygen -t ed25519 -N '' -C cubie-github-deploy -f key`, put `key.pub` in `deploy/ci-deploy.pub`, `make deploy`, `gh secret set DEPLOY_KEY --env production < key`, and delete `key`. To switch deploys off, disable the workflow, or remove `/etc/sudoers.d/cubie-deploy` on the box.
+To replace the key, generate a new Ed25519 pair, point `CUBIE_CI_PUBLIC_KEY_FILE` at its public half and run `make deploy`. Store the private half as the `DEPLOY_KEY` secret in the production environment. To switch deploys off, disable the workflow, or remove `/etc/sudoers.d/cubie-deploy` on the box.
+
+The workflows read `CUBIE_PUBLIC_URL`, optional `CUBIE_RESERVE_URL`, and optional `CUBIE_LEGACY_URL` from repository variables. Keep infrastructure settings such as `CUBIE_REDIRECT_HOSTS` and the two reserve IPs consistent with the local rollout config. For the official Mac and iPhone builds, set `CUBIE_STORAGE_ID=https://quipcall.com` and `CUBIE_STORAGE_ALIASES="https://quipcall.com https://cubycall.com"` to preserve existing Keychain and history keys. The primary and reserve build origins share that identity. New self-hosted installations can leave both storage settings empty.
+
+For a manual rollout of the official deployment, export the repository variables into a local site settings file, then set `CUBIE_HOST` and any local paths such as `CUBIE_CI_PUBLIC_KEY_FILE` there.
+
+```sh
+gh variable list --json name,value --jq '.[] | select(.name | startswith("CUBIE_")) | "\(.name)=\(.value | @sh)"' > deploy/site.env.local
+```
 
 ## Mac app
 
@@ -131,7 +163,7 @@ Run `python3 -m unittest discover -s deploy/mac -p 'test_ci*.py'` for tag/versio
 
 The Quby icon is bundled from `apps/desktop/assets/$ICON.icns` into `Contents/Resources` before signing and selected by `CFBundleIconFile`; `ICON` in `deploy/mac/package.sh` is `QubyTransparent` (the cube on transparency) or `Quby` (the earlier black tile). Artwork sources, transparent exports, and regeneration instructions are in [assets/branding](../assets/branding/README.md). The web favicon files ship from `apps/web/public` through the normal Vite build.
 
-`deploy/mac/package.sh` builds one app per architecture (Apple Silicon and Intel), signs with Developer ID and the Hardened Runtime, notarizes each app with Apple, staples its ticket, verifies the signature and Gatekeeper assessment, and creates the final ZIP. Sparkle's helpers and framework are signed from the inside out with the same identity; the app has camera and audio-input entitlements, without disabling library validation. Notarization failure prevents publishing archives or update feeds. Submission results and full Apple logs remain in `target/mac/Cubie-<architecture>-notary*.json`. Two slices in one binary would be about 115 MB. Sparkle adds about 3 MiB to each app bundle. Release builds have `https://cubiecall.com` baked in (`CUBIE_SERVER` at build time), and `MACOSX_DEPLOYMENT_TARGET=12.3`, the release ScreenCaptureKit appeared in. Below 10.14.4 the linker would also point the Swift overlay `libswiftCoreMedia` at `@rpath`, and the Intel app wouldn't launch. The main executable links only macOS libraries and loads Sparkle from its own bundle. For a custom `CUBIE_SERVER`, use `make mac-app` and distribute the notarized ZIPs manually.
+`deploy/mac/package.sh` builds and signs one app per architecture, notarizes and staples both bundles, then verifies their signatures. Set `CUBIE_MAC_TEAM_ID` and `CUBIE_SIGNING_IDENTITY` for your Developer ID certificate and configure the `cubie-notary` notarytool profile. CI reads the team, fingerprint and `CUBIE_SPARKLE_PUBLIC_KEY` as repository variables. Certificate, notarization, and Sparkle private-key credentials stay in GitHub secrets. Packaging uses the configured `CUBIE_PUBLIC_URL` and optional `CUBIE_RESERVE_URL`. A custom `CUBIE_SERVER` can be built with `make mac-app`; matching public and server URLs are required when publishing a signed update feed.
 
 Download the matching ZIP in a browser, unzip it, and move Cubie into Applications before opening it so Sparkle can replace it in place. macOS may show its normal downloaded-app confirmation; notarized releases do not need the Privacy & Security → Open Anyway override. Alternatively, `curl -fsSL https://cubiecall.com/download/install.sh | sh` picks the architecture and installs the same release.
 
@@ -143,7 +175,7 @@ macOS still requires user consent for microphone, camera and Screen Recording. T
 
 The first Sparkle-enabled release needs a one-time install from the download page. After that, Cubie checks for updates in the background and installs them when the app quits. Users can also choose **Cubie → Check for Updates…** to install and relaunch immediately.
 
-`make release-mac` signs the appcasts and final stapled ZIPs with the existing Sparkle Ed25519 key stored under the account `com.quipcall.desktop` in the release Mac's login Keychain. Keeping this key lets installed self-signed releases verify the transition to Developer ID. The public key is pinned in `deploy/mac/Info.plist`. If macOS asks whether `generate_appcast` may use the key, choose **Always Allow**. **Back up the private key** using `"$(deploy/mac/sparkle.sh)/bin/generate_keys" --account com.quipcall.desktop -x <backup-file>` and keep that file in protected storage. To restore it on a new release Mac, use the same command with `-f <backup-file>` in place of `-x <backup-file>`. The Developer ID signing identity and notarization profile are also needed. Run `deploy/mac/package.sh --appcast` after `make vendor` to generate signed feeds locally. Update the download page's installation instructions only alongside the first notarized public release.
+`make release-mac` signs the appcasts and final stapled ZIPs with the existing Sparkle Ed25519 key stored under the account `com.quipcall.desktop` in the release Mac's login Keychain. Keeping this key lets installed self-signed releases verify the transition to Developer ID. Set `CUBIE_SPARKLE_PUBLIC_KEY` to the matching Ed25519 public key. The build embeds it into Info.plist and the release verifier uses the same value. If macOS asks whether `generate_appcast` may use the key, choose **Always Allow**. **Back up the private key** using `"$(deploy/mac/sparkle.sh)/bin/generate_keys" --account com.quipcall.desktop -x <backup-file>` and keep that file in protected storage. To restore it on a new release Mac, use the same command with `-f <backup-file>` in place of `-x <backup-file>`. The Developer ID signing identity and notarization profile are also needed. Run `deploy/mac/package.sh --appcast` after `make vendor` to generate signed feeds locally. Update the download page's installation instructions only alongside the first notarized public release.
 
 The publisher puts immutable ZIPs at `/download/releases/<build>/` and switches both architecture feeds at `/download/current/` together. Existing manual download URLs point to the current release. Keep earlier ZIPs available for copies of Cubie that already fetched an earlier appcast. Local builds default to the Git commit count; after CI takes over, set `CUBIE_BUILD` explicitly higher than `/download/version.txt` for any local recovery release. `CUBIE_VERSION` overrides the displayed version; otherwise the Cargo workspace version is used. If a failed publish already placed the numbered release directory on the server, retry with a higher `CUBIE_BUILD`.
 
@@ -153,6 +185,8 @@ The app logs to `~/Library/Logs/Cubie/cubie.log` when started from Finder (the p
 
 The **Release Windows app** workflow (`.github/workflows/release-windows.yml`) builds `Cubie.exe` for 64-bit Windows on `windows-2025` with Rust 1.99.0. A `vX.Y.Z` tag runs it alongside the Mac release and publishes it. Actions → **Release Windows app** → **Run workflow** only builds: the zip is the run's `windows-x64` artifact, for trying a build before tagging. As with the Mac's, a manual run never publishes.
 
+The workflow builds in `CUBIE_PUBLIC_URL`, the optional `CUBIE_RESERVE_URL`, and the same storage settings as the Mac release. It also uses the configured domains in the ZIP's download instructions.
+
 The build isn't signed. Testers unzip it and open `Cubie.exe`; SmartScreen then says "Windows protected your PC", and **More info** → **Run anyway** opens it (once per downloaded copy). The zip's `README.txt` and the download page say so. There are no automatic updates on Windows yet: testers download the zip again for a newer build.
 
 - Release builds need a Windows host: GPUI compiles its shaders with the Windows SDK's `fxc.exe` then. On this Mac, `cargo xwin` (`cargo install cargo-xwin`, `brew install llvm lld ninja`) checks and builds debug builds only: `PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH" cargo xwin build --target x86_64-pc-windows-msvc -p cubie-desktop`.
@@ -160,7 +194,7 @@ The build isn't signed. Testers unzip it and open `Cubie.exe`; SmartScreen then 
 - `apps/desktop/build.rs` embeds the icon (`apps/desktop/assets/Cubie.ico`, made by `dev/generate-branding.mjs` from the Mac icon's cube) and the version (`CUBIE_VERSION`, `CUBIE_BUILD`), with the Windows SDK's `rc.exe` or, cross-compiling, `llvm-rc` (`RC` names another). The manifest (Common Controls 6, which GPUI's `TaskDialogIndirect` needs, and per-monitor DPI) is GPUI's own.
 - `deploy/windows/package.py` makes `Cubie-windows-x64.zip` (`Cubie.exe` and `README.txt`). The build job then checks the zip, the version resource, and that `Cubie.exe` starts at all: an unknown flag makes it print its usage and exit 2 before any window opens.
 
-Publishing uses the Mac release's SSH access (`MACOS_DEPLOY_KEY`, `MACOS_DEPLOY_KNOWN_HOSTS`, `CUBIE_RELEASE_HOST`) and its staging directory, and touches none of the Mac's files. `deploy/windows/upload.sh` checks the zip's SHA-256 on the host; `deploy/windows/publish.sh` keeps each build at `/download/windows/releases/<build>/Cubie-windows-x64.zip`, switches `/download/windows/current` to it, and points the stable https://cubiecall.com/download/Cubie-windows-x64.zip there. The host refuses a build number that isn't newer than `/download/windows/current/version.txt`. Build numbers come from `deploy/mac/ci-metadata.py` with this workflow's own run number, so they don't match the Mac's for the same tag. The workflow runs `deploy/windows/test-publish.sh` (Linux) first. The zip isn't attached to the GitHub Release (the Mac workflow makes that), and the download page with the Windows link goes live with the Mac release from the same tag, or with `make deploy`.
+Publishing uses the Mac release's SSH access (`MACOS_DEPLOY_KEY`, `MACOS_DEPLOY_KNOWN_HOSTS`, `CUBIE_RELEASE_HOST`) and its staging directory. `deploy/windows/upload.sh` checks the zip's SHA-256 on the host and publishes the rendered download page. `deploy/windows/publish.sh` keeps each build at `/download/windows/releases/<build>/Cubie-windows-x64.zip` and switches `/download/windows/current` to it. The release job verifies the stable `/download/Cubie-windows-x64.zip` URL and the versioned files on both configured domains. The host refuses a build number that isn't newer than `/download/windows/current/version.txt`. Windows build numbers come from `deploy/mac/ci-metadata.py` with the Windows workflow's run number. The workflow runs `deploy/windows/test-publish.sh` on Linux before building. Find the Windows ZIP on the download site.
 
 ## Logs and status
 
@@ -237,7 +271,7 @@ Migration 0007 adds sign-in codes: a challenge and an `app` flag on queued mail,
 
 Guest creation is capped separately at 30 new identities/hour and 100/day per IP. Existing sessions are reused without consuming that quota. Auth cleanup removes expired credentials and unreferenced guest identities in batches, retaining durable membership/revocation and pending approval references. It runs separately from LiveKit room cleanup. Migration 0005 indexes guest-reference lookups so pruning does not scan entire child tables for each guest. Mac browser approval does not preflight or redeem the destination room; admission is checked by the Mac after identity approval.
 
-**iPhone app.** `make release-ios CUBIE_IOS_TEAM=<team id>` (`deploy/ios/release.sh`) archives the app for a real iPhone, lets Xcode sign it for that team and uploads it to App Store Connect, where TestFlight picks it up; `--no-upload` stops at the `.ipa`. It signs in as the account in Xcode's settings, or with an App Store Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, the key in `~/.appstoreconnect/private_keys/`). The app's record has to exist in App Store Connect first, made by hand with the same bundle id (`com.cubie.ios` unless `CUBIE_IOS_BUNDLE` says otherwise). Every upload needs a build number above the last; the script uses the time. The app talks to cubiecall.com; its Contacts tab needs the server below deployed.
+**iPhone app.** `make release-ios CUBIE_IOS_TEAM=<team id>` (`deploy/ios/release.sh`) archives the app for a real iPhone, lets Xcode sign it for that team and uploads it to App Store Connect, where TestFlight picks it up; `--no-upload` stops at the `.ipa`. It signs in as the account in Xcode's settings, or with an App Store Connect API key (`ASC_KEY_ID`, `ASC_ISSUER_ID`, the key in `~/.appstoreconnect/private_keys/`). The app's record has to exist in App Store Connect first, made by hand with the same bundle id (`com.cubie.ios` unless `CUBIE_IOS_BUNDLE` says otherwise). Every upload needs a build number above the last; the script uses the time. The archive uses `CUBIE_SERVER` or `CUBIE_PUBLIC_URL` from the release settings.
 
 `POST /api/contacts/match` (for the phone's Contacts tab) takes up to 1,000 SHA-256 hashes of lowercased email addresses and returns the hash and display name of each that belongs to another account. Signed-in accounts only (guests get 403), 20 requests an hour and 10,000 addresses a day per account (a hit gives a name back, so guessing is rationed); nothing from the request is stored or logged. The route has its own body limit (70 KB); every other route keeps 8 KB. It needs no migration; older apps never call it.
 
