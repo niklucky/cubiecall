@@ -4,7 +4,7 @@
 //! Windows are views onto this model. Which windows exist follows from the
 //! mode and the participants; `sync_windows` opens and closes them.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -370,12 +370,25 @@ pub struct Call {
     /// Who joined, left, shared and recorded, for the call's timeline.
     pub events: Vec<CallEvent>,
     windows: Windows,
+    /// How to reach the server, to join again.
+    args: Args,
+    /// Asking the server to let you in.
+    joining: Option<Task<()>>,
+    /// The connection was lost and you're joining again: the tries that
+    /// failed so far.
+    rejoin: Option<usize>,
+    /// You, as your earlier connections: the server may still show one
+    /// for a while after you joined again.
+    former: HashSet<String>,
     _tasks: Vec<Task<()>>,
     _models: gpui::Subscription,
     _settings: gpui::Subscription,
 }
 
 impl EventEmitter<Ended> for Call {}
+
+/// Seconds between tries to join again after the connection was lost.
+const REJOIN_BACKOFF: [u64; 6] = [1, 2, 4, 8, 15, 30];
 
 impl Call {
     /// Join `room` and show the call in minimal mode.
@@ -471,60 +484,7 @@ impl Call {
             can_transcribe: None,
         });
 
-        let join = engine.join_at(
-            crate::auth::endpoint(&args.server),
-            &room.id,
-            args.session.as_deref().unwrap_or_default(),
-        );
-        let expected_session = args.session.clone();
-        let link_args = args.clone();
-        let join_task = cx.spawn(async move |this, cx| {
-            let result = join.await;
-            let _ = this.update(cx, |call, cx| {
-                if call.status != Status::Joining {
-                    return;
-                }
-                call.waiting_for = None;
-                match result {
-                    Ok(info) => {
-                        call.web_url = link_args.web_origin().to_owned();
-                        if let Some(name) = info
-                            .room_name
-                            .as_deref()
-                            .filter(|name| !name.trim().is_empty())
-                        {
-                            // Preserve an explicitly saved local alias, otherwise
-                            // use the authoritative name for header and history.
-                            if call.room.one_time {
-                                call.room.name = name.to_owned();
-                            }
-                        }
-                        call.me.update(cx, |me, cx| {
-                            me.identity = info.identity.clone();
-                            cx.notify();
-                        });
-                        call.engine.connect(info);
-                    }
-                    Err(e) if crate::auth::unauthorized(&e) => {
-                        let room = call.room.id.clone();
-                        call.leave_now(cx);
-                        // Ended first returns Home; then recover the exact failed
-                        // session, without overwriting a newer account switch.
-                        cx.defer(move |cx| {
-                            Shell::global(cx).update(cx, |shell, cx| {
-                                if shell.expire_session(expected_session.as_deref(), cx) {
-                                    shell.sign_in(Some(room), cx);
-                                }
-                            })
-                        });
-                    }
-                    Err(e) => call.fail(format!("{e:#}"), cx),
-                }
-                cx.notify();
-            });
-        });
-
-        Self {
+        let mut call = Self {
             room,
             web_url: args.web_origin().to_owned(),
             engine,
@@ -572,11 +532,145 @@ impl Call {
             people: BTreeSet::new(),
             events: Vec::new(),
             windows: Windows::default(),
-            _tasks: vec![events_task, join_task, key_task],
+            args: args.clone(),
+            joining: None,
+            rejoin: None,
+            former: HashSet::new(),
+            _tasks: vec![events_task, key_task],
             _models: models_task,
             // Settings may change the model, and with it what this Mac can do.
             _settings: cx.observe(&Shell::global(cx), |call, _, cx| call.advertise(cx)),
+        };
+        call.join(Duration::ZERO, cx);
+        call
+    }
+
+    /// Ask the server to let you in, after `delay`, then connect.
+    fn join(&mut self, delay: Duration, cx: &mut Context<Self>) {
+        let args = self.args.clone();
+        let room = self.room.id.clone();
+        self.joining = Some(cx.spawn(async move |this, cx| {
+            if !delay.is_zero() {
+                cx.background_executor().timer(delay).await;
+            }
+            let Ok(join) = this.update(cx, |call, _| {
+                call.engine.join_at(
+                    crate::auth::endpoint(&args.server),
+                    &room,
+                    args.session.as_deref().unwrap_or_default(),
+                )
+            }) else {
+                return;
+            };
+            let result = join.await;
+            let _ = this.update(cx, |call, cx| {
+                if call.status != Status::Joining {
+                    return;
+                }
+                call.waiting_for = None;
+                match result {
+                    Ok(info) => {
+                        call.web_url = args.web_origin().to_owned();
+                        if let Some(name) = info
+                            .room_name
+                            .as_deref()
+                            .filter(|name| !name.trim().is_empty())
+                        {
+                            // Preserve an explicitly saved local alias, otherwise
+                            // use the authoritative name for header and history.
+                            if call.room.one_time {
+                                call.room.name = name.to_owned();
+                            }
+                        }
+                        call.me.update(cx, |me, cx| {
+                            me.identity = info.identity.clone();
+                            cx.notify();
+                        });
+                        call.engine.connect(info);
+                    }
+                    Err(e) if crate::auth::unauthorized(&e) => {
+                        let room = call.room.id.clone();
+                        let expected_session = args.session.clone();
+                        call.leave_now(cx);
+                        // Ended first returns Home; then recover the exact failed
+                        // session, without overwriting a newer account switch.
+                        cx.defer(move |cx| {
+                            Shell::global(cx).update(cx, |shell, cx| {
+                                if shell.expire_session(expected_session.as_deref(), cx) {
+                                    shell.sign_in(Some(room), cx);
+                                }
+                            })
+                        });
+                    }
+                    // Still waking up: the network isn't back yet.
+                    Err(e) if call.rejoin.is_some() && cubie_core::http::transient(&e) => {
+                        tracing::info!("joining again: {e:#}");
+                        call.try_rejoin_later(cx);
+                    }
+                    Err(e) => call.fail(format!("{e:#}"), cx),
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    /// The connection was lost (the Mac slept, say) and LiveKit gave up
+    /// reconnecting: join again with a new token, as you were. Your mic
+    /// opens as it was, your camera comes back; a screen share needs its
+    /// picker, so it stops.
+    fn rejoin(&mut self, reason: &str, cx: &mut Context<Self>) {
+        tracing::warn!(reason, "connection lost: joining again");
+        self.former.insert(self.me.read(cx).identity.clone());
+        if let Some(recording) = self.recording.take().filter(Recording::is_mine) {
+            self.keep_recording(&recording, recording.since.elapsed(), cx);
         }
+        let mic = self.mic_on && !self.held;
+        self.held = false;
+        self.key_held = false;
+        self.hold_key.spoil();
+        self.camera_on_connect |= self.camera != Camera::Off;
+        // What's left of the old connection (camera, screen, audio device)
+        // goes; the next one opens its own.
+        self.engine.disconnect();
+        self.engine.set_mic_opens_muted(!mic);
+        self.camera = Camera::Off;
+        self.me.update(cx, |me, cx| {
+            me.video = None;
+            me.speaking = false;
+            cx.notify();
+        });
+        if self.sharing.take().is_some() {
+            let me = self.me.read(cx).name.clone();
+            self.log(me, Happened::StoppedSharing, cx);
+            self.drop_preview(cx);
+        }
+        // Their videos went with the connection; they come again once
+        // you're back, and whoever left meanwhile goes then.
+        for member in &self.others {
+            member.update(cx, |m, cx| {
+                m.video = None;
+                m.speaking = false;
+                cx.notify();
+            });
+        }
+        self.screens.clear();
+        self.status = Status::Joining;
+        self.waiting_for = None;
+        self.error = None;
+        self.error_action = None;
+        self.rejoin = Some(0);
+        self.join(Duration::ZERO, cx);
+    }
+
+    /// Joining again failed for now: try again a little later, and ever
+    /// less often, until you're back or you leave.
+    fn try_rejoin_later(&mut self, cx: &mut Context<Self>) {
+        let Some(failed) = &mut self.rejoin else {
+            return;
+        };
+        let delay = REJOIN_BACKOFF[(*failed).min(REJOIN_BACKOFF.len() - 1)];
+        *failed += 1;
+        self.join(Duration::from_secs(delay), cx);
     }
 
     pub fn link(&self) -> String {
@@ -605,7 +699,12 @@ impl Call {
             });
         }
         if self.status == Status::Joining {
-            return Some(plain("Joining…".into(), false));
+            let what = if self.rejoin.is_some() {
+                "Reconnecting…"
+            } else {
+                "Joining…"
+            };
+            return Some(plain(what.into(), false));
         }
         if self.nudging() {
             let how = if self.nudge_hold {
@@ -1309,22 +1408,40 @@ impl Call {
     fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         let mut windows_changed = false;
         match event {
-            Event::Connected { .. } => {
+            Event::Connected { others, .. } => {
                 self.status = Status::Connected;
                 self.waiting_for = None;
-                let now = SystemTime::now();
-                self.connected_at = Some((now, Instant::now()));
-                self.transcript.update(cx, |t, _| t.connected(now));
+                if self.rejoin.take().is_some() {
+                    // Back: whoever left meanwhile has gone.
+                    let gone: Vec<String> = self
+                        .others
+                        .iter()
+                        .map(|m| m.read(cx).identity.clone())
+                        .filter(|id| !others.contains(id))
+                        .collect();
+                    for identity in gone {
+                        self.on_event(Event::ParticipantLeft { identity }, cx);
+                    }
+                    windows_changed = true;
+                } else {
+                    let now = SystemTime::now();
+                    self.connected_at = Some((now, Instant::now()));
+                    self.transcript.update(cx, |t, _| t.connected(now));
+                }
                 if std::mem::take(&mut self.camera_on_connect) {
                     self.toggle_camera(cx);
                 }
             }
-            Event::Disconnected { reason } => {
-                if self.status != Status::Ended {
+            Event::Disconnected { reason, lost } => {
+                if lost && self.status == Status::Connected {
+                    self.rejoin(&reason, cx);
+                    windows_changed = true;
+                } else if self.status != Status::Ended {
                     self.fail(format!("disconnected: {reason}"), cx);
                 }
             }
             Event::WaitingForPermission(device) => self.waiting_for = Some(device),
+            Event::ParticipantJoined { identity, .. } if self.former.contains(&identity) => {}
             Event::ParticipantJoined { identity, name } => {
                 let name = if name.trim().is_empty() {
                     identity.clone()
@@ -1799,7 +1916,12 @@ impl Call {
                         {
                             self.prompt = None;
                         }
-                        if self.transcription.as_ref().is_none_or(|t| !t.mine) {
+                        // Told again (you joined again): nothing new.
+                        if self
+                            .transcription
+                            .as_ref()
+                            .is_none_or(|t| !t.mine && t.identity != identity)
+                        {
                             let first = first_name(&name).to_owned();
                             self.transcription = Some(Transcription {
                                 identity,
@@ -1829,6 +1951,15 @@ impl Call {
                         }
                     }
                 }
+            }
+            // The network may still be waking up.
+            Event::Error(message)
+                if self.rejoin.is_some()
+                    && self.status == Status::Joining
+                    && message.starts_with("connect failed") =>
+            {
+                tracing::info!("joining again: {message}");
+                self.try_rejoin_later(cx);
             }
             Event::Error(message) => {
                 self.waiting_for = None;

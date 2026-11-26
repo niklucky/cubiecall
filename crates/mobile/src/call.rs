@@ -391,7 +391,7 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
             }
             one(connected)
         }
-        Event::Disconnected { reason } => {
+        Event::Disconnected { reason, .. } => {
             call.videos.lock().clear();
             call.keep_record();
             one(CallEvent::Ended { reason })

@@ -98,9 +98,16 @@ pub enum Event {
     Connected {
         room: String,
         identity: String,
+        /// Everyone else in the room as you got in. Each also comes as a
+        /// [`Event::ParticipantJoined`] right after.
+        others: Vec<String>,
     },
+    /// The call is over for this connection. `lost`: nobody ended it, the
+    /// connection did (a Mac that slept past LiveKit's own reconnecting,
+    /// a network that stayed away); joining again can carry on.
     Disconnected {
         reason: String,
+        lost: bool,
     },
     ParticipantJoined {
         identity: String,
@@ -1890,10 +1897,16 @@ async fn connect(
         });
     }
     let identity = room.local_participant().identity().to_string();
+    let others = room
+        .remote_participants()
+        .values()
+        .map(|p| p.identity().to_string())
+        .collect();
     events
         .send(Event::Connected {
             room: room.name(),
             identity,
+            others,
         })
         .await?;
     for p in room.remote_participants().values() {
@@ -2268,6 +2281,19 @@ fn track_publications(state: &Mutex<State>, connection: u64, event: &RoomEvent) 
     }
 }
 
+/// The connection gave out, rather than someone ending the call: you left,
+/// were removed, or the room is gone. After a sleep LiveKit's own
+/// reconnecting fails with `JoinFailure`: its token has expired.
+fn connection_lost(reason: livekit::DisconnectReason) -> bool {
+    use livekit::DisconnectReason::*;
+    match reason {
+        UnknownReason | ServerShutdown | StateMismatch | JoinFailure | Migration | SignalClose
+        | ConnectionTimeout | MediaFailure => true,
+        ClientInitiated | DuplicateIdentity | ParticipantRemoved | RoomDeleted | RoomClosed
+        | UserUnavailable | UserRejected | SipTrunkFailure | AgentError => false,
+    }
+}
+
 fn translate(event: RoomEvent) -> Option<Event> {
     Some(match event {
         RoomEvent::ParticipantConnected(p) => Event::ParticipantJoined {
@@ -2337,6 +2363,7 @@ fn translate(event: RoomEvent) -> Option<Event> {
         }
         RoomEvent::Disconnected { reason } => Event::Disconnected {
             reason: format!("{reason:?}"),
+            lost: connection_lost(reason),
         },
         _ => return None,
     })
