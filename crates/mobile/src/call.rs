@@ -357,9 +357,6 @@ impl Call {
     }
 }
 
-/// How the engine's error begins when connecting to the room failed.
-const CONNECT_FAILED: &str = "connect failed";
-
 /// No microphone will open in this call: access is off, or (tests, the
 /// Simulator) the engine was told to leave it alone.
 fn mic_missing() -> bool {
@@ -484,7 +481,7 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
         }
         // The engine never got into the room, or fell out of it for good:
         // that's the end of the call, not something to carry on past.
-        Event::Error(message) if message.starts_with(CONNECT_FAILED) => {
+        Event::ConnectFailed { message, .. } => {
             tracing::warn!("{message}");
             call.videos.lock().clear();
             let connected = call.log.lock().is_some();

@@ -102,6 +102,12 @@ pub enum Event {
         /// [`Event::ParticipantJoined`] right after.
         others: Vec<String>,
     },
+    /// Getting into the room failed. `retry`: it may work in a moment (the
+    /// network isn't up yet); otherwise it won't by itself.
+    ConnectFailed {
+        message: String,
+        retry: bool,
+    },
     /// The call is over for this connection. `lost`: nobody ended it, the
     /// connection did (a Mac that slept past LiveKit's own reconnecting,
     /// a network that stayed away); joining again can carry on.
@@ -260,9 +266,13 @@ struct State {
     /// The microphone, when it opens, opens muted (asked for by a phone,
     /// where mute can be pressed while the call is still joining).
     mic_opens_muted: bool,
+    /// This engine has been in its call before: connecting again (the
+    /// connection was lost) tells everything anew, what stopped meanwhile too.
+    joined_before: bool,
     camera: Option<camera::Camera>,
-    /// Set while the camera is being opened, to ignore repeated clicks.
-    camera_starting: bool,
+    /// The connection the camera is being opened for, to ignore repeated
+    /// clicks. One for a connection that's gone stops by itself.
+    camera_starting: Option<u64>,
     screen: Option<screen::ScreenShare>,
     /// Remote video publications, for per-tile quality control.
     videos: HashMap<TrackKey, RemoteTrackPublication>,
@@ -418,8 +428,12 @@ impl Engine {
         let events = self.events.clone();
         self.tasks.spawn(async move {
             if let Err(e) = connect(state, events.clone(), join, connection).await {
+                let retry = e.downcast_ref::<RoomError>().is_some_and(may_connect_later);
                 let _ = events
-                    .send(Event::Error(format!("connect failed: {e:#}")))
+                    .send(Event::ConnectFailed {
+                        message: format!("connect failed: {e:#}"),
+                        retry,
+                    })
                     .await;
             }
         });
@@ -505,7 +519,7 @@ impl Engine {
         // LiveKit spawns tokio tasks internally; UI threads have no runtime.
         let _rt = self.rt().enter();
         tracing::info!(enabled, "set mic");
-        let s = self.state.lock();
+        let mut s = self.state.lock();
         if let Some(mic) = &s.mic {
             if enabled {
                 mic.unmute()
@@ -514,18 +528,22 @@ impl Engine {
             }
             audio_tap::set_mic_live(&s.hub, enabled);
             let _ = self.events.try_send(Event::MicChanged { enabled });
+        } else {
+            // Not published yet (still joining): it opens as asked.
+            s.mic_opens_muted = !enabled;
         }
     }
 
     /// Open the camera and publish it. Frames also go to `preview` (self-view).
     pub fn start_camera(&self, preview: Option<Arc<dyn FrameSink>>) {
-        {
+        let connection = {
             let mut s = self.state.lock();
-            if s.camera.is_some() || s.camera_starting {
+            if s.camera.is_some() || s.camera_starting == Some(s.connection) {
                 return;
             }
-            s.camera_starting = true;
-        }
+            s.camera_starting = Some(s.connection);
+            s.connection
+        };
         let state = self.state.clone();
         let events = self.events.clone();
         self.tasks.spawn(async move {
@@ -542,12 +560,12 @@ impl Engine {
                         permissions::where_to_allow(MediaDevice::Camera)
                     );
                 }
-                let room = state.lock().room.clone().context("not in a call")?;
+                let room = current_room(&state, connection).context("not in a call")?;
                 let camera = camera::Camera::start(&room, preview).await?;
                 // The call may have ended while the camera was starting.
                 let stale = {
                     let mut s = state.lock();
-                    if s.room.as_ref().is_some_and(|r| Arc::ptr_eq(r, &room)) {
+                    if s.connection == connection {
                         s.camera = Some(camera);
                         None
                     } else {
@@ -561,7 +579,18 @@ impl Engine {
                 Ok(())
             }
             .await;
-            state.lock().camera_starting = false;
+            let current = {
+                let mut s = state.lock();
+                s.camera_starting.take_if(|c| *c == connection);
+                s.connection == connection
+            };
+            // A start for a connection that's gone tells the next one nothing.
+            if !current {
+                if let Err(e) = &result {
+                    tracing::info!("a camera start for a connection that's gone: {e:#}");
+                }
+                return;
+            }
             let event = match result {
                 Ok(()) => Event::CameraChanged { enabled: true },
                 Err(e) => Event::Error(format!("camera: {e:#}")),
@@ -634,12 +663,13 @@ impl Engine {
         preset: ScreenSharePreset,
         preview: Option<Arc<dyn FrameSink>>,
     ) {
+        let connection = self.state.lock().connection;
         let state = self.state.clone();
         let events = self.events.clone();
         let handle = self.tasks.clone();
         self.tasks.spawn(async move {
             let result = async {
-                let room = state.lock().room.clone().context("not in a call")?;
+                let room = current_room(&state, connection).context("not in a call")?;
                 let previous = state.lock().screen.take();
                 if let Some(previous) = previous {
                     previous.unpublish(&room).await;
@@ -659,10 +689,28 @@ impl Engine {
                     on_fail,
                 )
                 .await?;
-                state.lock().screen = Some(share);
+                // The connection may have gone while it started.
+                let stale = {
+                    let mut s = state.lock();
+                    if s.connection == connection {
+                        s.screen = Some(share);
+                        None
+                    } else {
+                        Some(share)
+                    }
+                };
+                if let Some(share) = stale {
+                    share.unpublish(&room).await;
+                }
                 anyhow::Ok(())
             }
             .await;
+            if state.lock().connection != connection {
+                if let Err(e) = &result {
+                    tracing::info!("a screen share for a connection that's gone: {e:#}");
+                }
+                return;
+            }
             let event = match result {
                 Ok(()) => Event::ScreenShareChanged {
                     active: true,
@@ -1877,12 +1925,15 @@ async fn connect(
         if s.connection == connection {
             s.room = Some(room.clone());
             s.audio = audio.clone();
-            Some(s.can_transcribe.clone())
+            Some((
+                s.can_transcribe.clone(),
+                std::mem::replace(&mut s.joined_before, true),
+            ))
         } else {
             None
         }
     };
-    let Some(can_transcribe) = can_transcribe else {
+    let Some((can_transcribe, again)) = can_transcribe else {
         tracing::info!(room = %room.name(), "a connection overtaken by another: closing it");
         let _ = room.close().await;
         return Ok(());
@@ -1916,7 +1967,19 @@ async fn connect(
                 name: p.name(),
             })
             .await?;
-        for event in attribute_events(&p.identity().to_string(), &p.attributes(), None) {
+        // Joining again, what isn't set any more counts too: they may have
+        // stopped recording meanwhile.
+        let attributes = p.attributes();
+        let every = again.then(|| {
+            [RECORDING, TRANSCRIBING, CAN_TRANSCRIBE]
+                .into_iter()
+                .map(|key| {
+                    let value = attributes.get(key).cloned().unwrap_or_default();
+                    (key.to_owned(), value)
+                })
+                .collect::<HashMap<_, _>>()
+        });
+        for event in attribute_events(&p.identity().to_string(), &attributes, every.as_ref()) {
             events.send(event).await?;
         }
     }
@@ -2278,6 +2341,32 @@ fn track_publications(state: &Mutex<State>, connection: u64, event: &RoomEvent) 
             }
         }
         _ => {}
+    }
+}
+
+/// The room of `connection`, if that's still the one.
+fn current_room(state: &Mutex<State>, connection: u64) -> Option<Arc<Room>> {
+    let s = state.lock();
+    s.room.clone().filter(|_| s.connection == connection)
+}
+
+/// A failed connect that may work in a moment: the network or the server
+/// isn't reachable yet. One the server refused (a 4xx from its check of
+/// the token) or a bad URL won't by itself.
+fn may_connect_later(error: &RoomError) -> bool {
+    use livekit::rtc_engine::EngineError;
+    use livekit_signaling::SignalError;
+    match error {
+        RoomError::Engine(EngineError::Signal(SignalError::Client(status, _))) => {
+            matches!(status.as_u16(), 408 | 429)
+        }
+        RoomError::Engine(EngineError::Signal(
+            SignalError::UrlParse(_)
+            | SignalError::TokenFormat
+            | SignalError::TransportNotConfigured
+            | SignalError::LeaveRequest { .. },
+        )) => false,
+        _ => true,
     }
 }
 

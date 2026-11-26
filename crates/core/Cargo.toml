@@ -18,6 +18,8 @@ anyhow = "1.0.104"
 async-channel = "2.5.0"
 futures-util = "0.3.34"
 livekit = { version = "0.10.0", features = ["native-tls"] }
+# Already in the tree through livekit; for telling its connect errors apart.
+livekit-signaling = "0.1.8"
 # DeepFilterNet 3 noise suppression, run with tract; the model (~8 MB) is embedded.
 deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", rev = "7b14b895fe7fc42cab72b4a4c1e49c982bd6404b", default-features = false, features = ["tract", "default-model"], optional = true }
 ndarray = { version = "0.15", optional = true }

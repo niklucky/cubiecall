@@ -553,12 +553,14 @@ impl Call {
             if !delay.is_zero() {
                 cx.background_executor().timer(delay).await;
             }
-            let Ok(join) = this.update(cx, |call, _| {
-                call.engine.join_at(
-                    crate::auth::endpoint(&args.server),
-                    &room,
-                    args.session.as_deref().unwrap_or_default(),
-                )
+            let Ok(Some(join)) = this.update(cx, |call, _| {
+                (call.status == Status::Joining).then(|| {
+                    call.engine.join_at(
+                        crate::auth::endpoint(&args.server),
+                        &room,
+                        args.session.as_deref().unwrap_or_default(),
+                    )
+                })
             }) else {
                 return;
             };
@@ -624,6 +626,9 @@ impl Call {
         if let Some(recording) = self.recording.take().filter(Recording::is_mine) {
             self.keep_recording(&recording, recording.since.elapsed(), cx);
         }
+        // A transcript still getting ready was for the old connection: the
+        // engine drops it without a word.
+        self.preparing = None;
         let mic = self.mic_on && !self.held;
         self.held = false;
         self.key_held = false;
@@ -782,12 +787,25 @@ impl Call {
         self.hold_key.spoil();
         self.nudged = None;
         self.engine.set_mic_enabled(!on);
+        // Joining again, there's no mic to tell yet: it opens as asked, and
+        // the button says so now.
+        if self.rejoin.is_some() {
+            self.mic_on = !on;
+            self.me.update(cx, |me, cx| {
+                me.mic_muted = on;
+                cx.notify();
+            });
+        }
         cx.notify();
     }
 
     /// Unmute while a key or the mic button is held, and mute again when
     /// it's let go. Nothing happens if you're unmuted anyway.
     pub fn hold_to_talk(&mut self, on: bool, cx: &mut Context<Self>) {
+        // Nobody hears you while you're joining again.
+        if on && self.rejoin.is_some() {
+            return;
+        }
         if on && !self.mic_on && !self.held {
             self.held = true;
             self.nudged = None;
@@ -1265,6 +1283,8 @@ impl Call {
         if let Some(recording) = self.recording.take().filter(Recording::is_mine) {
             self.keep_recording(&recording, recording.since.elapsed(), cx);
         }
+        self.joining = None;
+        self.rejoin = None;
         self.engine.disconnect();
         self.status = Status::Ended;
         #[cfg(target_os = "macos")]
@@ -1406,6 +1426,9 @@ impl Call {
     }
 
     fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        if from_someone(&event).is_some_and(|id| self.former.contains(id)) {
+            return;
+        }
         let mut windows_changed = false;
         match event {
             Event::Connected { others, .. } => {
@@ -1441,7 +1464,6 @@ impl Call {
                 }
             }
             Event::WaitingForPermission(device) => self.waiting_for = Some(device),
-            Event::ParticipantJoined { identity, .. } if self.former.contains(&identity) => {}
             Event::ParticipantJoined { identity, name } => {
                 let name = if name.trim().is_empty() {
                     identity.clone()
@@ -1658,7 +1680,11 @@ impl Call {
                 self.log(name, Happened::StartedRecording, cx);
             }
             Event::RecordingSaved(saved) => {
-                if let Some(recording) = self.recording.take_if(|r| r.is_mine()) {
+                // Its own: one from before you joined again may finish late.
+                if let Some(recording) = self
+                    .recording
+                    .take_if(|r| r.is_mine() && r.file.as_ref() == Some(&saved.path))
+                {
                     self.keep_recording(&recording, saved.duration, cx);
                 }
                 self.show_recording();
@@ -1953,13 +1979,14 @@ impl Call {
                 }
             }
             // The network may still be waking up.
-            Event::Error(message)
-                if self.rejoin.is_some()
-                    && self.status == Status::Joining
-                    && message.starts_with("connect failed") =>
-            {
-                tracing::info!("joining again: {message}");
-                self.try_rejoin_later(cx);
+            Event::ConnectFailed { message, retry } => {
+                if retry && self.rejoin.is_some() && self.status == Status::Joining {
+                    tracing::info!("joining again: {message}");
+                    self.try_rejoin_later(cx);
+                } else {
+                    self.waiting_for = None;
+                    self.fail(message, cx);
+                }
             }
             Event::Error(message) => {
                 self.waiting_for = None;
@@ -1983,6 +2010,23 @@ impl Call {
         if windows_changed {
             schedule_sync(&cx.entity(), cx);
         }
+    }
+}
+
+/// Whose event it is, if someone else's.
+fn from_someone(event: &Event) -> Option<&str> {
+    match event {
+        Event::ParticipantJoined { identity, .. }
+        | Event::ParticipantLeft { identity }
+        | Event::ParticipantMic { identity, .. }
+        | Event::ParticipantRecording { identity, .. }
+        | Event::ParticipantTranscribing { identity, .. }
+        | Event::ParticipantCanTranscribe { identity, .. } => Some(identity),
+        Event::VideoTrackAdded { key, .. } | Event::VideoTrackRemoved { key } => {
+            Some(&key.participant)
+        }
+        Event::TranscriptAsked { from, .. } | Event::TranscriptAnswered { from, .. } => Some(from),
+        _ => None,
     }
 }
 

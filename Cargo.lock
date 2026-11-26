@@ -1516,6 +1516,7 @@ dependencies = [
  "dispatch2",
  "futures-util",
  "livekit",
+ "livekit-signaling",
  "ndarray",
  "nnnoiseless",
  "objc2 0.6.5",
