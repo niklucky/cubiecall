@@ -9,21 +9,6 @@ on:
   push:
     tags: ['v*.*.*']
   workflow_dispatch:
-  # A pull request that touches the app builds the zip too (an artifact for
-  # testers, never published), so it can be tried before it ships.
-  pull_request:
-    paths:
-      - 'apps/desktop/**'
-      - 'crates/core/**'
-      - 'crates/stt/**'
-      - 'crates/protocol/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.cargo/**'
-      - 'vendor/**'
-      - 'dev/vendor-webrtc-sys.sh'
-      - 'deploy/windows/**'
-      - '.github/workflows/release-windows.yml'
 
 permissions:
   contents: read
@@ -49,12 +34,7 @@ jobs:
           persist-credentials: false
       - name: Validate release tag and resolve build number
         id: release
-        run: |
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            python3 deploy/mac/ci-metadata.py --build-only
-          else
-            python3 deploy/mac/ci-metadata.py
-          fi
+        run: python3 deploy/mac/ci-metadata.py
       - name: Test atomic website publication
         run: deploy/windows/test-publish.sh
 
