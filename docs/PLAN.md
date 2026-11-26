@@ -129,7 +129,7 @@ Design: [UI.md](UI.md).
 - [ ] Ringing protocol: invite → ringing → accept / decline / cancel / timeout / busy. With multiple devices, the first accept wins.
 - [ ] Incoming-call window and ringtone
 - [ ] Device switching (mic, speaker, camera) during a call
-- [x] ~~Join the call again when the connection is lost (the Mac slept, the network went away)~~ *Desktop: once LiveKit gives up (after a sleep its token has expired: `JoinFailure`), the app gets a new token and connects again, with backoff, saying "Reconnecting…". Mic and camera come back as they were; a screen share, your recording and your transcript stop. The iPhone app still ends the call.*
+- [x] ~~Join the call again when the connection is lost (the Mac slept, the network went away)~~ *Once LiveKit gives up (after a sleep its token has expired: `JoinFailure`), the app gets a new token and connects again, with backoff, saying "Reconnecting…". Mic and camera come back as they were, and your Mac's transcript starts again unless another Mac took it over; a screen share and your recording stop. The iPhone app does the same (mic, camera, the call's history).*
 - [ ] Call history
 
 **Done when:** two desktops can call each other through the backend, and every ringing state is covered by tests.
@@ -293,7 +293,7 @@ Set to the least we think can work. We raise a line only when a real call hits i
 - [ ] The minimised pill inside the app; the system's picture in picture outside it
 - [ ] Audio routes: loudspeaker, receiver, Bluetooth and wired headsets, with the system's picker; the proximity sensor on audio calls
 - [ ] Interruptions: a phone call, Siri, an alarm; the app in the background (audio goes on, video stops both ways); the screen locked
-- [ ] Reconnecting when the network changes (Wi-Fi to mobile data and back)
+- [ ] Reconnecting when the network changes (Wi-Fi to mobile data and back) *A connection LiveKit gives up on is joined again (Stage 5); a switch between networks on a real phone is still to try.*
 - [ ] Join muted or with the camera off. *Mute pressed while the call is still joining works: the engine publishes the microphone already muted (`set_mic_opens_muted`), so nothing is sent first. What's missing is the choice before joining.*
 - [ ] Flip the camera without republishing the track; turn the phone (your video, and other phones' turned video)
 - [ ] Recording and transcript notices (the events arrive already); captions and the transcript itself wait for the transcription round

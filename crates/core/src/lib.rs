@@ -182,10 +182,12 @@ pub enum Event {
         relayed: bool,
     },
     /// Your transcription stopped, and every line is out. `by` asked for it,
-    /// if it wasn't you; `handed_over`: their Mac carries on.
+    /// if it wasn't you; `handed_over`: their Mac carries on. `ended`: the
+    /// call ended it (you left, or the connection was lost).
     TranscriptionStopped {
         by: Option<String>,
         handed_over: bool,
+        ended: bool,
     },
     /// Your transcription couldn't start.
     TranscriptionFailed(String),
@@ -214,6 +216,27 @@ pub enum Event {
         accepted: bool,
     },
     Error(String),
+}
+
+impl Event {
+    /// Whose event it is, if someone else's in the room.
+    pub fn from_someone(&self) -> Option<&str> {
+        match self {
+            Event::ParticipantJoined { identity, .. }
+            | Event::ParticipantLeft { identity }
+            | Event::ParticipantMic { identity, .. }
+            | Event::ParticipantRecording { identity, .. }
+            | Event::ParticipantTranscribing { identity, .. }
+            | Event::ParticipantCanTranscribe { identity, .. } => Some(identity),
+            Event::VideoTrackAdded { key, .. } | Event::VideoTrackRemoved { key } => {
+                Some(&key.participant)
+            }
+            Event::TranscriptAsked { from, .. } | Event::TranscriptAnswered { from, .. } => {
+                Some(from)
+            }
+            _ => None,
+        }
+    }
 }
 
 /// What to transcribe with.
@@ -896,6 +919,7 @@ impl Engine {
                     Some(StoppedStarting(by)) => Event::TranscriptionStopped {
                         by: by.clone(),
                         handed_over: false,
+                        ended: false,
                     },
                     None => Event::TranscriptionFailed(format!("{e:#}")),
                 },
@@ -1045,7 +1069,11 @@ async fn stop_transcribing_for(
                 .is_some_and(transcribes)
         });
     let _ = events
-        .send(Event::TranscriptionStopped { by, handed_over })
+        .send(Event::TranscriptionStopped {
+            by,
+            handed_over,
+            ended: false,
+        })
         .await;
 }
 
@@ -2295,6 +2323,7 @@ async fn finish_words(
             .send(Event::TranscriptionStopped {
                 by: None,
                 handed_over: false,
+                ended: true,
             })
             .await;
     }

@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 use cubie_core::livekit::prelude::RemoteVideoTrack;
 use cubie_core::permissions::{self, Access};
@@ -96,11 +97,18 @@ pub enum CallEvent {
         signed_out: bool,
     },
     /// The call is over without you leaving it: the room closed, you were
-    /// removed, or the connection gave up.
+    /// removed, or the connection couldn't be had back.
     Ended {
         reason: String,
     },
+    /// The connection was lost (the phone slept, the network went): the
+    /// call joins again by itself, and says [`CallEvent::Connected`] once
+    /// it's back. Everyone else comes again with [`CallEvent::Joined`].
+    Reconnecting,
 }
+
+/// Seconds between tries to join again after the connection was lost.
+const REJOIN_BACKOFF: [u64; 7] = [0, 1, 2, 4, 8, 15, 30];
 
 /// The app's end of a call. Called on the call's thread, never the main one.
 #[uniffi::export(with_foreign)]
@@ -144,6 +152,16 @@ pub struct Call {
     /// The camera is restarting on its other side.
     flipping: AtomicBool,
     front: AtomicBool,
+    /// Your camera is on; joining again, it comes back.
+    camera_on: AtomicBool,
+    camera_on_connect: AtomicBool,
+    /// Joining again after the connection was lost: the tries so far.
+    rejoin: Mutex<Option<usize>>,
+    /// You left: nothing joins again.
+    left: AtomicBool,
+    /// Who to ask to join again, and who hears of it.
+    client: Arc<Client>,
+    listener: Arc<dyn CallListener>,
 }
 
 #[uniffi::export]
@@ -180,6 +198,12 @@ impl Client {
             mic_missing: AtomicBool::new(false),
             flipping: AtomicBool::new(false),
             front: AtomicBool::new(true),
+            camera_on: AtomicBool::new(false),
+            camera_on_connect: AtomicBool::new(false),
+            rejoin: Mutex::new(None),
+            left: AtomicBool::new(false),
+            client: self.clone(),
+            listener: listener.clone(),
         });
         let weak = Arc::downgrade(&call);
         let client = self;
@@ -319,6 +343,8 @@ impl Call {
 
     /// Leave. Everyone sees you go at once; then drop the call.
     pub fn leave(&self) {
+        self.left.store(true, Ordering::Relaxed);
+        self.rejoin.lock().take();
         self.videos.lock().clear();
         self.engine.disconnect();
         self.keep_record();
@@ -349,6 +375,103 @@ impl Call {
         }
     }
 
+    /// The connection was lost: join again as you were (your mic as the
+    /// button says, your camera if it was on).
+    fn start_rejoin(self: &Arc<Self>) {
+        tracing::warn!("connection lost: joining again");
+        self.camera_on_connect.store(
+            self.camera_on.swap(false, Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        self.flipping.store(false, Ordering::Relaxed);
+        // What's left of the old connection goes; the next opens its own.
+        self.engine.disconnect();
+        let mic =
+            self.mic_wanted.load(Ordering::Relaxed) && !self.mic_missing.load(Ordering::Relaxed);
+        self.engine.set_mic_opens_muted(!mic);
+        *self.rejoin.lock() = Some(0);
+        self.rejoin_later();
+    }
+
+    /// Try to join again, after a while that grows with every try, until
+    /// it works, can't, or you leave.
+    fn rejoin_later(self: &Arc<Self>) {
+        let delay = {
+            let mut rejoin = self.rejoin.lock();
+            let Some(tries) = rejoin.as_mut() else { return };
+            let delay = REJOIN_BACKOFF[(*tries).min(REJOIN_BACKOFF.len() - 1)];
+            *tries += 1;
+            Duration::from_secs(delay)
+        };
+        let weak = Arc::downgrade(self);
+        let spawned = std::thread::Builder::new()
+            .name("cubie-rejoin".into())
+            .spawn(move || {
+                std::thread::sleep(delay);
+                let Some(call) = weak.upgrade().filter(|c| c.rejoining()) else {
+                    return;
+                };
+                let session = call.client.session();
+                let admission = call.engine.join(
+                    &call.client.server,
+                    &call.room,
+                    session.as_deref().unwrap_or(""),
+                );
+                // The call may be dropped while this waits.
+                drop(call);
+                let result = crate::block::on(admission);
+                let Some(call) = weak.upgrade().filter(|c| c.rejoining()) else {
+                    return;
+                };
+                match result {
+                    // Under the lock `leave` takes: leaving now, nothing connects.
+                    Ok(info) => {
+                        let rejoin = call.rejoin.lock();
+                        if rejoin.is_some() && !call.left.load(Ordering::Relaxed) {
+                            call.engine.connect(info);
+                        }
+                    }
+                    // Not back on the network yet.
+                    Err(e) if cubie_core::http::transient(&e) => {
+                        tracing::info!("joining again: {e:#}");
+                        call.rejoin_later();
+                    }
+                    Err(e) => {
+                        let error = crate::AppError::from(e);
+                        let signed_out = matches!(error, crate::AppError::SignedOut { .. });
+                        if let (true, Some(session)) = (signed_out, &session) {
+                            call.client.forget(session);
+                        }
+                        call.give_up();
+                        call.listener.on_event(if signed_out {
+                            CallEvent::Failed {
+                                message: error.to_string(),
+                                signed_out,
+                            }
+                        } else {
+                            CallEvent::Ended {
+                                reason: error.to_string(),
+                            }
+                        });
+                    }
+                }
+            });
+        if let Err(e) = spawned {
+            tracing::error!("joining again: {e}");
+        }
+    }
+
+    fn rejoining(&self) -> bool {
+        !self.left.load(Ordering::Relaxed) && self.rejoin.lock().is_some()
+    }
+
+    /// Joining again won't work: the call is over.
+    fn give_up(&self) {
+        self.rejoin.lock().take();
+        self.videos.lock().clear();
+        self.keep_record();
+    }
+
     fn start_camera(&self) {
         #[cfg(target_vendor = "apple")]
         self.engine.start_camera(Some(self.preview.clone()));
@@ -369,13 +492,29 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
     let Some(call) = call.upgrade() else {
         return Vec::new();
     };
+    // You, from before joining again, still in the room for a while.
+    if event
+        .from_someone()
+        .is_some_and(|id| call.engine.was_me(id))
+    {
+        return Vec::new();
+    }
     let one = |event| vec![event];
     match event {
         Event::WaitingForPermission(device) => one(CallEvent::WaitingForPermission {
             camera: device == MediaDevice::Camera,
         }),
         Event::Connected { identity, .. } => {
-            *call.log.lock() = Some(Log::begin(identity.clone(), call.your_name.clone()));
+            // Back after the connection was lost: the call goes on, and so
+            // does its history.
+            if call.rejoin.lock().take().is_some() {
+                call.write(|log| log.rejoined(identity.clone()));
+                if call.camera_on_connect.swap(false, Ordering::Relaxed) {
+                    call.start_camera();
+                }
+            } else {
+                *call.log.lock() = Some(Log::begin(identity.clone(), call.your_name.clone()));
+            }
             let connected = CallEvent::Connected {
                 you: identity,
                 room_name: None,
@@ -387,6 +526,13 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
                 return vec![connected, CallEvent::YourMic { on: false }];
             }
             one(connected)
+        }
+        Event::Disconnected { lost: true, .. }
+            if call.log.lock().is_some() && !call.left.load(Ordering::Relaxed) =>
+        {
+            call.videos.lock().clear();
+            call.start_rejoin();
+            one(CallEvent::Reconnecting)
         }
         Event::Disconnected { reason, .. } => {
             call.videos.lock().clear();
@@ -440,6 +586,7 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
             one(CallEvent::YourMic { on: enabled })
         }
         Event::CameraChanged { enabled } => {
+            call.camera_on.store(enabled, Ordering::Relaxed);
             if !enabled && call.flipping.swap(false, Ordering::Relaxed) {
                 call.start_camera();
                 return Vec::new();
@@ -481,8 +628,18 @@ fn translate(call: &Weak<Call>, event: Event) -> Vec<CallEvent> {
         }
         // The engine never got into the room, or fell out of it for good:
         // that's the end of the call, not something to carry on past.
+        // Joining again: the network may still be waking up.
+        Event::ConnectFailed {
+            message,
+            retry: true,
+        } if call.rejoining() => {
+            tracing::info!("joining again: {message}");
+            call.rejoin_later();
+            Vec::new()
+        }
         Event::ConnectFailed { message, .. } => {
             tracing::warn!("{message}");
+            call.rejoin.lock().take();
             call.videos.lock().clear();
             let connected = call.log.lock().is_some();
             call.keep_record();

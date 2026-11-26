@@ -23,8 +23,9 @@ pub(crate) struct Log {
     /// When you got in: on the wall clock (unix ms), and for measuring.
     began: u64,
     since: Instant,
-    /// Your identity in the call, and what you're called.
-    you: String,
+    /// Your identities in the call (a new one each time it joins again),
+    /// and what you're called.
+    you: Vec<String>,
     your_name: String,
     names: HashMap<String, String>,
     /// Shared screens showing now: track → whose.
@@ -47,7 +48,7 @@ impl Log {
         Self {
             began: now(),
             since: Instant::now(),
-            you,
+            you: vec![you],
             your_name,
             names: HashMap::new(),
             screens: HashMap::new(),
@@ -59,7 +60,7 @@ impl Log {
     }
 
     fn name(&self, identity: &str) -> String {
-        if identity == self.you {
+        if self.is_you(identity) {
             return self.your_name.clone();
         }
         self.names
@@ -77,10 +78,19 @@ impl Log {
             at: now() / 1000,
             kind,
             who: self.name(identity),
-            mine: identity == self.you,
+            mine: self.is_you(identity),
             text: String::new(),
             key: String::new(),
         });
+    }
+
+    fn is_you(&self, identity: &str) -> bool {
+        self.you.iter().any(|you| you == identity)
+    }
+
+    /// Back in the call as `you`, after the connection was lost.
+    pub(crate) fn rejoined(&mut self, you: String) {
+        self.you.push(you);
     }
 
     pub(crate) fn joined(&mut self, identity: &str, name: &str) {
@@ -148,11 +158,11 @@ impl Log {
             // The line as it stands now: its words, and whose and when too
             // (a correction can change those).
             Some(at) => {
-                let who = self.name(speaker);
+                let (who, mine) = (self.name(speaker), self.is_you(speaker));
                 let moment = &mut self.moments[at];
                 moment.text = text.to_owned();
                 moment.who = who;
-                moment.mine = speaker == self.you;
+                moment.mine = mine;
                 moment.at = at_ms / 1000;
             }
             None if self.lines < MAX_LINES => {
@@ -161,7 +171,7 @@ impl Log {
                     at: at_ms / 1000,
                     kind: MomentKind::Said,
                     who: self.name(speaker),
-                    mine: speaker == self.you,
+                    mine: self.is_you(speaker),
                     text: text.to_owned(),
                     key: key.to_owned(),
                 });

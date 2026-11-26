@@ -40,7 +40,8 @@ final class CallModel {
     private(set) var cameraOn = false
     private(set) var frontCamera = true
     private(set) var speakerOn = true
-    /// "Joining…", a permission prompt, a notice: shown under the name.
+    /// "Joining…", "Reconnecting…", a permission prompt, a notice: shown
+    /// under the name.
     private(set) var status: String? = "Joining…"
     private(set) var connectedAt: Date?
     /// Who records the call, if anyone.
@@ -119,7 +120,8 @@ final class CallModel {
         case let .connected(you, roomName):
             self.you = you
             if let roomName, !roomName.isEmpty { self.roomName = roomName }
-            connectedAt = Date()
+            // Back after the connection was lost: the call's clock goes on.
+            if connectedAt == nil { connectedAt = Date() }
             status = nil
             Audio.setSpeaker(speakerOn)
             onChange?(.status)
@@ -172,6 +174,14 @@ final class CallModel {
             finish(message, signedOut: signedOut)
         case .ended:
             finish("The call ended.", signedOut: false)
+        case .reconnecting:
+            // Everyone comes again once it's back.
+            status = "Reconnecting…"
+            people.removeAll()
+            recording.removeAll()
+            youSpeak = false
+            onChange?(.people)
+            onChange?(.status)
         }
     }
 

@@ -365,6 +365,12 @@ pub struct Call {
     error_action: Option<NoticeAction>,
     /// Turn the camera on once connected (`--camera`).
     camera_on_connect: bool,
+    /// Your Mac transcribed when the connection was lost: it carries on
+    /// once you're back.
+    transcribe_on_connect: bool,
+    /// That start is under way: if another Mac took the transcript over
+    /// meanwhile, it gives way without a word.
+    resuming_transcript: bool,
     connected_at: Option<(SystemTime, Instant)>,
     people: BTreeSet<String>,
     /// Who joined, left, shared and recorded, for the call's timeline.
@@ -459,6 +465,7 @@ impl Call {
                     models::State::Ready => call.start_engine(model, cx),
                     models::State::Failed(e) => {
                         call.preparing = None;
+                        call.resuming_transcript = false;
                         // Short: the widget is narrow, and Settings says why.
                         tracing::warn!("downloading {}: {e}", model.name);
                         call.fail_with("Download failed".into(), Some(NoticeAction::Settings), cx);
@@ -525,6 +532,8 @@ impl Call {
             error: None,
             error_action: None,
             camera_on_connect: args.camera,
+            transcribe_on_connect: false,
+            resuming_transcript: false,
             connected_at: None,
             people: BTreeSet::new(),
             events: Vec::new(),
@@ -624,8 +633,12 @@ impl Call {
         }
         // A transcript still getting ready was for the old connection: the
         // engine drops it without a word. Yours stops with it: another
-        // Mac may carry on, and you'd hear of it before it's done.
-        self.preparing = None;
+        // Mac may carry on, and you'd hear of it before it's done. Yours
+        // starts again once you're back.
+        self.transcribe_on_connect =
+            self.preparing.take().is_some() || self.transcription.as_ref().is_some_and(|t| t.mine);
+        self.resuming_transcript = false;
+        self.handover = None;
         if let Some(t) = self.transcription.take_if(|t| t.mine) {
             self.log(t.name, Happened::StoppedTranscribing, cx);
         }
@@ -676,6 +689,15 @@ impl Call {
         self.error_action = None;
         self.rejoin = Some(0);
         self.join(Duration::ZERO, cx);
+    }
+
+    /// Your Mac transcribed when the connection was lost: carry on, unless
+    /// another Mac has taken over since.
+    fn resume_transcript(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.transcribe_on_connect) && self.can_transcribe() {
+            self.resuming_transcript = true;
+            self.start_transcribing(cx);
+        }
     }
 
     /// Joining again failed for now: try again a little later, and ever
@@ -1450,7 +1472,10 @@ impl Call {
 
     fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         // You, from before joining again, still in the room for a while.
-        if from_someone(&event).is_some_and(|id| self.engine.was_me(id)) {
+        if event
+            .from_someone()
+            .is_some_and(|id| self.engine.was_me(id))
+        {
             return;
         }
         let mut windows_changed = false;
@@ -1475,6 +1500,7 @@ impl Call {
                     self.connected_at = Some((now, Instant::now()));
                     self.transcript.update(cx, |t, _| t.connected(now));
                 }
+                self.resume_transcript(cx);
                 if std::mem::take(&mut self.camera_on_connect) {
                     // Shown as starting while you joined again.
                     self.camera = Camera::Off;
@@ -1486,6 +1512,10 @@ impl Call {
                     self.rejoin(&reason, cx);
                     windows_changed = true;
                 } else if self.status != Status::Ended {
+                    // Your transcript ended with the call.
+                    if let Some(t) = self.transcription.take_if(|t| t.mine) {
+                        self.log(t.name, Happened::StoppedTranscribing, cx);
+                    }
                     self.fail(format!("disconnected: {reason}"), cx);
                 }
             }
@@ -1793,6 +1823,7 @@ impl Call {
             }
             Event::TranscriptionStarted => {
                 self.preparing = None;
+                self.resuming_transcript = false;
                 let (identity, name) = {
                     let me = self.me.read(cx);
                     (me.identity.clone(), me.name.clone())
@@ -1839,9 +1870,13 @@ impl Call {
                 // Lines don't change anything else on screen.
                 return;
             }
+            // The lost connection's transcript, done (if it says so at all):
+            // that was taken care of when it was lost, and another may run now.
+            Event::TranscriptionStopped { ended: true, .. } if self.status != Status::Ended => {}
             Event::TranscriptionStopped {
                 by,
                 handed_over: true,
+                ..
             } => {
                 // Their Mac carries on (we heard it start while ours ran).
                 if self.transcription.take_if(|t| t.mine).is_some()
@@ -1870,6 +1905,7 @@ impl Call {
                 self.words_are_in(cx);
             }
             Event::TranscriptionStopped { by, .. } => {
+                self.resuming_transcript = false;
                 // Or it was stopped while it got ready (taking over, say),
                 // and never listened.
                 let overtaken = self
@@ -1955,6 +1991,14 @@ impl Call {
                         cx,
                     );
                 }
+            }
+            // Another Mac carries on since you were away (or the start
+            // failed): your transcript was the old connection's.
+            Event::TranscriptionFailed(message)
+                if std::mem::take(&mut self.resuming_transcript) =>
+            {
+                self.preparing = None;
+                tracing::info!("the transcript didn't start again: {message}");
             }
             Event::TranscriptionFailed(message) => {
                 self.preparing = None;
@@ -2050,23 +2094,6 @@ impl Call {
         if windows_changed {
             schedule_sync(&cx.entity(), cx);
         }
-    }
-}
-
-/// Whose event it is, if someone else's.
-fn from_someone(event: &Event) -> Option<&str> {
-    match event {
-        Event::ParticipantJoined { identity, .. }
-        | Event::ParticipantLeft { identity }
-        | Event::ParticipantMic { identity, .. }
-        | Event::ParticipantRecording { identity, .. }
-        | Event::ParticipantTranscribing { identity, .. }
-        | Event::ParticipantCanTranscribe { identity, .. } => Some(identity),
-        Event::VideoTrackAdded { key, .. } | Event::VideoTrackRemoved { key } => {
-            Some(&key.participant)
-        }
-        Event::TranscriptAsked { from, .. } | Event::TranscriptAnswered { from, .. } => Some(from),
-        _ => None,
     }
 }
 
