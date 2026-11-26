@@ -35,8 +35,8 @@ pub fn where_to_allow(device: MediaDevice) -> String {
         MediaDevice::Microphone => "Microphone",
         MediaDevice::Camera => "Camera",
     };
-    // A phone has no "System Settings".
-    let settings = if cfg!(any(target_os = "ios", target_os = "android")) {
+    // Phones and Windows have no "System Settings".
+    let settings = if cfg!(any(target_os = "ios", target_os = "android", windows)) {
         "Settings"
     } else {
         "System Settings"

@@ -8,6 +8,8 @@ use gpui::{AssetSource, SharedString};
 macro_rules! icons {
     ($($variant:ident => $file:literal),* $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        // Some are the Mac's share picker's alone.
+        #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
         pub enum Icon { $($variant),* }
 
         impl Icon {

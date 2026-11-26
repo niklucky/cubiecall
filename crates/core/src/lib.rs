@@ -21,7 +21,8 @@ pub mod models;
 pub mod permissions;
 #[cfg(target_vendor = "apple")]
 pub mod pixel_buffer;
-#[cfg(target_os = "macos")]
+#[cfg_attr(target_os = "macos", path = "player.rs")]
+#[cfg_attr(not(target_os = "macos"), path = "player_none.rs")]
 pub mod player;
 pub mod record;
 #[cfg(target_os = "macos")]

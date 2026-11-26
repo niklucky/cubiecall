@@ -12,7 +12,16 @@ PATCH=vendor/webrtc-sys.patch
 STAMP="$DIR/.cubie-patch"
 LOCK=vendor/.webrtc-sys.lock
 
-want=$(shasum -a 256 "$PATCH" | cut -d' ' -f1)
+# macOS has shasum; Git Bash on Windows (GitHub's runners) has sha256sum.
+sha256() {
+	if command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$@"
+	else
+		sha256sum "$@"
+	fi
+}
+
+want=$(sha256 "$PATCH" | cut -d' ' -f1)
 current() { [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$want" ]; }
 if current; then
 	exit 0
@@ -42,7 +51,7 @@ if [ -z "$crate" ]; then
 	crate="$tmp/webrtc-sys.crate"
 	curl -sSfL "https://static.crates.io/crates/webrtc-sys/webrtc-sys-$VERSION.crate" -o "$crate"
 fi
-echo "$SHA256  $crate" | shasum -a 256 -c - >/dev/null
+echo "$SHA256  $crate" | sha256 -c - >/dev/null
 
 mkdir "$tmp/src"
 tar -xzf "$crate" -C "$tmp/src" --strip-components 1

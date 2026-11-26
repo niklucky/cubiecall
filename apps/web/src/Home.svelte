@@ -179,7 +179,7 @@
       </form>
       {#if friendLink}<div class="linkbox">{friendLink}</div><p class="foot">{copied === 'friend' ? 'Copied. ' : ''}Send them this link. It works for that email, for a week.</p>{/if}
     {/if}
-    <p class="foot apps"><a class="lk" href="/download/">Cubie for Mac</a></p>
+    <p class="foot apps"><a class="lk" href="/download/">Cubie for Mac</a> · <a class="lk" href="/download/#windows">Cubie for Windows</a></p>
   {/if}
 </main>
 

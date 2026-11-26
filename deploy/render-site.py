@@ -40,7 +40,7 @@ def render_downloads(output, public, reserve, team):
     terminal = ""
     if team:
         terminal = (
-            '  <h2>Install using Terminal</h2>\n'
+            '  <h2>Install on a Mac using Terminal</h2>\n'
             f"  <pre>curl -fsSL --proto-redir '=https' {public}/download/install.sh | sh</pre>"
         )
         if reserve:
@@ -48,6 +48,7 @@ def render_downloads(output, public, reserve, team):
                 '\n  <p class="dim">If the primary is unavailable, use the reserve domain.</p>\n'
                 f"  <pre>curl -fsSL --proto-redir '=https' {reserve}/download/install.sh | sh -s -- --reserve</pre>"
             )
+        terminal += '\n  <p class="dim">Puts Cubie in Applications and opens it. Cubie checks for updates automatically.</p>'
 
     values = {
         "PUBLIC_URL": public,

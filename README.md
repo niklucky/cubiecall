@@ -1,6 +1,6 @@
 # Cubie
 
-Small, fast video and audio calls: a native Rust desktop app (macOS first, built with GPUI), an iPhone app on the same engine, and a Svelte web client, on a self-hosted LiveKit server.
+Small, fast video and audio calls: a native Rust desktop app (macOS first, built with GPUI; unsigned Windows test builds too), an iPhone app on the same engine, and a Svelte web client, on a self-hosted LiveKit server.
 
 The invite-only alpha uses https://cubiecall.com. The domains `cubycall.com` and `quipcall.com` are aliases. Get the Mac app at https://cubiecall.com/download/.
 
@@ -8,7 +8,7 @@ The invite-only alpha uses https://cubiecall.com. The domains `cubycall.com` and
 
 | Path | What |
 |---|---|
-| `apps/desktop` | Mac app (GPUI). Home, a floating capsule of faces, a call window and a share picker |
+| `apps/desktop` | Mac and Windows app (GPUI). Home, a floating capsule of faces, a call window and a share picker |
 | `apps/ios` | iPhone app (Swift, UIKit): sign-in, rooms, calls. Early: see the mobile stages in PLAN.md |
 | `apps/server` | Axum + SQLite: accounts, invitations, room access and LiveKit tokens |
 | `apps/web` | Svelte 5 web client |
@@ -18,6 +18,7 @@ The invite-only alpha uses https://cubiecall.com. The domains `cubycall.com` and
 | `crates/protocol` | Types shared by the server and the clients |
 | `deploy/` | VPS config (nginx, systemd, LiveKit) and Mac packaging |
 | `vendor/gpui-pre-macos` | GPUI's macOS backend, patched (see `vendor/README.md`) |
+| `deploy/windows` | Packaging and publishing the unsigned Windows zip |
 
 ## Run locally
 
@@ -45,6 +46,7 @@ Configure your primary domain in `deploy/site.env.local`. A reserve domain is op
 - A push to `main` deploys the server and the web client (GitHub Actions); `make deploy` does the same from this Mac, plus the VPS config.
 - Push a tag such as `v0.1.1` to build, sign, notarize and publish both Mac apps through GitHub Actions. A manual **Release Mac app** run builds signed downloads without publishing.
 - `make release-mac` remains available for a local recovery release; set `CUBIE_BUILD` higher than the published build number.
+- The same tag builds and publishes the unsigned Windows zip (**Release Windows app**). A manual run of that workflow only builds it, as an artifact to try before tagging.
 - Details are in [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Docs

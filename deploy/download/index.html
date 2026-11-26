@@ -18,12 +18,12 @@
 </style>
 </head>
 <body>
-  <h1>Cubie for Mac</h1>
-  <p class="dim">Alpha · Apple Silicon and Intel · macOS 12.3 or later (screen sharing needs macOS 14)</p>
+  <h1 id="title">Cubie for Mac</h1>
   <p class="dim">Cubie is invite-only for now. The app asks for the email you were invited with and sends it a code.
     To join a call someone sent you, the link is enough: it opens in your browser.</p>
 
-  <h2>Download</h2>
+  <h2>Mac</h2>
+  <p class="dim">Alpha · Apple Silicon and Intel · macOS 12.3 or later (screen sharing needs macOS 14)</p>
   <a class="button" href="/download/Cubie-apple-silicon.zip">Apple Silicon (M1 and later)</a>
   <a class="button" href="/download/Cubie-intel.zip">Intel</a>
   <p class="dim">Not sure? Apple menu → About This Mac: “Chip: Apple M…” is Apple Silicon, “Processor: … Intel” is Intel.</p>
@@ -35,7 +35,7 @@
 
 @TERMINAL_INSTALL@
 
-  <h2>Permissions</h2>
+  <h2>Permissions on a Mac</h2>
   <ul>
     <li>Microphone and camera: macOS asks the first time you use them.</li>
     <li>Screen sharing: the first time you share, allow Cubie under
@@ -43,8 +43,35 @@
       then quit and reopen Cubie.</li>
   </ul>
 
+  <!-- Shown once the Windows zip is on the server (the script below): the
+       Mac and Windows releases publish this page and the zip separately. -->
+  <div id="windows" hidden>
+  <h2>Windows</h2>
+  <p class="dim">Test build · Windows 10 and 11, 64-bit · not signed yet</p>
+  <a class="button" href="/download/Cubie-windows-x64.zip">Windows (64-bit)</a>
+  <ol>
+    <li>Unzip it (right-click → <b>Extract All…</b>) and open <b>Cubie.exe</b>.</li>
+    <li>The build isn’t signed yet, so Windows may say “Windows protected your PC”.
+      Click <b>More info</b>, then <b>Run anyway</b>.</li>
+  </ol>
+  <p class="dim">Cubie doesn’t update itself on Windows yet: download it again for a newer version.</p>
+  </div>
+
   <h2>Something broke?</h2>
-  <p>Send the log: <code>~/Library/Logs/Cubie/cubie.log</code>
+  <p>On a Mac, send the log: <code>~/Library/Logs/Cubie/cubie.log</code>
     (in Finder: Go → Go to Folder…, paste the path).</p>
+  <p id="windows-log" hidden>On Windows: <code>%LOCALAPPDATA%\Cubie\Logs\cubie.log</code>
+    (paste the path into File Explorer’s address bar).</p>
+  <script>
+    fetch('/download/Cubie-windows-x64.zip', { method: 'HEAD' }).then((r) => {
+      if (!r.ok) return;
+      document.getElementById('windows').hidden = false;
+      document.getElementById('windows-log').hidden = false;
+      document.getElementById('title').textContent = 'Cubie for Mac and Windows';
+      document.title = 'Cubie for Mac and Windows';
+      // Shown only now: a link to #windows couldn't scroll to it on load.
+      if (location.hash === '#windows') document.getElementById('windows').scrollIntoView();
+    }, () => {});
+  </script>
 </body>
 </html>

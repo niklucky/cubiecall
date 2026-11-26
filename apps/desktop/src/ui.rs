@@ -4,17 +4,26 @@
 
 use gpui::prelude::*;
 use gpui::{
-    AnyView, App, Bounds, ContentMask, Div, FontWeight, Hsla, MouseButton, ObjectFit, Rgba,
-    SharedString, Stateful, Window, canvas, div, point, px, rgb, size, svg,
+    AnyView, App, Div, FontWeight, Hsla, MouseButton, ObjectFit, Rgba, SharedString, Stateful,
+    Window, div, px, rgb, svg,
 };
-use objc2_core_video::{CVPixelBufferGetHeight, CVPixelBufferGetWidth};
 
 use crate::assets::Icon;
 use crate::theme::{
     ACCENT, BG, DANGER, RAISED, RAISED_2, RECORDING, SPEAKING, TEXT, TEXT_DIM, TEXT_FAINT,
     avatar_background, initials, white,
 };
-use crate::video_mac::Frame;
+use crate::video::Frame;
+
+/// This computer, as the UI calls it: a Mac, or a PC on Windows.
+pub const THIS_COMPUTER: &str = if cfg!(windows) { "this PC" } else { "this Mac" };
+pub const THIS_COMPUTER_TITLE: &str = if cfg!(windows) { "This PC" } else { "This Mac" };
+pub const YOUR_COMPUTER: &str = if cfg!(windows) { "your PC" } else { "your Mac" };
+
+/// Our content under a see-through title bar. AppKit still draws its
+/// buttons over it; Windows draws none for a hidden title bar (no close,
+/// no drag), so there windows keep the system's own.
+pub const SEE_THROUGH_TITLEBAR: bool = cfg!(target_os = "macos");
 
 pub fn icon(icon: Icon, size: f32, color: impl Into<Hsla>) -> gpui::Svg {
     svg()
@@ -357,73 +366,18 @@ impl Render for Tooltip {
 }
 
 /// Video cut to a rounded rectangle filling its parent; a circle when
-/// `radius` is half the side.
-///
-/// GPUI clips video only to rectangles, so the frame is drawn once per
-/// horizontal band, each band clipped to the shape's width at its narrower
-/// end. That leaves steps along the curved edges, all within `ring` of the
-/// outline: cover them with an opaque ring that wide.
-///
-/// In a corner of radius `r`, a band from `d0` to `d1` (distances from where
-/// the curve starts, `d1` further out) has its inner corner
-/// `sqrt(r² − d1² + d0²)` from the corner's centre, so bands with
-/// `d1² − d0² ≤ 2rt − t²` stay within `t` of the curve. A 44 px circle takes
-/// about 15 bands, a 96 px one about 25; the straight middle of a rectangle
-/// takes one.
+/// `radius` is half the side. `ring`: how wide the ring drawn over its edge
+/// is, which may hide steps along the curve (see `video_mac.rs`).
 pub fn rounded_video(frame: Frame, radius: f32, ring: f32, fit: ObjectFit) -> impl IntoElement {
-    canvas(
-        |_, _, _| {},
-        move |bounds, _, window, _| {
-            let buffer = frame.0;
-            let image = size(
-                (CVPixelBufferGetWidth(&buffer) as i32).into(),
-                (CVPixelBufferGetHeight(&buffer) as i32).into(),
-            );
-            let video = fit.get_bounds(bounds, image);
-            let (w, h) = (bounds.size.width / px(1.0), bounds.size.height / px(1.0));
-            let r = radius.min(w / 2.0).min(h / 2.0);
-            let (left, top) = (bounds.origin.x / px(1.0), bounds.origin.y / px(1.0));
-            let mut paint = |x0: f32, y0: f32, x1: f32, y1: f32| {
-                if x1 <= x0 || y1 <= y0 {
-                    return;
-                }
-                let band = Bounds::from_corners(
-                    point(px(left + x0), px(top + y0)),
-                    point(px(left + x1), px(top + y1)),
-                );
-                window.with_content_mask(Some(ContentMask { bounds: band }), |window| {
-                    window.paint_surface(video, buffer.clone())
-                });
-            };
-            if r < 0.5 {
-                paint(0.0, 0.0, w, h);
-                return;
-            }
-            // The straight middle; for a circle, nothing.
-            let middle = h - 2.0 * r;
-            if middle >= 0.5 {
-                paint(0.0, r, w, h - r);
-            }
-            // Half a pixel for GPUI snapping masks to device pixels, half for
-            // keeping the band ends inside the outline.
-            let t = (ring - 1.0).max(0.5);
-            let step = 2.0 * r * t - t * t;
-            let mut d0 = 0.0_f32;
-            while d0 < r {
-                let d1 = (d0 * d0 + step).sqrt().min(r);
-                let inset = r - (r * r - d1 * d1).max(0.0).sqrt() + 0.5;
-                if middle < 0.5 && d0 == 0.0 {
-                    // A circle's widest band spans the centre line.
-                    paint(inset, r - d1, w - inset, h - r + d1);
-                } else {
-                    paint(inset, r - d1, w - inset, r - d0);
-                    paint(inset, h - r + d0, w - inset, h - r + d1);
-                }
-                d0 = d1;
-            }
-        },
-    )
-    .size_full()
+    #[cfg(target_os = "macos")]
+    {
+        crate::video::rounded(frame, radius, ring, fit)
+    }
+    #[cfg(windows)]
+    {
+        let _ = ring;
+        crate::video::rounded(frame, radius, fit)
+    }
 }
 
 /// An opaque ring on the edge of a rounded shape filling its parent: covers
