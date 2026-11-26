@@ -17,8 +17,8 @@ use gpui::{
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateRoundRectRgn, DeleteObject, EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR,
-    MONITORINFO, SetWindowRgn,
+    ClientToScreen, CreateRectRgn, CreateRoundRectRgn, DeleteObject, EnumDisplayMonitors,
+    GetMonitorInfoW, HDC, HMONITOR, MONITORINFO, SetWindowRgn,
 };
 use windows::Win32::System::Diagnostics::Debug::MessageBeep;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
@@ -29,11 +29,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CHILDID_SELF, CreatePopupMenu, DestroyMenu, EVENT_OBJECT_DESTROY,
-    EVENT_OBJECT_LOCATIONCHANGE, EnumThreadWindows, GetCursorPos, GetSystemMetrics, GetWindowRect,
-    HTCAPTION, IsIconic, IsWindowVisible, KillTimer, MB_OK, MF_CHECKED, MF_SEPARATOR, MF_STRING,
-    OBJID_WINDOW, PostMessageW, SC_MOVE, SM_SWAPBUTTON, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-    SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetTimer, SetWindowPos,
-    ShowWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WINEVENT_OUTOFCONTEXT, WM_NULL,
+    EVENT_OBJECT_LOCATIONCHANGE, EnumThreadWindows, GetClientRect, GetCursorPos, GetSystemMetrics,
+    GetWindowRect, HTCAPTION, HWND_TOPMOST, IsIconic, IsWindowVisible, KillTimer, MB_OK,
+    MF_CHECKED, MF_SEPARATOR, MF_STRING, OBJID_WINDOW, PostMessageW, SC_MOVE, SM_SWAPBUTTON,
+    SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SWP_SHOWWINDOW, SendMessageW, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WINEVENT_OUTOFCONTEXT, WM_NULL,
     WM_SYSCOMMAND,
 };
 use windows::core::{BOOL, PCWSTR};
@@ -303,13 +304,14 @@ unsafe extern "system" fn on_location(
             .collect()
     });
     for (child, x, y) in moves {
+        let e = edges(child);
         // SAFETY: our own windows, on their thread.
         let _ = unsafe {
             SetWindowPos(
                 child,
                 None,
-                x,
-                y,
+                x - e.left,
+                y - e.top,
                 0,
                 0,
                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
@@ -337,6 +339,29 @@ unsafe extern "system" fn on_destroy(
 
 fn key(hwnd: HWND) -> usize {
     hwnd.0 as usize
+}
+
+/// Bring a floating window to the front of the others, which are all
+/// topmost. Not GPUI's `activate_window`: for a window made hidden and shown
+/// by [`place`], that first puts it back where it was made, before
+/// it was placed.
+pub fn bring_to_front(window: &Window) {
+    let Some(hwnd) = hwnd(window) else {
+        return;
+    };
+    // SAFETY: our own window, on its thread.
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+        );
+        let _ = SetForegroundWindow(hwnd);
+    }
 }
 
 thread_local! {
@@ -619,15 +644,24 @@ fn apply_mask(hwnd: HWND, mask: &Mask) {
     if SHAPES.with(|s| s.borrow().get(&key(hwnd)) == Some(&shape)) {
         return;
     }
+    // The region is in window coordinates, from the frame's corner: it
+    // keeps the client area and cuts the frame edges off.
+    let e = edges(hwnd);
+    let (w, h) = shape.size;
     // SAFETY: our own window. The system owns the region once it's set;
     // until then, and if setting it fails, it's ours to delete.
     let cut = unsafe {
-        // Square corners need no region, and none can go stale.
-        if radius <= 0.0 {
+        if radius <= 0.0 && e == RECT::default() {
+            // Square, no edges: no region, and none to go stale.
             SetWindowRgn(hwnd, None, true) != 0
         } else {
-            let d = (2.0 * radius * window_scale(hwnd)).round() as i32;
-            let region = CreateRoundRectRgn(0, 0, shape.size.0 + 1, shape.size.1 + 1, d, d);
+            let region = if radius <= 0.0 {
+                CreateRectRgn(e.left, e.top, e.left + w, e.top + h)
+            } else {
+                // Round regions leave out their right and bottom edges.
+                let d = (2.0 * radius * window_scale(hwnd)).round() as i32;
+                CreateRoundRectRgn(e.left, e.top, e.left + w + 1, e.top + h + 1, d, d)
+            };
             if region.is_invalid() {
                 false
             } else if SetWindowRgn(hwnd, Some(region), true) == 0 {
@@ -848,15 +882,16 @@ pub fn log_window_events() {}
 /// Move and size one of our windows, recut its shape for the new size, and
 /// keep the windows riding on it where they are (see [`keep_riders`]).
 fn set_rect(hwnd: HWND, r: RECT) {
+    let e = edges(hwnd);
     // SAFETY: our own window, on its own thread.
     let _ = unsafe {
         SetWindowPos(
             hwnd,
             None,
-            r.left,
-            r.top,
-            r.right - r.left,
-            r.bottom - r.top,
+            r.left - e.left,
+            r.top - e.top,
+            r.right - r.left + e.left + e.right,
+            r.bottom - r.top + e.top + e.bottom,
             SWP_NOZORDER | SWP_NOACTIVATE,
         )
     };
@@ -866,11 +901,44 @@ fn set_rect(hwnd: HWND, r: RECT) {
     }
 }
 
+/// What GPUI draws in a window, on screen: its client area. GPUI takes a
+/// popup's title bar away but leaves the thin frame edges around it, so
+/// sizes and places are about the client area; [`set_rect`] adds the edges
+/// back and [`apply_mask`] cuts them off.
 fn window_rect(hwnd: HWND) -> Option<RECT> {
     let mut r = RECT::default();
-    // SAFETY: writes into `r`; fails for a window that's gone.
-    unsafe { GetWindowRect(hwnd, &mut r) }.ok()?;
-    Some(r)
+    let mut origin = POINT::default();
+    // SAFETY: write into locals; fail for a window that's gone.
+    unsafe {
+        GetClientRect(hwnd, &mut r).ok()?;
+        if !ClientToScreen(hwnd, &mut origin).as_bool() {
+            return None;
+        }
+    }
+    Some(RECT {
+        left: origin.x,
+        top: origin.y,
+        right: origin.x + r.right,
+        bottom: origin.y + r.bottom,
+    })
+}
+
+/// How far the window's frame reaches past its client area on each side.
+fn edges(hwnd: HWND) -> RECT {
+    let mut outer = RECT::default();
+    // SAFETY: writes into `outer`.
+    let (Ok(()), Some(client)) = (
+        unsafe { GetWindowRect(hwnd, &mut outer) },
+        window_rect(hwnd),
+    ) else {
+        return RECT::default();
+    };
+    RECT {
+        left: client.left - outer.left,
+        top: client.top - outer.top,
+        right: outer.right - client.right,
+        bottom: outer.bottom - client.bottom,
+    }
 }
 
 fn cursor_px() -> POINT {

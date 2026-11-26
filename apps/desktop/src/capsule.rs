@@ -661,7 +661,9 @@ impl Capsule {
             caption,
             recording: call.recording.is_some(),
             captions: call.transcription.is_some() || call.preparing.is_some(),
-            menu_extras: usize::from(call.recording.is_none()) + usize::from(call.can_transcribe()),
+            // The same items `menu` shows: Record only where recording is.
+            menu_extras: usize::from(crate::call::RECORDS_HERE && call.recording.is_none())
+                + usize::from(call.can_transcribe()),
             notice_button: call.notice().is_some_and(|n| n.action.is_some()),
         }
     }
@@ -2189,7 +2191,8 @@ impl Capsule {
                 // Not from inside this window's event: AppKit reorders windows.
                 cx.defer(move |cx| {
                     if let Some(handle) = call.read(cx).share_window_of(&who) {
-                        let _ = handle.update(cx, |_, window, _| window.activate_window());
+                        let _ = handle
+                            .update(cx, |_, window, _| crate::platform::bring_to_front(window));
                     }
                 });
             })

@@ -180,6 +180,11 @@ pub fn retire(window: &Native) {
     window.0.orderOut(None);
 }
 
+/// Bring a floating window to the front of the others.
+pub fn bring_to_front(window: &Window) {
+    window.activate_window();
+}
+
 /// Let the user drag `window` with the button that's down, as dragging a
 /// title bar does.
 pub fn start_window_move(window: &Window) {
