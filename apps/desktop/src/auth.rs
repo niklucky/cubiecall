@@ -114,8 +114,8 @@ fn clear(server: &str) {
 
 /// The session in Windows' Credential Manager: a generic credential that
 /// only this Windows account can read, as the Keychain item is on the Mac.
-/// Named like it (`com.cubiecall.session/<server>:<data dir>`), so test
-/// instances keep sessions of their own.
+/// One per server and data directory, as there, so test instances keep
+/// sessions of their own.
 #[cfg(windows)]
 mod vault {
     use windows::Win32::Security::Credentials::{
@@ -124,8 +124,12 @@ mod vault {
     };
     use windows::core::{HSTRING, PWSTR};
 
+    /// `com.cubiecall.session/` and the account in hex: Credential Manager
+    /// matches names ignoring case, and two servers whose paths differ only
+    /// in case must not share a session.
     fn target(account: &str) -> String {
-        format!("{}/{account}", super::SESSION_SERVICE)
+        let hex: String = account.bytes().map(|b| format!("{b:02x}")).collect();
+        format!("{}/{hex}", super::SESSION_SERVICE)
     }
 
     pub fn read(account: &str) -> Option<String> {
@@ -141,8 +145,12 @@ mod vault {
             )
             .ok()?;
             let c = &*credential;
-            let bytes = std::slice::from_raw_parts(c.CredentialBlob, c.CredentialBlobSize as usize);
-            let token = String::from_utf8(bytes.to_vec()).ok();
+            // An empty credential may come with no blob at all.
+            let token = (!c.CredentialBlob.is_null() && c.CredentialBlobSize > 0)
+                .then(|| {
+                    std::slice::from_raw_parts(c.CredentialBlob, c.CredentialBlobSize as usize)
+                })
+                .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok());
             CredFree(credential.cast());
             token
         }

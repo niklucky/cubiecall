@@ -38,9 +38,15 @@ use crate::permissions::{MediaDevice, where_to_allow};
 /// The reader's first video stream; the only one we select.
 const STREAM: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
 
-/// How long [`Capture::start`] waits for the first frame. A camera that is
-/// slow to wake doesn't hold up the call: its frames show when they come.
-const FIRST_FRAME_WAIT: Duration = Duration::from_secs(5);
+/// How long [`Capture::start`] waits for the first frame to reach WebRTC.
+/// Cameras take a second or two to wake; one that sends nothing usable in
+/// this long counts as failed, rather than a track that never shows.
+const FIRST_FRAME_WAIT: Duration = Duration::from_secs(10);
+
+/// How long stopping waits for the capture thread. A driver can stall
+/// inside `ReadSample`; the call takes the track away regardless, and the
+/// thread lets go of the device whenever the read returns.
+const STOP_WAIT: Duration = Duration::from_secs(2);
 
 /// Keeps capture running; dropping it stops the camera and waits until it
 /// has let go of the device.
@@ -88,8 +94,10 @@ impl Capture {
             Ok(Ok(())) => Ok(capture),
             Ok(Err(e)) => Err(e),
             Err(RecvTimeoutError::Timeout) => {
-                tracing::warn!("camera: no frame after {FIRST_FRAME_WAIT:?}; carrying on");
-                Ok(capture)
+                anyhow::bail!(
+                    "the camera sent no picture in {}s",
+                    FIRST_FRAME_WAIT.as_secs()
+                )
             }
             Err(RecvTimeoutError::Disconnected) => anyhow::bail!("the camera thread ended"),
         }
@@ -99,8 +107,18 @@ impl Capture {
 impl Drop for Capture {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
+        let Some(thread) = self.thread.take() else {
+            return;
+        };
+        let deadline = Instant::now() + STOP_WAIT;
+        while !thread.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if thread.is_finished() {
             let _ = thread.join();
+        } else {
+            // Left to finish by itself: it holds the device until then.
+            tracing::warn!("camera: still reading after {STOP_WAIT:?}; not waiting");
         }
     }
 }
@@ -137,11 +155,17 @@ impl Handler {
 fn run_device(mut handler: Handler, stop: &AtomicBool, ready: SyncSender<anyhow::Result<()>>) {
     let mut ready = Some(ready);
     if let Err(e) = capture_device(&mut handler, stop, &mut ready) {
-        match ready.take() {
-            Some(ready) => {
-                let _ = ready.send(Err(e));
-            }
-            None => tracing::warn!("camera stopped: {e:#}"),
+        // Before the first frame, `Capture::start` reports it, unless it
+        // already gave up waiting.
+        let unheard = match ready.take() {
+            Some(ready) => match ready.send(Err(e)) {
+                Ok(()) => None,
+                Err(mpsc::SendError(sent)) => sent.err(),
+            },
+            None => Some(e),
+        };
+        if let Some(e) = unheard {
+            tracing::warn!("camera stopped: {e:#}");
         }
     }
 }
@@ -182,11 +206,14 @@ fn capture_device(
         }
         // No sample: a gap in the stream (a "stream tick").
         let Some(sample) = sample else { continue };
-        if let Some(ready) = ready.take() {
-            let _ = ready.send(Ok(()));
-        }
         match to_i420(&sample, &format)? {
-            Some(buffer) => handler.push(buffer, format.width, format.height),
+            Some(buffer) => {
+                handler.push(buffer, format.width, format.height);
+                // Ready once a frame has reached WebRTC, not before.
+                if let Some(ready) = ready.take() {
+                    let _ = ready.send(Ok(()));
+                }
+            }
             None if !unusable => {
                 unusable = true;
                 tracing::warn!(

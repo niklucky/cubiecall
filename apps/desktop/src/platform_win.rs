@@ -5,8 +5,7 @@
 //! Positions are AppKit's (`geometry.rs`): points, `y` up from the bottom of
 //! the main display, so the call widget lays itself out the same on both
 //! systems. Win32 has physical pixels with `y` down from the main display's
-//! top; each conversion uses the scale of the display concerned, which is
-//! exact with one display, or several at the same scale.
+//! top, and each display its own scale ([`Desktop`] converts).
 
 use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
@@ -17,24 +16,24 @@ use gpui::{
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateRoundRectRgn, EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR,
-    MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint,
-    MonitorFromWindow, SetWindowRgn,
+    CreateRoundRectRgn, DeleteObject, EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR,
+    MONITORINFO, SetWindowRgn,
 };
 use windows::Win32::System::Diagnostics::Debug::MessageBeep;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_CONTROL, VK_LBUTTON, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
-    VK_MBUTTON, VK_MENU, VK_RBUTTON, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT,
+    GetAsyncKeyState, ReleaseCapture, VK_CONTROL, VK_LBUTTON, VK_LCONTROL, VK_LMENU, VK_LSHIFT,
+    VK_LWIN, VK_MBUTTON, VK_MENU, VK_RBUTTON, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CHILDID_SELF, CreatePopupMenu, DestroyMenu, EVENT_OBJECT_LOCATIONCHANGE,
-    EnumThreadWindows, GetCursorPos, GetSystemMetrics, GetWindowRect, IsIconic, IsWindowVisible,
-    KillTimer, MB_OK, MF_CHECKED, MF_SEPARATOR, MF_STRING, OBJID_WINDOW, PostMessageW, SM_CYSCREEN,
-    SM_SWAPBUTTON, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
-    SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    TrackPopupMenuEx, WINEVENT_OUTOFCONTEXT, WM_NULL,
+    EnumThreadWindows, GetCursorPos, GetSystemMetrics, GetWindowRect, HTCAPTION, IsIconic,
+    IsWindowVisible, KillTimer, MB_OK, MF_CHECKED, MF_SEPARATOR, MF_STRING, OBJID_WINDOW,
+    PostMessageW, SC_MOVE, SM_SWAPBUTTON, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE,
+    SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenuEx, WINEVENT_OUTOFCONTEXT, WM_NULL,
+    WM_SYSCOMMAND,
 };
 use windows::core::{BOOL, PCWSTR};
 
@@ -56,19 +55,21 @@ impl Native {
     }
 
     pub fn frame(&self) -> Rect {
-        window_rect(self.0).map_or_else(Rect::default, |r| to_points(r, window_scale(self.0)))
+        window_rect(self.0).map_or_else(Rect::default, |r| Desktop::now().to_points(r))
     }
 
     /// The usable part of the screen the window is on: without the taskbar.
     pub fn visible(&self) -> Option<Rect> {
-        let (work, _, scale) = monitor_of(self.0)?;
-        Some(to_points(work, scale))
+        let desktop = Desktop::now();
+        let display = desktop.display_of(window_rect(self.0)?)?;
+        Some(desktop.work(display))
     }
 
     /// All of the screen the window is on.
     pub fn screen(&self) -> Option<Rect> {
-        let (_, whole, scale) = monitor_of(self.0)?;
-        Some(to_points(whole, scale))
+        let desktop = Desktop::now();
+        let display = desktop.display_of(window_rect(self.0)?)?;
+        Some(desktop.whole(display))
     }
 
     pub fn shown(&self) -> bool {
@@ -149,8 +150,7 @@ fn place_now(placements: Vec<Placement>) {
             let _ = unsafe { ShowWindow(hwnd, SW_HIDE) };
             continue;
         }
-        let scale = scale_at(p.frame.x + p.frame.w / 2.0, p.frame.y + p.frame.h / 2.0);
-        let target = to_pixels(p.frame, scale);
+        let target = Desktop::now().to_pixels(p.frame);
         if window_rect(hwnd) != Some(target) {
             set_rect(hwnd, target);
         }
@@ -281,14 +281,52 @@ unsafe extern "system" fn follow(
     }
 }
 
+thread_local! {
+    /// The window [`start_window_move`] moves on the event loop's next turn.
+    static MOVING: Cell<Option<HWND>> = const { Cell::new(None) };
+}
+
+/// Let the user drag `window` with the button that's down, as dragging a
+/// title bar does: GPUI's Windows backend leaves this out. Windows' own move
+/// loop takes over until the button goes up. It runs a message loop of its
+/// own, so it starts from the event loop's next turn (a thread timer), not
+/// inside the GPUI event that asked for it.
+pub fn start_window_move(window: &Window) {
+    let Some(hwnd) = hwnd(window) else {
+        return;
+    };
+    MOVING.set(Some(hwnd));
+    // SAFETY: a one-shot thread timer; `drag` kills it.
+    unsafe { SetTimer(None, 0, 0, Some(drag)) };
+}
+
+unsafe extern "system" fn drag(_: HWND, _: u32, id: usize, _: u32) {
+    // SAFETY: the thread timer `start_window_move` set.
+    let _ = unsafe { KillTimer(None, id) };
+    let Some(hwnd) = MOVING.take() else {
+        return;
+    };
+    // Let go already: it was a click.
+    if !left_mouse_down() {
+        return;
+    }
+    // SAFETY: our own window, on its thread, outside any GPUI update. GPUI
+    // took the mouse when the button went down; the move loop needs it.
+    // SC_MOVE | HTCAPTION moves with the mouse from where it is now.
+    unsafe {
+        let _ = ReleaseCapture();
+        SendMessageW(
+            hwnd,
+            WM_SYSCOMMAND,
+            Some(WPARAM((SC_MOVE | HTCAPTION) as usize)),
+            Some(LPARAM(0)),
+        );
+    }
+}
+
 /// Where the mouse cursor is on screen.
 pub fn cursor() -> (f64, f64) {
-    let p = cursor_px();
-    let scale = monitor_scale(
-        // SAFETY: a plain query.
-        unsafe { MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST) },
-    );
-    (p.x as f64 / scale, (primary_height() - p.y as f64) / scale)
+    Desktop::now().point(cursor_px())
 }
 
 /// Whether the key with this virtual key code is held down right now, in any
@@ -301,11 +339,14 @@ thread_local! {
     static LAST_PRESS: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
-/// How long ago an ordinary key or a mouse button was last seen down, in any
-/// app (modifiers and the hold key don't count). Windows keeps no time per
-/// kind of input (`GetLastInputInfo` counts the held key's own auto-repeat),
-/// so each call looks at every key: often enough while it matters, since
-/// hold to talk asks every 50 ms.
+/// How long ago an ordinary key or a mouse button was last seen going down,
+/// in any app (modifiers and the hold key don't count). Windows keeps no time
+/// per kind of input (`GetLastInputInfo` counts the held key's own
+/// auto-repeat), so each call looks at every key: hold to talk asks every
+/// 50 ms while it matters. A key tapped and let go between two looks counts
+/// too, by the bit that says it went down since the last look. Windows
+/// doesn't promise that bit, so it only ever adds presses: at worst a hold
+/// is taken for a shortcut and stays muted.
 pub fn since_press() -> Duration {
     const MODIFIERS: [u16; 14] = [
         VK_SHIFT.0,
@@ -324,10 +365,16 @@ pub fn since_press() -> Duration {
         0x91, // Scroll Lock
     ];
     let now = Instant::now();
-    let down = (1u16..0xFF)
-        .filter(|vk| !MODIFIERS.contains(vk) && *vk != HOLD_KEY)
-        .any(pressed);
-    if down {
+    let mut seen = false;
+    // Every key, not just up to the first one down: each look resets its
+    // "went down since" bit.
+    for vk in (1u16..0xFF).filter(|vk| !MODIFIERS.contains(vk) && *vk != HOLD_KEY) {
+        // SAFETY: a plain query. High bit: down now; low bit: went down
+        // since the last look.
+        let state = unsafe { GetAsyncKeyState(vk as i32) };
+        seen |= state < 0 || state & 1 != 0;
+    }
+    if seen {
         LAST_PRESS.set(Some(now));
     }
     LAST_PRESS.get().map_or(Duration::MAX, |t| now - t)
@@ -341,10 +388,11 @@ fn pressed(vk: u16) -> bool {
 /// The screen `p` is on: its usable part, and all of it. `None` between
 /// screens.
 pub fn screen_at(p: (f64, f64)) -> Option<(Rect, Rect)> {
-    monitors().into_iter().find_map(|(work, whole, scale)| {
-        let whole = to_points(whole, scale);
+    let desktop = Desktop::now();
+    desktop.displays.iter().find_map(|display| {
+        let whole = desktop.whole(display);
         let inside = p.0 >= whole.x && p.0 <= whole.right() && p.1 >= whole.y && p.1 <= whole.top();
-        inside.then(|| (to_points(work, scale), whole))
+        inside.then(|| (desktop.work(display), whole))
     })
 }
 
@@ -506,10 +554,16 @@ fn apply_mask(hwnd: HWND, mask: &Mask) {
     };
     let Mask::Rounded(radius) = mask;
     let d = (2.0 * radius * window_scale(hwnd)).round() as i32;
-    // SAFETY: the system owns the region once it's set.
+    // SAFETY: the system owns the region once it's set; until then, and if
+    // setting it fails, it's ours to delete.
     unsafe {
         let region = CreateRoundRectRgn(0, 0, r.right - r.left + 1, r.bottom - r.top + 1, d, d);
-        SetWindowRgn(hwnd, Some(region), true);
+        if region.is_invalid() {
+            return;
+        }
+        if SetWindowRgn(hwnd, Some(region), true) == 0 {
+            let _ = DeleteObject(region.into());
+        }
     }
 }
 
@@ -565,7 +619,10 @@ pub fn move_to_top(window: &Window, cx: &App) {
     };
     cx.foreground_executor()
         .spawn(async move {
-            let (Some((work, _, _)), Some(frame)) = (monitor_of(hwnd), window_rect(hwnd)) else {
+            let Some(frame) = window_rect(hwnd) else {
+                return;
+            };
+            let Some(work) = Desktop::now().display_of(frame).map(|d| d.work) else {
                 return;
             };
             let h = frame.bottom - frame.top;
@@ -647,7 +704,7 @@ pub fn move_with<V: 'static>(
                 w,
                 h,
             };
-            set_rect(hwnd, to_pixels(target, scale_at(screen.0, screen.1)));
+            set_rect(hwnd, Desktop::now().to_pixels(target));
             if let Ok(placements) = view.update(cx, |v, cx| after(v, cx)) {
                 place_now(placements);
             }
@@ -660,8 +717,8 @@ fn set_frame(hwnd: HWND, size: Size<f32>, mask: &Mask, anchor: Anchor) {
     let Some(current) = window_rect(hwnd) else {
         return;
     };
-    let scale = window_scale(hwnd);
-    let frame = to_points(current, scale);
+    let desktop = Desktop::now();
+    let frame = desktop.to_points(current);
     let (w, h) = (size.width as f64, size.height as f64);
     let (x, y) = match anchor {
         Anchor::Center => (frame.x + (frame.w - w) / 2.0, frame.y + (frame.h - h) / 2.0),
@@ -673,10 +730,10 @@ fn set_frame(hwnd: HWND, size: Size<f32>, mask: &Mask, anchor: Anchor) {
     };
     let mut target = Rect { x, y, w, h };
     if !matches!(anchor, Anchor::TopLeft)
-        && let Some((work, _, _)) = monitor_of(hwnd)
-        && contains(&to_points(work, scale), &frame)
+        && let Some(display) = desktop.display_of(current)
+        && contains(&desktop.work(display), &frame)
     {
-        let visible = to_points(work, scale);
+        let visible = desktop.work(display);
         target.x = target
             .x
             .clamp(visible.x, (visible.right() - w).max(visible.x));
@@ -686,7 +743,7 @@ fn set_frame(hwnd: HWND, size: Size<f32>, mask: &Mask, anchor: Anchor) {
                 .clamp(visible.y, (visible.top() - h).max(visible.y));
         }
     }
-    set_rect(hwnd, to_pixels(target, scale));
+    set_rect(hwnd, desktop.to_pixels(target));
     apply_mask(hwnd, mask);
 }
 
@@ -730,13 +787,6 @@ fn cursor_px() -> POINT {
     p
 }
 
-/// The main display's height in pixels: AppKit's `y` counts up from its
-/// bottom edge.
-fn primary_height() -> f64 {
-    // SAFETY: a plain query (in physical pixels: the process is DPI-aware).
-    unsafe { GetSystemMetrics(SM_CYSCREEN) as f64 }
-}
-
 fn window_scale(hwnd: HWND) -> f64 {
     // SAFETY: a plain query; 0 for a window that's gone.
     match unsafe { GetDpiForWindow(hwnd) } {
@@ -754,25 +804,6 @@ fn monitor_scale(monitor: HMONITOR) -> f64 {
     }
 }
 
-/// The scale of the display a point (in points) is on, or the main one's.
-fn scale_at(x: f64, y: f64) -> f64 {
-    monitors()
-        .into_iter()
-        .find(|(_, whole, scale)| {
-            let r = to_points(*whole, *scale);
-            x >= r.x && x < r.right() && y >= r.y && y < r.top()
-        })
-        .map_or_else(
-            // SAFETY: a plain query.
-            || {
-                monitor_scale(unsafe {
-                    MonitorFromPoint(POINT::default(), MONITOR_DEFAULTTOPRIMARY)
-                })
-            },
-            |(_, _, scale)| scale,
-        )
-}
-
 /// The work area and whole of a display, in pixels.
 fn monitor_info(monitor: HMONITOR) -> Option<(RECT, RECT)> {
     let mut info = MONITORINFO {
@@ -783,14 +814,6 @@ fn monitor_info(monitor: HMONITOR) -> Option<(RECT, RECT)> {
     unsafe { GetMonitorInfoW(monitor, &mut info) }
         .as_bool()
         .then_some((info.rcWork, info.rcMonitor))
-}
-
-/// The display a window is on: work area, whole, scale.
-fn monitor_of(hwnd: HWND) -> Option<(RECT, RECT, f64)> {
-    // SAFETY: a plain query.
-    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
-    let (work, whole) = monitor_info(monitor)?;
-    Some((work, whole, monitor_scale(monitor)))
 }
 
 /// Every display: work area, whole, scale.
@@ -811,23 +834,135 @@ fn monitors() -> Vec<(RECT, RECT, f64)> {
     out
 }
 
-fn to_points(r: RECT, scale: f64) -> Rect {
-    Rect {
-        x: r.left as f64 / scale,
-        y: (primary_height() - r.bottom as f64) / scale,
-        w: (r.right - r.left) as f64 / scale,
-        h: (r.bottom - r.top) as f64 / scale,
-    }
+/// The displays as they are now, and how a position in pixels on one of
+/// them reads in points. A display's top-left corner is its pixel position
+/// over the main display's scale; inside it, distances are over its own
+/// scale, which is what GPUI sizes its windows by. Displays touching the
+/// main one meet it without gap or overlap, and every point belongs to one
+/// display both ways.
+struct Desktop {
+    displays: Vec<Display>,
+    /// The main display's height in points: AppKit's `y` counts up from its
+    /// bottom edge.
+    height: f64,
 }
 
-fn to_pixels(r: Rect, scale: f64) -> RECT {
-    let left = (r.x * scale).round() as i32;
-    let bottom = (primary_height() - r.y * scale).round() as i32;
-    RECT {
-        left,
-        top: bottom - (r.h * scale).round() as i32,
-        right: left + (r.w * scale).round() as i32,
-        bottom,
+#[derive(Clone, Copy, Debug)]
+struct Display {
+    whole: RECT,
+    work: RECT,
+    scale: f64,
+    /// Its top-left corner in points, `y` down.
+    at: (f64, f64),
+}
+
+impl Desktop {
+    fn now() -> Self {
+        Self::new(monitors())
+    }
+
+    /// From each display's work area, whole and scale, in pixels.
+    fn new(monitors: Vec<(RECT, RECT, f64)>) -> Self {
+        let main = monitors
+            .iter()
+            .find(|(_, whole, _)| whole.left == 0 && whole.top == 0)
+            .or(monitors.first())
+            .copied();
+        let (main_scale, height) = main.map_or((1.0, 0.0), |(_, whole, scale)| {
+            (scale, (whole.bottom - whole.top) as f64 / scale)
+        });
+        let displays = monitors
+            .into_iter()
+            .map(|(work, whole, scale)| Display {
+                whole,
+                work,
+                scale,
+                at: (
+                    whole.left as f64 / main_scale,
+                    whole.top as f64 / main_scale,
+                ),
+            })
+            .collect();
+        Self { displays, height }
+    }
+
+    /// The display holding most of `r` (by its centre), else the nearest.
+    fn display_of(&self, r: RECT) -> Option<&Display> {
+        let (x, y) = ((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+        let distance = |d: &&Display| {
+            let dx = (d.whole.left - x).max(x - d.whole.right + 1).max(0) as f64;
+            let dy = (d.whole.top - y).max(y - d.whole.bottom + 1).max(0) as f64;
+            dx.hypot(dy)
+        };
+        self.displays
+            .iter()
+            .min_by(|a, b| distance(a).total_cmp(&distance(b)))
+    }
+
+    /// The display a point in points is on, else the nearest.
+    fn display_at(&self, x: f64, y: f64) -> Option<&Display> {
+        let distance = |d: &&Display| {
+            let r = self.whole(d);
+            let dx = (r.x - x).max(x - r.right()).max(0.0);
+            let dy = (r.y - y).max(y - r.top()).max(0.0);
+            dx.hypot(dy)
+        };
+        self.displays
+            .iter()
+            .min_by(|a, b| distance(a).total_cmp(&distance(b)))
+    }
+
+    fn on(&self, d: &Display, r: RECT) -> Rect {
+        let w = (r.right - r.left) as f64 / d.scale;
+        let h = (r.bottom - r.top) as f64 / d.scale;
+        let x = d.at.0 + (r.left - d.whole.left) as f64 / d.scale;
+        let top = d.at.1 + (r.top - d.whole.top) as f64 / d.scale;
+        Rect {
+            x,
+            y: self.height - top - h,
+            w,
+            h,
+        }
+    }
+
+    fn whole(&self, d: &Display) -> Rect {
+        self.on(d, d.whole)
+    }
+
+    fn work(&self, d: &Display) -> Rect {
+        self.on(d, d.work)
+    }
+
+    fn to_points(&self, r: RECT) -> Rect {
+        match self.display_of(r) {
+            Some(d) => self.on(d, r),
+            None => Rect::default(),
+        }
+    }
+
+    fn to_pixels(&self, r: Rect) -> RECT {
+        let Some(d) = self.display_at(r.x + r.w / 2.0, r.y + r.h / 2.0) else {
+            return RECT::default();
+        };
+        let top = self.height - r.y - r.h;
+        let left = d.whole.left + ((r.x - d.at.0) * d.scale).round() as i32;
+        let top = d.whole.top + ((top - d.at.1) * d.scale).round() as i32;
+        RECT {
+            left,
+            top,
+            right: left + (r.w * d.scale).round() as i32,
+            bottom: top + (r.h * d.scale).round() as i32,
+        }
+    }
+
+    fn point(&self, p: POINT) -> (f64, f64) {
+        let r = self.to_points(RECT {
+            left: p.x,
+            top: p.y,
+            right: p.x,
+            bottom: p.y,
+        });
+        (r.x, r.y)
     }
 }
 
@@ -835,18 +970,63 @@ fn to_pixels(r: Rect, scale: f64) -> RECT {
 mod tests {
     use super::*;
 
-    #[test]
-    fn points_and_pixels_round_trip() {
-        let r = Rect {
-            x: 100.0,
-            y: 200.0,
-            w: 300.0,
-            h: 52.0,
-        };
-        for scale in [1.0, 1.25, 1.5, 2.0] {
-            let back = to_points(to_pixels(r, scale), scale);
-            assert!((back.x - r.x).abs() < 1.0 && (back.y - r.y).abs() < 1.0);
-            assert!((back.w - r.w).abs() < 1.0 && (back.h - r.h).abs() < 1.0);
+    fn rect(left: i32, top: i32, w: i32, h: i32) -> RECT {
+        RECT {
+            left,
+            top,
+            right: left + w,
+            bottom: top + h,
         }
+    }
+
+    /// The main display at 100%, a 150% one to its right; then the other
+    /// way round.
+    fn desktops() -> [Desktop; 2] {
+        [
+            Desktop::new(vec![
+                (rect(0, 0, 1920, 1040), rect(0, 0, 1920, 1080), 1.0),
+                (rect(1920, 0, 2880, 1560), rect(1920, 0, 2880, 1620), 1.5),
+            ]),
+            Desktop::new(vec![
+                (rect(0, 0, 2880, 1560), rect(0, 0, 2880, 1620), 1.5),
+                (rect(2880, 0, 1920, 1040), rect(2880, 0, 1920, 1080), 1.0),
+            ]),
+        ]
+    }
+
+    #[test]
+    fn displays_meet_without_overlapping() {
+        for desktop in desktops() {
+            let [a, b] = [&desktop.displays[0], &desktop.displays[1]];
+            assert_eq!(desktop.whole(a).right(), desktop.whole(b).x);
+            // A pixel either side of the seam stays on its own display.
+            let seam = b.whole.left;
+            let left = desktop.point(POINT { x: seam - 1, y: 10 });
+            let right = desktop.point(POINT { x: seam, y: 10 });
+            assert!(left.0 < desktop.whole(b).x && right.0 >= desktop.whole(b).x);
+        }
+    }
+
+    #[test]
+    fn windows_round_trip_on_every_display() {
+        for desktop in desktops() {
+            for d in &desktop.displays {
+                let r = rect(d.whole.left + 300, d.whole.top + 200, 450, 78);
+                let back = desktop.to_pixels(desktop.to_points(r));
+                assert_eq!(back, r);
+                // A window's size in points is its size over its display's scale.
+                let pts = desktop.to_points(r);
+                assert!((pts.w - 450.0 / d.scale).abs() < 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn y_counts_up_from_the_main_display_bottom() {
+        let [desktop, _] = desktops();
+        let main = &desktop.displays[0];
+        assert_eq!(desktop.whole(main).y, 0.0);
+        let p = desktop.point(POINT { x: 10, y: 0 });
+        assert_eq!(p.1, 1080.0);
     }
 }

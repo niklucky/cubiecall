@@ -8,10 +8,10 @@
 //!
 //! Every frame is a new image in each window's sprite atlas. A window keeps
 //! only the newest frame of each video: the one before is dropped when the
-//! next is painted, and a video that's gone has its last frame dropped the
-//! next time anything in that window paints video ([`Painted`]).
+//! next is painted, and a sweep every 2 s lets go of the last frames of
+//! videos that are gone and windows that closed ([`Painted`]).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
@@ -158,6 +158,52 @@ struct Painted {
 
 thread_local! {
     static PAINTED: RefCell<Vec<Painted>> = const { RefCell::new(Vec::new()) };
+    static SWEEPING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Every 2 s while any window holds a frame, let go of the frames of videos
+/// that are gone and of windows that closed. Painting only tidies up after
+/// what it replaces: a video nobody paints any more (its camera turned off)
+/// would otherwise keep its last frame in memory and in the atlas.
+fn sweep_soon(cx: &mut App) {
+    if SWEEPING.replace(true) {
+        return;
+    }
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            if !cx.update(sweep) {
+                break;
+            }
+        }
+        SWEEPING.set(false);
+    })
+    .detach();
+}
+
+/// Whether any frame is still held.
+fn sweep(cx: &mut App) -> bool {
+    let open: Vec<WindowId> = cx.windows().iter().map(|w| w.window_id()).collect();
+    let (stale, more) = PAINTED.with(|p| {
+        let mut painted = p.borrow_mut();
+        let mut stale = Vec::new();
+        painted.retain(|entry| {
+            // A closed window's atlas went with it.
+            if !open.contains(&entry.window) {
+                return false;
+            }
+            if entry.alive.strong_count() == 0 {
+                stale.push(entry.image.clone());
+                return false;
+            }
+            true
+        });
+        (stale, !painted.is_empty())
+    });
+    for image in stale {
+        cx.drop_image(image, None);
+    }
+    more
 }
 
 /// Draw `frame` into `bounds`, placed by `fit`, its corners rounded, and
@@ -201,6 +247,7 @@ fn paint(
     for image in stale {
         let _ = window.drop_image(image);
     }
+    sweep_soon(cx);
     let image_bounds = fit.get_bounds(bounds, frame.size());
     if let Err(e) = window.paint_image(bounds, image_bounds, corners, frame.image.clone(), 0, false)
     {

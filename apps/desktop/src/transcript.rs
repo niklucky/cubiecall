@@ -569,7 +569,9 @@ impl Render for TranscriptWindow {
                 this.hovered = *hovered;
                 cx.notify();
             }))
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
+            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                crate::platform::start_window_move(window)
+            })
             .child(header)
             .child(
                 div()

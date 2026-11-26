@@ -375,7 +375,7 @@ impl Render for Bubble {
                     if event.click_count >= 2 {
                         this.to_capsule(cx, |capsule, who, cx| capsule.bubble_flipped(who, cx));
                     } else {
-                        window.start_window_move();
+                        crate::platform::start_window_move(window);
                         this.to_capsule(cx, |capsule, who, cx| capsule.bubble_pressed(who, cx));
                     }
                 }),

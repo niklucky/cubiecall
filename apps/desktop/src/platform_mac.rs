@@ -180,6 +180,12 @@ pub fn retire(window: &Native) {
     window.0.orderOut(None);
 }
 
+/// Let the user drag `window` with the button that's down, as dragging a
+/// title bar does.
+pub fn start_window_move(window: &Window) {
+    window.start_window_move();
+}
+
 /// Where the mouse cursor is on screen, in AppKit's coordinates.
 pub fn cursor() -> (f64, f64) {
     let p = NSEvent::mouseLocation();

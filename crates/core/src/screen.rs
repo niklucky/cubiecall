@@ -198,6 +198,8 @@ mod generic {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
+    #[cfg(windows)]
+    use livekit::webrtc::desktop_capturer::CaptureSource;
     use livekit::webrtc::desktop_capturer::{
         CaptureError, DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions,
         DesktopFrame,
@@ -227,6 +229,33 @@ mod generic {
         Ok(Stop(stop))
     }
 
+    /// The display to share on Windows: the main one. With none chosen,
+    /// Windows.Graphics.Capture fails its first frame, and the DirectX and
+    /// GDI capturers take the whole desktop, every display at once (a second
+    /// monitor's contents included). Windows.Graphics.Capture names displays
+    /// by their HMONITOR; the others by index, the main display usually
+    /// first.
+    #[cfg(windows)]
+    fn main_screen(capturer: &DesktopCapturer) -> Option<CaptureSource> {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::Graphics::Gdi::{MONITOR_DEFAULTTOPRIMARY, MonitorFromPoint};
+        let sources = capturer.get_source_list();
+        // SAFETY: a plain query; the main display always exists.
+        let main = unsafe { MonitorFromPoint(POINT::default(), MONITOR_DEFAULTTOPRIMARY) };
+        let main = main.0 as usize as u64;
+        let pick = sources
+            .iter()
+            .find(|s| s.id() == main)
+            .or_else(|| sources.first())
+            .cloned();
+        tracing::info!(
+            screens = sources.len(),
+            picked = pick.as_ref().map(|s| s.id()),
+            "screen share: the main display"
+        );
+        pick
+    }
+
     fn spawn_capture_thread(
         source: NativeVideoSource,
         preset: ScreenSharePreset,
@@ -247,6 +276,19 @@ mod generic {
                     return;
                 };
 
+                // Windows: one display, the main one (see `main_screen`).
+                #[cfg(windows)]
+                let screen = match main_screen(&capturer) {
+                    Some(source) => Some(source),
+                    None => {
+                        let _ = events.send_blocking(Event::Error("no screen to share".into()));
+                        on_fail();
+                        return;
+                    }
+                };
+                #[cfg(not(windows))]
+                let screen = None;
+
                 let failed = Arc::new(AtomicBool::new(false));
                 let mut frames = FramePump {
                     source,
@@ -254,7 +296,7 @@ mod generic {
                     started: Instant::now(),
                     sent: 0,
                 };
-                capturer.start_capture(None, {
+                capturer.start_capture(screen, {
                     let failed = failed.clone();
                     move |result| match result {
                         Ok(frame) => frames.push(&frame),

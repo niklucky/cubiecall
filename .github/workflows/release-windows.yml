@@ -32,9 +32,21 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+          # The whole history, to tell whether the tag is on main.
+          fetch-depth: 0
       - name: Validate release tag and resolve build number
         id: release
         run: python3 deploy/mac/ci-metadata.py
+      - name: Publish only what's on main
+        # A tag pushed on an unmerged branch would otherwise send that
+        # branch's build to the public download link.
+        if: steps.release.outputs.publish == 'true'
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor 'HEAD^{commit}' FETCH_HEAD; then
+            echo "::error::$GITHUB_REF_NAME isn't on main: tag a merged commit to publish."
+            exit 1
+          fi
       - name: Test atomic website publication
         run: deploy/windows/test-publish.sh
 

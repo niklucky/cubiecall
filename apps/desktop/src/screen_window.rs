@@ -211,7 +211,7 @@ impl Render for ScreenWindow {
                     if event.click_count >= 2 {
                         this.fullscreen(window, cx);
                     } else {
-                        window.start_window_move();
+                        crate::platform::start_window_move(window);
                     }
                 }),
             )

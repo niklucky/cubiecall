@@ -1280,7 +1280,7 @@ impl Capsule {
     /// [`PAUSE`], the outline of what a drop makes shows; dropped there,
     /// the pill turns or tucks away.
     fn begin_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        window.start_window_move();
+        crate::platform::start_window_move(window);
         self.end_drag(cx);
         let start = platform::cursor();
         self.drag_task = Some(cx.spawn(async move |this, cx| {
