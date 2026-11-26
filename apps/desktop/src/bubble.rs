@@ -18,7 +18,7 @@ use gpui::{
 use crate::assets::Icon;
 use crate::call::{Call, Member};
 use crate::capsule::Capsule;
-use crate::mac;
+use crate::platform;
 use crate::theme::{ACCENT, DANGER, PILL, SPEAKING, avatar_background, black, first_name, white};
 use crate::ui::{avatar, icon, ring};
 
@@ -127,15 +127,15 @@ pub fn open(
     capsule: WeakEntity<Capsule>,
     who: Who,
     cx: &mut App,
-) -> Option<(WindowHandle<Bubble>, mac::Native)> {
+) -> Option<(WindowHandle<Bubble>, platform::Native)> {
     let s = who.first_size();
     let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(s), px(s)));
     let mut native = None;
     let handle = cx
         .open_window(
-            mac::hidden_floating_options(WindowBounds::Windowed(bounds)),
+            platform::hidden_floating_options(WindowBounds::Windowed(bounds)),
             |window, cx| {
-                native = mac::Native::of(window);
+                native = platform::Native::of(window);
                 cx.new(|cx| Bubble::new(call, capsule, who, cx))
             },
         )
@@ -200,7 +200,7 @@ impl Bubble {
     fn camera(&self, member: &Member, w: f32, h: f32, r: f32) -> Div {
         let speaking = member.speaking && !member.mic_muted;
         let content = match member.video.as_ref().and_then(|v| v.sink.latest()) {
-            Some(frame) => gpui::surface(frame.0)
+            Some(frame) => crate::video::surface(frame)
                 .object_fit(ObjectFit::Cover)
                 .size_full()
                 .into_any_element(),
@@ -288,7 +288,7 @@ impl Bubble {
             .relative()
             .bg(rgb(0x000000))
             .children(frame.map(|f| {
-                gpui::surface(f.0)
+                crate::video::surface(f)
                     .object_fit(ObjectFit::Contain)
                     .size_full()
             }))
@@ -375,7 +375,7 @@ impl Render for Bubble {
                     if event.click_count >= 2 {
                         this.to_capsule(cx, |capsule, who, cx| capsule.bubble_flipped(who, cx));
                     } else {
-                        window.start_window_move();
+                        crate::platform::start_window_move(window);
                         this.to_capsule(cx, |capsule, who, cx| capsule.bubble_pressed(who, cx));
                     }
                 }),

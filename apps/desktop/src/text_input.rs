@@ -46,16 +46,20 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("right", Right, Some(CONTEXT)),
         KeyBinding::new("shift-left", SelectLeft, Some(CONTEXT)),
         KeyBinding::new("shift-right", SelectRight, Some(CONTEXT)),
-        KeyBinding::new("cmd-a", SelectAll, Some(CONTEXT)),
+        KeyBinding::new(primary!("a"), SelectAll, Some(CONTEXT)),
         KeyBinding::new("home", Home, Some(CONTEXT)),
-        KeyBinding::new("cmd-left", Home, Some(CONTEXT)),
         KeyBinding::new("end", End, Some(CONTEXT)),
-        KeyBinding::new("cmd-right", End, Some(CONTEXT)),
-        KeyBinding::new("cmd-v", Paste, Some(CONTEXT)),
-        KeyBinding::new("cmd-c", Copy, Some(CONTEXT)),
-        KeyBinding::new("cmd-x", Cut, Some(CONTEXT)),
+        KeyBinding::new(primary!("v"), Paste, Some(CONTEXT)),
+        KeyBinding::new(primary!("c"), Copy, Some(CONTEXT)),
+        KeyBinding::new(primary!("x"), Cut, Some(CONTEXT)),
         KeyBinding::new("enter", Submit, Some(CONTEXT)),
         KeyBinding::new("escape", Cancel, Some(CONTEXT)),
+    ]);
+    // The Mac's line start and end; on Windows Ctrl+arrows go by word.
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
+        KeyBinding::new("cmd-left", Home, Some(CONTEXT)),
+        KeyBinding::new("cmd-right", End, Some(CONTEXT)),
     ]);
 }
 

@@ -76,6 +76,7 @@ impl ScreenSharePreset {
 
     /// Average bits per second when your screen is recorded: a little under
     /// what a share sends at most, since a file can take its time.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn recording_bitrate(&self) -> u32 {
         match (self.mode, self.fps) {
             (ContentMode::Text, f) if f <= 5 => 1_000_000,
@@ -197,6 +198,8 @@ mod generic {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
+    #[cfg(windows)]
+    use livekit::webrtc::desktop_capturer::CaptureSource;
     use livekit::webrtc::desktop_capturer::{
         CaptureError, DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions,
         DesktopFrame,
@@ -226,6 +229,54 @@ mod generic {
         Ok(Stop(stop))
     }
 
+    /// The display to share on Windows: the main one, and its size in
+    /// pixels. Every Windows capturer (Windows.Graphics.Capture, DirectX,
+    /// GDI) names screens by their `EnumDisplayDevices` index, so the main
+    /// display is the active device flagged primary. With none chosen, or
+    /// the wrong one, a share could show another display's contents: when
+    /// it isn't in the list, nothing is shared.
+    #[cfg(windows)]
+    fn main_screen(capturer: &DesktopCapturer) -> Option<(CaptureSource, (i32, i32))> {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::Graphics::Gdi::{
+            DISPLAY_DEVICE_ACTIVE, DISPLAY_DEVICE_PRIMARY_DEVICE, DISPLAY_DEVICEW,
+            EnumDisplayDevicesW, GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
+            MonitorFromPoint,
+        };
+        let main = (0u32..64).find(|&index| {
+            let mut device = DISPLAY_DEVICEW {
+                cb: size_of::<DISPLAY_DEVICEW>() as u32,
+                ..Default::default()
+            };
+            // SAFETY: `cb` is set; writes into `device`.
+            let found = unsafe { EnumDisplayDevicesW(None, index, &mut device, 0) }.as_bool();
+            let flags = DISPLAY_DEVICE_ACTIVE | DISPLAY_DEVICE_PRIMARY_DEVICE;
+            found && device.StateFlags & flags == flags
+        })?;
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: plain queries; `cbSize` is set.
+        let whole = unsafe {
+            let monitor = MonitorFromPoint(POINT::default(), MONITOR_DEFAULTTOPRIMARY);
+            GetMonitorInfoW(monitor, &mut info)
+                .as_bool()
+                .then_some(info.rcMonitor)
+        }?;
+        let size = (whole.right - whole.left, whole.bottom - whole.top);
+        let sources = capturer.get_source_list();
+        let pick = sources.iter().find(|s| s.id() == u64::from(main)).cloned();
+        tracing::info!(
+            screens = sources.len(),
+            main,
+            found = pick.is_some(),
+            ?size,
+            "screen share: the main display"
+        );
+        Some((pick?, size))
+    }
+
     fn spawn_capture_thread(
         source: NativeVideoSource,
         preset: ScreenSharePreset,
@@ -246,17 +297,37 @@ mod generic {
                     return;
                 };
 
+                // Windows: one display, the main one (see `main_screen`).
+                #[cfg(windows)]
+                let (screen, only) = match main_screen(&capturer) {
+                    Some((screen, size)) => (Some(screen), Some(size)),
+                    None => {
+                        let _ = events.send_blocking(Event::Error(
+                            "can't find the main display to share".into(),
+                        ));
+                        on_fail();
+                        return;
+                    }
+                };
+                #[cfg(not(windows))]
+                let (screen, only) = (None, None);
+
                 let failed = Arc::new(AtomicBool::new(false));
                 let mut frames = FramePump {
                     source,
                     max_width: preset.max_width(),
+                    only,
                     started: Instant::now(),
                     sent: 0,
                 };
-                capturer.start_capture(None, {
+                capturer.start_capture(screen, {
                     let failed = failed.clone();
                     move |result| match result {
-                        Ok(frame) => frames.push(&frame),
+                        Ok(frame) => {
+                            if !frames.push(&frame) {
+                                failed.store(true, Ordering::Relaxed);
+                            }
+                        }
                         Err(CaptureError::Temporary) => {} // e.g. picker still open
                         Err(CaptureError::Permanent) => failed.store(true, Ordering::Relaxed),
                     }
@@ -286,15 +357,32 @@ mod generic {
     struct FramePump {
         source: NativeVideoSource,
         max_width: u32,
+        /// Windows: the main display's size. LiveKit doesn't say whether
+        /// choosing the display worked, and a capturer that couldn't falls
+        /// back to the whole desktop (every display), so a frame of any
+        /// other size ends the share instead of going out.
+        only: Option<(i32, i32)>,
         started: Instant,
         sent: u64,
     }
 
     impl FramePump {
-        fn push(&mut self, frame: &DesktopFrame) {
+        /// False if the frame isn't of the display being shared.
+        fn push(&mut self, frame: &DesktopFrame) -> bool {
+            if let Some(size) = self.only
+                && (frame.width(), frame.height()) != size
+            {
+                tracing::warn!(
+                    width = frame.width(),
+                    height = frame.height(),
+                    expected = ?size,
+                    "screen share: a frame that isn't the main display; stopping"
+                );
+                return false;
+            }
             let (width, height) = (frame.width() as u32, frame.height() as u32);
             if width < 2 || height < 2 {
-                return;
+                return true;
             }
             // A fresh buffer per frame: the encoder keeps a reference to it.
             let mut i420 = I420Buffer::new(width, height);
@@ -330,6 +418,7 @@ mod generic {
             if self.sent == 1 {
                 tracing::info!(width, height, "first screen frame captured");
             }
+            true
         }
     }
 }

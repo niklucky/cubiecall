@@ -26,7 +26,7 @@ use crate::ui::{Kind, button};
 actions!(settings, [OpenSettings]);
 
 pub fn bind_keys(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("cmd-,", OpenSettings, None)]);
+    cx.bind_keys([KeyBinding::new(primary!(","), OpenSettings, None)]);
     cx.on_action(|_: &OpenSettings, cx| open(cx));
 }
 
@@ -43,7 +43,7 @@ pub fn open(cx: &mut App) {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
             title: Some("Settings".into()),
-            appears_transparent: true,
+            appears_transparent: crate::ui::SEE_THROUGH_TITLEBAR,
             ..Default::default()
         }),
         window_min_size: Some(size(px(480.0), px(420.0))),
@@ -271,7 +271,7 @@ impl Settings {
             .into_any_element(),
         };
         let detail = match &state {
-            State::Ready => "On this Mac".to_owned(),
+            State::Ready => format!("On {}", crate::ui::THIS_COMPUTER),
             State::Downloading { done, total } => format!(
                 "Downloading · {}%",
                 if *total > 0 { done * 100 / total } else { 0 }
@@ -400,7 +400,9 @@ impl Render for Settings {
                 "Transcription",
                 cx,
             ))
-            .child(tab("tab-recording", Tab::Recording, "Recording", cx))
+            .when(crate::call::RECORDS_HERE, |el| {
+                el.child(tab("tab-recording", Tab::Recording, "Recording", cx))
+            })
             .child(tab("tab-call", Tab::Call, "Call", cx));
         let body = match self.tab {
             Tab::Transcription => self.transcription_pane(cx),
@@ -502,7 +504,10 @@ impl Settings {
                             .gap(px(10.0))
                             .cursor_pointer()
                             .child(toggle(accept_asks))
-                            .child("Start when someone in the call asks this Mac to transcribe")
+                            .child(format!(
+                                "Start when someone in the call asks {} to transcribe",
+                                crate::ui::THIS_COMPUTER
+                            ))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.set(cx, |t| t.accept_asks = !accept_asks);
                             })),
@@ -515,7 +520,10 @@ impl Settings {
                             .border_color(rgb(LINE))
                             .text_size(px(11.0))
                             .text_color(rgb(TEXT_FAINT))
-                            .child(format!("{credits}. Run on this Mac with transcribe.cpp.")),
+                            .child(format!(
+                                "{credits}. Run on {} with transcribe.cpp.",
+                                crate::ui::THIS_COMPUTER
+                            )),
                     ),
             )
     }
@@ -655,8 +663,13 @@ impl Settings {
                     "hold-to-talk",
                     settings.hold_to_talk,
                     "Hold to talk",
-                    "While muted, hold the right Option key, or the mic button, to speak. \
-                     Let go and you're muted again.",
+                    if cfg!(windows) {
+                        "While muted, hold the right Ctrl key, or the mic button, to speak. \
+                         Let go and you're muted again."
+                    } else {
+                        "While muted, hold the right Option key, or the mic button, to speak. \
+                         Let go and you're muted again."
+                    },
                     |c, on| c.hold_to_talk = on,
                     cx,
                 ))

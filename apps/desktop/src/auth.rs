@@ -1,5 +1,5 @@
-//! The account on this Mac: its session in the Keychain, and signing in with
-//! a code the server emails. Only the app that asked for the code holds the
+//! The account on this computer: its session in the Keychain (Credential
+//! Manager on Windows), and signing in with a code the server emails. Only the app that asked for the code holds the
 //! challenge it goes with.
 use crate::{Shell, call::RoomRef, store::SavedRoom};
 use gpui::Context;
@@ -15,7 +15,7 @@ pub struct Principal {
     #[serde(default)]
     pub email: Option<String>,
 }
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 const SESSION_SERVICE: &str = "com.cubiecall.session";
 #[cfg(target_os = "macos")]
 const PREVIOUS_SERVICE: &str = "com.quipcall.session";
@@ -67,7 +67,11 @@ pub fn load(server: &str) -> Option<String> {
             },
         )
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        vault::read(server)
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = server;
         None
@@ -84,7 +88,9 @@ fn save(server: &str, token: &str) -> anyhow::Result<()> {
         )?;
         let _ = security_framework::passwords::delete_generic_password(PREVIOUS_SERVICE, &account);
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    vault::write(server, token)?;
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = (server, token);
         anyhow::bail!("Secure credential storage is not implemented on this platform");
@@ -99,6 +105,87 @@ fn clear(server: &str) {
         for service in [SESSION_SERVICE, PREVIOUS_SERVICE] {
             let _ = security_framework::passwords::delete_generic_password(service, &account);
         }
+    }
+    #[cfg(windows)]
+    vault::delete(server);
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let _ = server;
+}
+
+/// The session in Windows' Credential Manager: a generic credential that
+/// only this Windows account can read, as the Keychain item is on the Mac.
+/// One per server and data directory, as there, so test instances keep
+/// sessions of their own.
+#[cfg(windows)]
+mod vault {
+    use windows::Win32::Security::Credentials::{
+        CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredFree,
+        CredReadW, CredWriteW,
+    };
+    use windows::core::{HSTRING, PWSTR};
+
+    /// `com.cubiecall.session/<server>/<data dir>`, each part in hex:
+    /// Credential Manager matches names ignoring case, so two servers whose
+    /// paths differ only in case would share a session, and parts kept apart
+    /// can't run into each other as joined text could.
+    fn target(server: &str) -> String {
+        let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+        let origin = cubie_core::http::storage_origin(server.trim_end_matches('/'));
+        let data = crate::store::data_override().unwrap_or_default();
+        format!(
+            "{}/{}/{}",
+            super::SESSION_SERVICE,
+            hex(origin),
+            hex(&data.to_string_lossy())
+        )
+    }
+
+    pub fn read(server: &str) -> Option<String> {
+        let mut credential: *mut CREDENTIALW = std::ptr::null_mut();
+        // SAFETY: on success CredReadW hands us a credential to free with
+        // CredFree, its blob `CredentialBlobSize` bytes long.
+        unsafe {
+            CredReadW(
+                &HSTRING::from(target(server)),
+                CRED_TYPE_GENERIC,
+                None,
+                &mut credential,
+            )
+            .ok()?;
+            let c = &*credential;
+            // An empty credential may come with no blob at all.
+            let token = (!c.CredentialBlob.is_null() && c.CredentialBlobSize > 0)
+                .then(|| {
+                    std::slice::from_raw_parts(c.CredentialBlob, c.CredentialBlobSize as usize)
+                })
+                .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok());
+            CredFree(credential.cast());
+            token
+        }
+    }
+
+    pub fn write(server: &str, token: &str) -> anyhow::Result<()> {
+        let mut name: Vec<u16> = target(server).encode_utf16().chain([0]).collect();
+        let mut user: Vec<u16> = "Cubie".encode_utf16().chain([0]).collect();
+        let mut blob = token.as_bytes().to_vec();
+        let credential = CREDENTIALW {
+            Type: CRED_TYPE_GENERIC,
+            TargetName: PWSTR(name.as_mut_ptr()),
+            UserName: PWSTR(user.as_mut_ptr()),
+            CredentialBlobSize: blob.len() as u32,
+            CredentialBlob: blob.as_mut_ptr(),
+            Persist: CRED_PERSIST_LOCAL_MACHINE,
+            ..Default::default()
+        };
+        // SAFETY: every pointer in `credential` outlives the call, which
+        // copies what it points at.
+        unsafe { CredWriteW(&credential, 0) }?;
+        Ok(())
+    }
+
+    pub fn delete(server: &str) {
+        // SAFETY: a plain call; a missing credential just fails.
+        let _ = unsafe { CredDeleteW(&HSTRING::from(target(server)), CRED_TYPE_GENERIC, None) };
     }
 }
 pub(crate) use cubie_core::http::{RequestError, request};

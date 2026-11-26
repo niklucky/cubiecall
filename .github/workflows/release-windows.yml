@@ -1,0 +1,187 @@
+name: Release Windows app
+run-name: Windows app · ${{ github.ref_name }} · attempt ${{ github.run_attempt }}
+
+# An unsigned test build: no code signing yet, so testers click through
+# SmartScreen (see docs/DEPLOY.md). Release builds need a Windows host: GPUI
+# compiles its HLSL shaders with the Windows SDK's fxc.exe.
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      build: ${{ steps.release.outputs.build }}
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          # The whole history, to tell whether the tag is on main.
+          fetch-depth: 0
+      - name: Validate release tag and resolve build number
+        id: release
+        run: python3 deploy/mac/ci-metadata.py
+      - name: Publish only what's on main
+        # A tag pushed on an unmerged branch would otherwise send that
+        # branch's build to the public download link.
+        if: steps.release.outputs.publish == 'true'
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor 'HEAD^{commit}' FETCH_HEAD; then
+            echo "::error::$GITHUB_REF_NAME isn't on main: tag a merged commit to publish."
+            exit 1
+          fi
+      - name: Test atomic website publication
+        run: deploy/windows/test-publish.sh
+
+  build:
+    name: Build x64
+    needs: metadata
+    runs-on: windows-2025
+    timeout-minutes: 120
+    env:
+      CUBIE_VERSION: ${{ needs.metadata.outputs.version }}
+      CUBIE_BUILD: ${{ needs.metadata.outputs.build }}
+      CUBIE_SERVER: https://cubiecall.com
+      # libwebrtc comes built against the static C runtime, so everything
+      # links it statically (.cargo/config.toml); this says so to
+      # transcribe.cpp's CMake build too, whatever the generator.
+      TRANSCRIBE_CMAKE_ARGS: -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+    steps:
+      - name: Keep line endings as committed
+        # Git for Windows checks text out with CRLF; the shell scripts and
+        # vendor/webrtc-sys.patch only work with the LF they have.
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          toolchain: 1.99.0
+          targets: x86_64-pc-windows-msvc
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: windows-release-x86_64
+          cache-on-failure: false
+      - name: Prepare native dependencies
+        run: dev/vendor-webrtc-sys.sh
+      - name: Build
+        run: cargo build --locked --release -p cubie-desktop --target x86_64-pc-windows-msvc
+      - name: Package
+        run: python deploy/windows/package.py target/x86_64-pc-windows-msvc/release/cubie-desktop.exe target/windows
+      - name: Verify the zip, and that Cubie.exe starts
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'extracted-release'
+          Expand-Archive -Path target/windows/Cubie-windows-x64.zip -DestinationPath $dir
+          $names = (Get-ChildItem $dir | Sort-Object Name).Name -join ', '
+          if ($names -ne 'Cubie.exe, README.txt') { throw "Unexpected zip contents: $names" }
+          $exe = Join-Path $dir 'Cubie.exe'
+          $info = (Get-Item $exe).VersionInfo
+          $want = "$env:CUBIE_VERSION ($env:CUBIE_BUILD)"
+          if ($info.ProductVersion -ne $env:CUBIE_VERSION -or $info.FileVersion -ne $want) {
+            throw "Cubie.exe's version resource says $($info.ProductVersion) / $($info.FileVersion), not $want"
+          }
+          # Starting at all proves the static C runtime, the embedded manifest
+          # (GPUI needs Common Controls 6) and every import. An unknown flag
+          # prints the usage and exits 2 before any window opens.
+          $run = Start-Process -FilePath $exe -ArgumentList '--release-check' -Wait -PassThru -NoNewWindow
+          if ($run.ExitCode -ne 2) {
+            throw ('Cubie.exe exited with 0x{0:X8}, not 2 (0xC0000135: a DLL is missing, 0xC0000139: an entry point is)' -f $run.ExitCode)
+          }
+          '{0}: Cubie.exe {1:N1} MB, zip {2:N1} MB' -f $want, ((Get-Item $exe).Length / 1MB), ((Get-Item target/windows/Cubie-windows-x64.zip).Length / 1MB) |
+            Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+      - name: Upload verified release files
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: windows-x64
+          path: |
+            target/windows/Cubie-windows-x64.zip
+            target/windows/version.txt
+            target/windows/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  publish:
+    name: Publish the Windows app
+    needs: [metadata, build]
+    if: needs.metadata.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    # Serialize even different tags. The host also rejects an older build number.
+    concurrency:
+      group: windows-website-publication
+      cancel-in-progress: false
+    env:
+      CUBIE_VERSION: ${{ needs.metadata.outputs.version }}
+      CUBIE_BUILD: ${{ needs.metadata.outputs.build }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Download the verified zip
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: windows-x64
+          path: target/windows
+      - name: Check it again before deployment
+        working-directory: target/windows
+        run: |
+          sha256sum -c SHA256SUMS
+          test "$(cat version.txt)" = "$CUBIE_VERSION ($CUBIE_BUILD)"
+          unzip -Z1 Cubie-windows-x64.zip | sort | tr '\n' ' ' | grep -qx 'Cubie.exe README.txt '
+      - name: Configure website deployment key
+        env:
+          DEPLOY_KEY: ${{ secrets.MACOS_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.MACOS_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          : "${DEPLOY_KEY:?Missing MACOS_DEPLOY_KEY}" "${KNOWN_HOSTS:?Missing MACOS_DEPLOY_KNOWN_HOSTS}"
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/cubie-release.key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/cubie-known-hosts"
+          printf 'Host *\n  IdentityFile %s\n  IdentitiesOnly yes\n  UserKnownHostsFile %s\n  StrictHostKeyChecking yes\n  BatchMode yes\n' \
+            "$RUNNER_TEMP/cubie-release.key" "$RUNNER_TEMP/cubie-known-hosts" > "$HOME/.ssh/config"
+      - name: Publish the zip
+        env:
+          CUBIE_HOST: ${{ vars.CUBIE_RELEASE_HOST }}
+          CUBIE_STAGING_ROOT: /opt/cubie/mac-staging
+        run: |
+          : "${CUBIE_HOST:?Missing CUBIE_RELEASE_HOST variable}"
+          deploy/windows/upload.sh target/windows
+      - name: Verify public downloads
+        run: |
+          set -eu
+          check() {
+            curl -fLsS --retry 3 --connect-timeout 15 --max-time 300 "https://cubiecall.com/download/$1" -o "$RUNNER_TEMP/live"
+            test "$(sha256sum < "$RUNNER_TEMP/live")" = "$(sha256sum < "$2")" || { echo "Published content mismatch: $1" >&2; exit 1; }
+            echo "Verified https://cubiecall.com/download/$1"
+          }
+          check Cubie-windows-x64.zip target/windows/Cubie-windows-x64.zip
+          check "windows/releases/$CUBIE_BUILD/Cubie-windows-x64.zip" target/windows/Cubie-windows-x64.zip
+          check windows/current/version.txt target/windows/version.txt
+          printf 'Published Windows **%s (build %s)** to https://cubiecall.com/download/\n' "$CUBIE_VERSION" "$CUBIE_BUILD" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove deployment credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/cubie-release.key" "$RUNNER_TEMP/cubie-known-hosts" "$HOME/.ssh/config"

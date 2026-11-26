@@ -8,6 +8,9 @@
 //! the capture connection (so nothing rotates frames on the CPU) and held to
 //! the phone's limits below.
 //!
+//! Windows: Media Foundation's source reader delivers NV12, copied into I420
+//! buffers for WebRTC and the self-view (`camera_win.rs`).
+//!
 //! `CUBIE_FAKE_CAMERA=1` swaps the device for a synthetic 720p30 pattern
 //! that takes the same path, for headless tests and measurements.
 
@@ -140,7 +143,11 @@ impl Camera {
     }
 }
 
-#[cfg(not(target_vendor = "apple"))]
+#[cfg(windows)]
+#[path = "camera_win.rs"]
+mod platform;
+
+#[cfg(not(any(target_vendor = "apple", windows)))]
 mod platform {
     use super::*;
 

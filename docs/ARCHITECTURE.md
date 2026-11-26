@@ -1,7 +1,7 @@
 # Cubie — Architecture
 
 A small, fast app for 1:1 and group video/audio calls, with screen sharing, local speech-to-text and LLM summaries.
-Desktop (macOS first, then Windows and Linux), a web client, and phones (iOS first, then Android).
+Desktop (macOS, Windows test builds, then Linux), a web client, and phones (iOS first, then Android).
 
 ## Principles
 
@@ -139,6 +139,16 @@ Stages and the budget: [PLAN.md](PLAN.md#mobile-ios-first-then-android). Screens
 - **Signing in** is the Mac's: an emailed 6-digit code, exchanged with the challenge the app was given, and the session in the Keychain (one entry per server). The field is the system's one-time-code field, so iOS offers the code from Mail.
 - **Personal calls** need the server's contacts, presence and ringing (Stages 3–5), and, to ring a phone that's asleep, VoIP push with CallKit: the Apple Developer Program. TestFlight needs it too.
 - **Android** gets the same `crates/mobile` through UniFFI's Kotlin bindings; what's per platform in the engine (camera, video sink, where the session is kept) is behind `cfg`.
+
+## Windows desktop (unsigned test builds)
+
+- **One app.** The Mac app's code, on GPUI's DirectX 11 backend. What AppKit did is in `apps/desktop/src/platform_win.rs` and `video_win.rs`, chosen by `cfg` in place of `platform_mac.rs` and `video_mac.rs`; everything else is shared. The engine (`crates/core`) is the same, with Media Foundation in place of AVFoundation for the camera (`camera_win.rs`).
+- **Video** has no surface to draw into on Windows: each frame is converted to BGRA once, on the engine thread that decoded it, and drawn as an image sprite. A sprite rounds its own corners, so circles need neither a mask nor the Mac's bands. Each window's atlas keeps only the newest frame of each video. It costs a copy per frame that the Mac doesn't pay; measure before optimising (a D3D texture per video would remove it).
+- **Floating windows** keep AppKit's coordinates (points, `y` up from the bottom of the main display), converted at the edge, so the widget lays itself out the same. A window region cuts each to its shape and lets clicks through the corners. Win32's owned windows don't move with their owner, so a WinEvent hook on our own process moves the bubbles riding on the widget when it moves.
+- **Ordinary windows** (Home, the call window, Settings, sign-in) keep Windows' own title bar: GPUI draws no close, minimise or drag area for a hidden one, as AppKit does. Shortcuts use Ctrl where the Mac uses ⌘.
+- **Codecs.** LiveKit's Windows libwebrtc encodes H.264 with OpenH264 (software), so camera and share stay H.264 as on the Mac.
+- **Screen share** is libwebrtc's own capturer for now: the main screen, no picker. Windows.Graphics.Capture with a picker is next.
+- **Not yet:** recording (written with AVAssetWriter on the Mac; Windows hides Record but shows who records), call links, updates (testers download again), code signing. The C runtime is linked statically (`.cargo/config.toml`), as libwebrtc is built, so the exe needs nothing installed.
 
 ## Alpha scope
 

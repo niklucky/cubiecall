@@ -1534,6 +1534,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tract-onnx",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -1563,6 +1564,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-segmentation",
+ "windows 0.62.2",
 ]
 
 [[package]]

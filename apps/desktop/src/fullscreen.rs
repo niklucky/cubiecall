@@ -17,7 +17,7 @@ use gpui::{
 
 use crate::assets::Icon;
 use crate::call::{Call, Screen, Status};
-use crate::mac;
+use crate::platform;
 use crate::theme::TEXT;
 
 actions!(fullscreen, [Exit]);
@@ -155,7 +155,7 @@ impl Fullscreen {
             loop {
                 cx.background_executor().timer(SPACE_POLL).await;
                 let Ok(due) = this.update_in(cx, |_, window, _| {
-                    if mac::on_screen(window).unwrap_or(true) {
+                    if platform::on_screen(window).unwrap_or(true) {
                         showing_since.get_or_insert_with(Instant::now).elapsed() >= ENDED_FOR
                     } else {
                         showing_since = None;
@@ -306,7 +306,7 @@ impl Render for Fullscreen {
             .relative()
             .bg(rgb(0x000000))
             .children(frame.map(|f| {
-                gpui::surface(f.0)
+                crate::video::surface(f)
                     .object_fit(ObjectFit::Contain)
                     .size_full()
             }))

@@ -692,6 +692,7 @@ mod tests {
             .unwrap_or_else(|| panic!("afinfo reads {}", path.display()))
     }
 
+    #[cfg(target_os = "macos")]
     fn voices_in(
         dir: &Path,
         name_of: impl Fn(&Speaker) -> String + Send + Sync + 'static,

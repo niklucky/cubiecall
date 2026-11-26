@@ -20,15 +20,16 @@ use gpui::{
 
 use crate::capsule::{self, Capsule};
 use crate::fullscreen::{self, Fullscreen};
-use crate::mac;
 use crate::models::{self, Models};
+use crate::platform;
 use crate::regular::Regular;
 use crate::screen_window::{self, ScreenWindow};
+#[cfg(target_os = "macos")]
 use crate::share_picker::{self, Purpose, SharePicker};
 use crate::store::{self, CallEvent, Happened, RecordingFile, SaidLine};
 use crate::theme::first_name;
 use crate::transcript::{self, Said, Transcript, TranscriptWindow};
-use crate::video_mac::SurfaceSink;
+use crate::video::SurfaceSink;
 use crate::{Args, Shell};
 
 /// Your own screen preview repaints at most this often: enough to see what
@@ -40,9 +41,9 @@ const FLASH: Duration = Duration::from_secs(6);
 const NUDGE: Duration = Duration::from_millis(2800);
 /// The reminder's beep comes at most this often.
 const BEEP_EVERY: Duration = Duration::from_secs(300);
-/// Hold to talk: the right Option key (its virtual key code). Under the
-/// thumb, and it types nothing by itself.
-const HOLD_KEY: u16 = 0x3D;
+/// Recordings are written by AVFoundation, so only a Mac records for now.
+/// Elsewhere you still see who records, and stopping is theirs.
+pub const RECORDS_HERE: bool = cfg!(target_os = "macos");
 /// How often the key is looked at while you're muted, while you aren't,
 /// and while hold to talk is off in Settings.
 const KEY_POLL: Duration = Duration::from_millis(50);
@@ -310,7 +311,7 @@ pub struct Call {
     /// Where a share's floating window was when it last closed (it went
     /// fullscreen, or the call changed mode), to open it there again. In
     /// AppKit's coordinates: GPUI's are relative to a window's own display.
-    screen_frames: HashMap<TrackKey, mac::Rect>,
+    screen_frames: HashMap<TrackKey, platform::Rect>,
     pub mic_on: bool,
     /// Unmuted only while a key or the mic button is held.
     pub held: bool,
@@ -327,6 +328,7 @@ pub struct Call {
     pub sharing: Option<ScreenSharePreset>,
     /// Preset to preselect next time you share.
     share_preset: ScreenSharePreset,
+    #[cfg(target_os = "macos")]
     picker: Option<WindowHandle<SharePicker>>,
     /// When the call link was last copied (for the "copied" tick).
     pub copied_at: Option<Instant>,
@@ -409,8 +411,8 @@ impl Call {
                     let on = Shell::global(cx).read(cx).store.call.hold_to_talk;
                     let watching = on && call.status == Status::Connected;
                     if watching || call.key_held {
-                        let down = watching && crate::mac::key_down(HOLD_KEY);
-                        let since_press = crate::mac::since_press();
+                        let down = watching && crate::platform::key_down(crate::platform::HOLD_KEY);
+                        let since_press = crate::platform::since_press();
                         let talk = call.hold_key.talk(down, since_press, Instant::now());
                         call.key_hold(talk, cx);
                     }
@@ -540,6 +542,7 @@ impl Call {
             camera: Camera::Off,
             sharing: None,
             share_preset: ScreenSharePreset::PRESETS[1],
+            #[cfg(target_os = "macos")]
             picker: None,
             copied_at: None,
             recording: None,
@@ -720,7 +723,7 @@ impl Call {
         self.nudge_hold = settings.hold_to_talk;
         if settings.muted_beep && self.beeped.is_none_or(|t| t.elapsed() >= BEEP_EVERY) {
             self.beeped = Some(now);
-            crate::mac::soft_beep();
+            crate::platform::soft_beep();
             tracing::info!("talking while muted: beep");
         }
         cx.notify();
@@ -763,6 +766,7 @@ impl Call {
     }
 
     /// Load picker choices and previews on the engine's worker pool.
+    #[cfg(target_os = "macos")]
     pub fn screen_sources(
         &self,
         thumb_width: u32,
@@ -770,17 +774,23 @@ impl Call {
         self.engine.screen_sources(thumb_width)
     }
 
-    /// Stop sharing, or open the picker to start.
+    /// Stop sharing, or open the picker to start. Windows has no picker
+    /// yet: libwebrtc's capturer shares the main screen, at the preset used
+    /// last.
     pub fn toggle_share(&mut self, cx: &mut Context<Self>) {
         if self.sharing.is_some() {
             self.engine.stop_screen_share();
             return;
         }
+        #[cfg(target_os = "macos")]
         self.open_picker(Purpose::Share, cx);
+        #[cfg(not(target_os = "macos"))]
+        self.share(SourceId::Display(0), self.share_preset, cx);
     }
 
     /// The share picker, to share or to record: brought to the front if it's
     /// open already.
+    #[cfg(target_os = "macos")]
     fn open_picker(&mut self, purpose: Purpose, cx: &mut Context<Self>) {
         if let Some(picker) = self.picker
             && picker
@@ -907,7 +917,10 @@ impl Call {
 
     /// Nobody records yet, so you could.
     pub fn can_record(&self) -> bool {
-        self.recording.is_none() && !self.record_starting && self.status == Status::Connected
+        RECORDS_HERE
+            && self.recording.is_none()
+            && !self.record_starting
+            && self.status == Status::Connected
     }
 
     /// Record everyone's voice on this Mac.
@@ -918,9 +931,12 @@ impl Call {
     /// Pick a screen or window in the share picker, then record it with
     /// everyone's voice.
     pub fn choose_screen_to_record(&mut self, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
         if self.can_record() {
             self.open_picker(Purpose::Record, cx);
         }
+        #[cfg(not(target_os = "macos"))]
+        let _ = cx;
     }
 
     pub fn record_screen(
@@ -1114,7 +1130,7 @@ impl Call {
         let model =
             |m: Option<&'static ModelInfo>| m.map_or(String::new(), |m| format!(" · {}", m.name));
         match (&self.transcription, self.preparing) {
-            (Some(t), _) if t.mine => format!("On your Mac{}", model(t.model)),
+            (Some(t), _) if t.mine => format!("On {}{}", crate::ui::YOUR_COMPUTER, model(t.model)),
             (Some(t), _) => format!("On {}'s Mac{}", first_name(&t.name), model(t.model)),
             (None, Some(Preparing::Download(m))) => format!("Downloading {}…", m.name),
             (None, Some(Preparing::Loading)) => "Starting…".into(),
@@ -1150,6 +1166,7 @@ impl Call {
         }
         self.engine.disconnect();
         self.status = Status::Ended;
+        #[cfg(target_os = "macos")]
         if let Some(picker) = self.picker.take() {
             close(&picker, cx);
         }
@@ -1948,7 +1965,7 @@ fn sync_windows(call: &Entity<Call>, cx: &mut App) {
             // A share still going opens where it was, next time.
             if shares.contains(key)
                 && let Ok(Some(frame)) = handle.update(cx, |_, window, _| {
-                    mac::Native::of(window).map(|n| n.frame())
+                    platform::Native::of(window).map(|n| n.frame())
                 })
             {
                 closed_frames.push((key.clone(), frame));
@@ -1970,7 +1987,7 @@ fn sync_windows(call: &Entity<Call>, cx: &mut App) {
         let frame = screen_frames
             .get(&key)
             .copied()
-            .filter(|f| mac::screen_at((f.x + f.w / 2.0, f.y + f.h / 2.0)).is_some());
+            .filter(|f| platform::screen_at((f.x + f.w / 2.0, f.y + f.h / 2.0)).is_some());
         let offset = px(32.0) * windows.screens.len() as f32;
         let width = frame.map_or(screen_window::WIDTH, |f| f.w as f32);
         let bounds = Bounds::new(

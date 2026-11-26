@@ -86,6 +86,7 @@ impl Tasks {
         task
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub async fn cancelled(&self) {
         let notified = self.0.cancelled.notified();
         tokio::pin!(notified);

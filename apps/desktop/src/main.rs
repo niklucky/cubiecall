@@ -1,19 +1,44 @@
+// Release builds on Windows are a GUI app: no console window beside it.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+/// A shortcut with the system's main modifier: ⌘ on the Mac, Ctrl on
+/// Windows. GPUI's `cmd-` is the Windows key there.
+macro_rules! primary {
+    ($key:literal) => {
+        if cfg!(target_os = "macos") {
+            concat!("cmd-", $key)
+        } else {
+            concat!("ctrl-", $key)
+        }
+    };
+}
+
 mod assets;
 mod auth;
 mod bubble;
 mod call;
 mod capsule;
 mod fullscreen;
+mod geometry;
 mod handle;
 mod home;
-mod mac;
 mod models;
 mod onboarding;
+/// Window shapes and placement, the cursor and system sounds: what GPUI
+/// doesn't expose, from AppKit or Win32.
+#[cfg_attr(target_os = "macos", path = "platform_mac.rs")]
+#[cfg_attr(windows, path = "platform_win.rs")]
+mod platform;
+/// Cmd+Q's hold or second press. Windows apps quit from their windows.
+#[cfg(target_os = "macos")]
 mod quit;
 mod regular;
 mod rooms;
 mod screen_window;
 mod settings;
+/// ScreenCaptureKit's screens and windows, with previews. Elsewhere sharing
+/// takes the main screen (`Call::toggle_share`).
+#[cfg(target_os = "macos")]
 mod share_picker;
 mod sign_in;
 #[cfg(feature = "snapshot")]
@@ -28,7 +53,10 @@ mod transcript;
 mod ui;
 #[cfg(target_os = "macos")]
 mod update;
-mod video_mac;
+/// Decoded video frames, as each platform's GPUI draws them.
+#[cfg_attr(target_os = "macos", path = "video_mac.rs")]
+#[cfg_attr(windows, path = "video_win.rs")]
+mod video;
 
 use std::io::IsTerminal as _;
 
@@ -130,7 +158,9 @@ pub(crate) fn default_name() -> String {
             return full.trim().to_owned();
         }
     }
-    std::env::var("USER").unwrap_or_else(|_| "desktop".into())
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "desktop".into())
 }
 
 /// The room in a call link: `cubie://join/<room>`.
@@ -388,7 +418,8 @@ impl Shell {
 }
 
 /// Logs go to the terminal, or to ~/Library/Logs/Cubie/cubie.log when
-/// started from Finder. Each launch starts a fresh file; the last one is kept.
+/// started from Finder (`%LOCALAPPDATA%\Cubie\Logs\cubie.log` on Windows).
+/// Each launch starts a fresh file; the last one is kept.
 fn init_logging() {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "cubie_desktop=debug,cubie_core=debug,livekit=info,warn".into());
@@ -424,6 +455,9 @@ fn init_logging() {
 }
 
 fn log_file() -> Option<std::fs::File> {
+    #[cfg(windows)]
+    let dir = std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Cubie\\Logs");
+    #[cfg(not(windows))]
     let dir = std::path::PathBuf::from(std::env::var_os("HOME")?).join("Library/Logs/Cubie");
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join("cubie.log");
@@ -495,12 +529,14 @@ fn main() {
         });
         cx.set_global(GlobalShell(shell.clone()));
         shell.update(cx, |s, cx| s.refresh_account(cx));
+        #[cfg(target_os = "macos")]
         share_picker::bind_keys(cx);
         settings::bind_keys(cx);
         fullscreen::bind_keys(cx);
         text_input::bind_keys(cx);
+        #[cfg(target_os = "macos")]
         quit::start(cx);
-        mac::log_window_events();
+        platform::log_window_events();
 
         shell.update(cx, |shell, cx| match shell.args.room.clone() {
             Some(id) => shell.start_call(

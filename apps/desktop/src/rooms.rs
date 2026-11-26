@@ -97,7 +97,7 @@ pub fn open(id: Option<String>, cx: &mut App) {
                 }
                 .into(),
             ),
-            appears_transparent: true,
+            appears_transparent: crate::ui::SEE_THROUGH_TITLEBAR,
             ..Default::default()
         }),
         ..Default::default()
@@ -830,7 +830,7 @@ impl Render for RoomAccess {
                     );
                 }
                 let confirming = self.confirm == Some(Confirm::Close);
-                body=body.child(div().mt(px(12.0)).pt(px(14.0)).border_t_1().border_color(rgb(LINE)).child(button("close-room",if confirming {"Confirm: close for everyone"}else{"Close room"},Some(Icon::Trash),if confirming {Kind::Danger}else{Kind::Secondary},false).when(!ready,|v|v.opacity(0.45)).on_click(cx.listener(move|v,_,_,cx| {if !v.busy {if confirming {v.run(Action::Close,cx);}else{v.confirm=Some(Confirm::Close);cx.notify();}}}))).child(note("Closes the room and disconnects everyone. Local history stays on your Mac.")));
+                body=body.child(div().mt(px(12.0)).pt(px(14.0)).border_t_1().border_color(rgb(LINE)).child(button("close-room",if confirming {"Confirm: close for everyone"}else{"Close room"},Some(Icon::Trash),if confirming {Kind::Danger}else{Kind::Secondary},false).when(!ready,|v|v.opacity(0.45)).on_click(cx.listener(move|v,_,_,cx| {if !v.busy {if confirming {v.run(Action::Close,cx);}else{v.confirm=Some(Confirm::Close);cx.notify();}}}))).child(note("Closes the room and disconnects everyone. Local history stays on this computer.")));
             }
         } else {
             body = body.child(note(if self.busy {

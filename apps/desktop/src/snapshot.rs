@@ -57,7 +57,7 @@ pub fn start(cx: &mut App) {
                         // macOS stops drawing windows nobody can see (behind
                         // others, or the screen is locked): draw this one
                         // here, so its image is of now and it sizes itself.
-                        if crate::mac::on_screen(window) == Some(false) {
+                        if crate::platform::on_screen(window) == Some(false) {
                             window.draw(cx).clear(cx);
                         }
                         let size = window.bounds().size;
@@ -144,6 +144,7 @@ fn act(action: &str, cx: &mut App) {
     }
 
     if action == "quit-overlay" {
+        #[cfg(target_os = "macos")]
         crate::quit::preview(cx);
         return;
     }
@@ -218,7 +219,8 @@ fn act(action: &str, cx: &mut App) {
     if action == "top" {
         for handle in cx.windows() {
             if let Some(capsule) = handle.downcast::<crate::capsule::Capsule>() {
-                let _ = capsule.update(cx, |_, window, cx| crate::mac::move_to_top(window, cx));
+                let _ =
+                    capsule.update(cx, |_, window, cx| crate::platform::move_to_top(window, cx));
             }
         }
         return;
@@ -247,6 +249,7 @@ fn act(action: &str, cx: &mut App) {
             }
             return;
         }
+        #[cfg(target_os = "macos")]
         cx.spawn(async move |cx| match cubie_core::own_window().await {
             Ok(Some(source)) => {
                 cx.update(|cx| {
@@ -259,6 +262,9 @@ fn act(action: &str, cx: &mut App) {
             Err(e) => tracing::warn!("script: {e:#}"),
         })
         .detach();
+        // Only ScreenCaptureKit shares a single window of ours.
+        #[cfg(not(target_os = "macos"))]
+        tracing::warn!("script: share-own needs CUBIE_FAKE_SCREEN here");
         return;
     }
     if action == "play" {
