@@ -43,15 +43,29 @@ const STREAM: u32 = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
 /// this long counts as failed, rather than a track that never shows.
 const FIRST_FRAME_WAIT: Duration = Duration::from_secs(10);
 
-/// How long stopping waits for the capture thread. A driver can stall
-/// inside `ReadSample`; the call takes the track away regardless, and the
-/// thread lets go of the device whenever the read returns.
-const STOP_WAIT: Duration = Duration::from_secs(2);
+/// How long stopping waits for the capture thread to see the stop flag
+/// (a frame is at most a few tens of ms away) before it shuts the camera
+/// down under a stalled `ReadSample`, which makes the read return.
+const STOP_WAIT: Duration = Duration::from_millis(500);
+/// How long it waits after that. A driver that doesn't return even then
+/// keeps its thread; the call takes the track away regardless.
+const SHUTDOWN_WAIT: Duration = Duration::from_millis(1500);
+
+/// The open camera's source, for [`Capture`]'s drop to shut down from
+/// another thread. Media Foundation's objects are free-threaded, and that
+/// thread joins the process's multithreaded apartment, which the capture
+/// thread keeps alive while it's stuck.
+struct Stuck(IMFMediaSource);
+// SAFETY: see above; only `Shutdown` is called on it, under the slot's lock.
+unsafe impl Send for Stuck {}
+
+type Unblock = Arc<parking_lot::Mutex<Option<Stuck>>>;
 
 /// Keeps capture running; dropping it stops the camera and waits until it
 /// has let go of the device.
 pub(crate) struct Capture {
     stop: Arc<AtomicBool>,
+    unblock: Unblock,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -67,6 +81,7 @@ impl Capture {
             frames: 0,
         };
         let stop = Arc::new(AtomicBool::new(false));
+        let unblock = Unblock::default();
         // The device is opened on the capture thread (COM objects stay on the
         // thread that made them), which reports back once frames flow.
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
@@ -74,13 +89,14 @@ impl Capture {
             .name("camera".into())
             .spawn({
                 let stop = stop.clone();
+                let unblock = unblock.clone();
                 move || {
                     if synthetic() {
                         tracing::info!("using the synthetic camera (CUBIE_FAKE_CAMERA)");
                         let _ = ready_tx.send(Ok(()));
                         run_synthetic(handler, &stop);
                     } else {
-                        run_device(handler, &stop, ready_tx);
+                        run_device(handler, &stop, &unblock, ready_tx);
                     }
                 }
             })
@@ -88,6 +104,7 @@ impl Capture {
         // From here on, an early return stops and joins the thread.
         let capture = Self {
             stop,
+            unblock,
             thread: Some(thread),
         };
         match ready_rx.recv_timeout(FIRST_FRAME_WAIT) {
@@ -110,16 +127,27 @@ impl Drop for Capture {
         let Some(thread) = self.thread.take() else {
             return;
         };
-        let deadline = Instant::now() + STOP_WAIT;
-        while !thread.is_finished() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
+        let wait = |limit: Duration| {
+            let deadline = Instant::now() + limit;
+            while !thread.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            thread.is_finished()
+        };
+        if !wait(STOP_WAIT) {
+            tracing::warn!("camera: a read is stuck; shutting the camera down");
+            if let Some(stuck) = self.unblock.lock().as_ref() {
+                // SAFETY: see `Stuck`. The lock keeps the capture thread from
+                // tearing the device down meanwhile.
+                let _ = unsafe { stuck.0.Shutdown() };
+            }
+            if !wait(SHUTDOWN_WAIT) {
+                // Left to finish by itself: it holds the device until then.
+                tracing::warn!("camera: still stuck; not waiting");
+                return;
+            }
         }
-        if thread.is_finished() {
-            let _ = thread.join();
-        } else {
-            // Left to finish by itself: it holds the device until then.
-            tracing::warn!("camera: still reading after {STOP_WAIT:?}; not waiting");
-        }
+        let _ = thread.join();
     }
 }
 
@@ -152,9 +180,19 @@ impl Handler {
 
 /// Capture until `stop`. Errors before the first frame go back to
 /// [`Capture::start`]; later ones (the camera unplugged) end up in the log.
-fn run_device(mut handler: Handler, stop: &AtomicBool, ready: SyncSender<anyhow::Result<()>>) {
+fn run_device(
+    mut handler: Handler,
+    stop: &AtomicBool,
+    unblock: &Unblock,
+    ready: SyncSender<anyhow::Result<()>>,
+) {
     let mut ready = Some(ready);
-    if let Err(e) = capture_device(&mut handler, stop, &mut ready) {
+    let result = capture_device(&mut handler, stop, unblock, &mut ready);
+    // Stopping may have shut the camera down under a read: not an error.
+    if stop.load(Ordering::Relaxed) {
+        return;
+    }
+    if let Err(e) = result {
         // Before the first frame, `Capture::start` reports it, unless it
         // already gave up waiting.
         let unheard = match ready.take() {
@@ -173,12 +211,17 @@ fn run_device(mut handler: Handler, stop: &AtomicBool, ready: SyncSender<anyhow:
 fn capture_device(
     handler: &mut Handler,
     stop: &AtomicBool,
+    unblock: &Unblock,
     ready: &mut Option<SyncSender<anyhow::Result<()>>>,
 ) -> anyhow::Result<()> {
     // Dropped in reverse: the device first, then Media Foundation, then COM.
     let _com = Com::init()?;
     let _mf = MediaFoundation::start()?;
     let device = Device::open()?;
+    // Before the device goes, take it back from `Capture`'s drop, waiting
+    // out a shutdown it may be in the middle of.
+    *unblock.lock() = Some(Stuck(device.media.clone()));
+    let _taken = Taken(unblock);
     let mut format = device.format()?;
     let mut unusable = false;
     while !stop.load(Ordering::Relaxed) {
@@ -192,6 +235,10 @@ fn capture_device(
                 .ReadSample(STREAM, 0, None, Some(&mut flags), None, Some(&mut sample))
         }
         .map_err(|e| explain(e, "read from the camera"))?;
+        // Stopped while the read waited: this frame isn't wanted.
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
         let has = |flag: i32| flags & flag as u32 != 0;
         anyhow::ensure!(
             !has(MF_SOURCE_READERF_ERROR.0),
@@ -273,7 +320,17 @@ impl Drop for MediaFoundation {
 /// device down once the reader has let go (fields drop in this order).
 struct Device {
     reader: IMFSourceReader,
+    media: IMFMediaSource,
     _source: SourceShutdown,
+}
+
+/// Empties the [`Unblock`] slot when capture ends.
+struct Taken<'a>(&'a Unblock);
+
+impl Drop for Taken<'_> {
+    fn drop(&mut self) {
+        self.0.lock().take();
+    }
 }
 
 struct SourceShutdown(IMFActivate);
@@ -378,6 +435,7 @@ impl Device {
             }
             Ok(Self {
                 reader,
+                media,
                 _source: source,
             })
         }
@@ -567,7 +625,9 @@ fn to_i420(sample: &IMFSample, format: &Format) -> anyhow::Result<Option<I420Buf
 /// I420. libyuv asserts on short planes, so lengths are checked first.
 fn nv12_to_i420(data: &[u8], stride: usize, format: &Format) -> Option<I420Buffer> {
     let (width, height) = (format.width as usize, format.height as usize);
-    if width < 2 || height < 2 || stride < width {
+    // An odd width still has whole chroma pairs: libyuv reads
+    // 2 × ⌈width / 2⌉ bytes of each chroma row.
+    if width < 2 || height < 2 || stride < width.next_multiple_of(2) {
         return None;
     }
     let luma_rows = luma_rows(data.len(), stride, height);

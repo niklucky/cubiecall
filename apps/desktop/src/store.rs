@@ -572,7 +572,16 @@ pub fn models_dir() -> PathBuf {
     if let Some(dir) = data_override() {
         return dir.join("Models");
     }
-    app_item("Models", true).unwrap_or_else(|| std::env::temp_dir().join("Cubie Models"))
+    #[cfg(windows)]
+    {
+        app_item("Models", true).unwrap_or_else(|| std::env::temp_dir().join("Cubie Models"))
+    }
+    // Without HOME, as before: under /tmp, where earlier downloads went.
+    #[cfg(not(windows))]
+    {
+        let home = std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into());
+        support_item(Path::new(&home), "Models")
+    }
 }
 
 /// "2026-11-09 11.14" for unix seconds, local time: part of a file name.

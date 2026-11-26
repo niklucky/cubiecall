@@ -9,9 +9,11 @@
 //! Every frame is a new image in each window's sprite atlas. A window keeps
 //! only the newest frame of each video: the one before is dropped when the
 //! next is painted, and a sweep every 2 s lets go of the last frames of
-//! videos that are gone and windows that closed ([`Painted`]).
+//! videos that are gone, of videos a window no longer shows (a bubble that
+//! moved on to the next speaker), and of windows that closed ([`Painted`]).
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
@@ -21,8 +23,8 @@ use cubie_core::livekit::webrtc::prelude::VideoFormatType;
 use cubie_core::livekit::webrtc::video_frame::native::VideoFrameBufferExt as _;
 use cubie_core::livekit::webrtc::video_frame::{BoxVideoBuffer, VideoBuffer, VideoFrame};
 use gpui::{
-    App, Bounds, Corners, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
-    LayoutId, ObjectFit, Pixels, Refineable as _, RenderImage, SharedString, Style,
+    AnyWindowHandle, App, Bounds, Corners, Element, ElementId, GlobalElementId, InspectorElementId,
+    IntoElement, LayoutId, ObjectFit, Pixels, Refineable as _, RenderImage, SharedString, Style,
     StyleRefinement, Styled, Window, WindowId, px,
 };
 use parking_lot::Mutex;
@@ -148,13 +150,20 @@ impl FrameSink for SurfaceSink {
     }
 }
 
-/// The newest frame of a video that a window has in its atlas.
+/// The newest frame of a video that a window has in its atlas, and when the
+/// window last painted it.
 struct Painted {
-    window: WindowId,
+    window: AnyWindowHandle,
     video: u64,
     alive: Weak<()>,
     image: Arc<RenderImage>,
+    at: Instant,
 }
+
+/// How much longer ago than the newest video in its window a video was last
+/// painted before it counts as no longer shown. Each render paints every
+/// video it shows within microseconds; there are no cached views.
+const NOT_SHOWN: Duration = Duration::from_millis(250);
 
 thread_local! {
     static PAINTED: RefCell<Vec<Painted>> = const { RefCell::new(Vec::new()) };
@@ -184,24 +193,40 @@ fn sweep_soon(cx: &mut App) {
 /// Whether any frame is still held.
 fn sweep(cx: &mut App) -> bool {
     let open: Vec<WindowId> = cx.windows().iter().map(|w| w.window_id()).collect();
-    let (stale, more) = PAINTED.with(|p| {
+    let (gone, unshown, more) = PAINTED.with(|p| {
         let mut painted = p.borrow_mut();
-        let mut stale = Vec::new();
+        let newest: HashMap<WindowId, Instant> =
+            painted.iter().fold(HashMap::new(), |mut newest, entry| {
+                let at = newest.entry(entry.window.window_id()).or_insert(entry.at);
+                *at = (*at).max(entry.at);
+                newest
+            });
+        let (mut gone, mut unshown) = (Vec::new(), Vec::new());
         painted.retain(|entry| {
+            let window = entry.window.window_id();
             // A closed window's atlas went with it.
-            if !open.contains(&entry.window) {
+            if !open.contains(&window) {
                 return false;
             }
             if entry.alive.strong_count() == 0 {
-                stale.push(entry.image.clone());
+                gone.push(entry.image.clone());
+                return false;
+            }
+            if newest[&window].duration_since(entry.at) > NOT_SHOWN {
+                unshown.push((entry.window, entry.image.clone()));
                 return false;
             }
             true
         });
-        (stale, !painted.is_empty())
+        (gone, unshown, !painted.is_empty())
     });
-    for image in stale {
+    // A video that's gone is gone from every window.
+    for image in gone {
         cx.drop_image(image, None);
+    }
+    // One that's still on elsewhere keeps its tile there.
+    for (window, image) in unshown {
+        let _ = window.update(cx, |_, window, _| window.drop_image(image));
     }
     more
 }
@@ -216,14 +241,16 @@ fn paint(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let window_id = window.window_handle().window_id();
+    let handle = window.window_handle();
+    let window_id = handle.window_id();
+    let now = Instant::now();
     let open: Vec<WindowId> = cx.windows().iter().map(|w| w.window_id()).collect();
     let stale: Vec<Arc<RenderImage>> = PAINTED.with(|p| {
         let mut painted = p.borrow_mut();
         let mut stale = Vec::new();
         painted.retain(|entry| {
-            let here = entry.window == window_id;
-            let gone_window = !here && !open.contains(&entry.window);
+            let here = entry.window.window_id() == window_id;
+            let gone_window = !here && !open.contains(&entry.window.window_id());
             let replaced = here && entry.video == frame.video && entry.image.id != frame.image.id;
             let gone_video = here && entry.alive.strong_count() == 0;
             if here && (replaced || gone_video) {
@@ -231,16 +258,18 @@ fn paint(
             }
             !(gone_window || replaced || gone_video)
         });
-        if !painted
-            .iter()
-            .any(|entry| entry.window == window_id && entry.video == frame.video)
+        match painted
+            .iter_mut()
+            .find(|entry| entry.window.window_id() == window_id && entry.video == frame.video)
         {
-            painted.push(Painted {
-                window: window_id,
+            Some(entry) => entry.at = now,
+            None => painted.push(Painted {
+                window: handle,
                 video: frame.video,
                 alive: frame.alive.clone(),
                 image: frame.image.clone(),
-            });
+                at: now,
+            }),
         }
         stale
     });

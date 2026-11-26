@@ -19,7 +19,7 @@ pub struct Principal {
 const SESSION_SERVICE: &str = "com.cubiecall.session";
 #[cfg(target_os = "macos")]
 const PREVIOUS_SERVICE: &str = "com.quipcall.session";
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(target_os = "macos")]
 fn key_account(server: &str) -> String {
     format!(
         "{}:{}",
@@ -69,7 +69,7 @@ pub fn load(server: &str) -> Option<String> {
     }
     #[cfg(windows)]
     {
-        vault::read(&key_account(server))
+        vault::read(server)
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
@@ -89,7 +89,7 @@ fn save(server: &str, token: &str) -> anyhow::Result<()> {
         let _ = security_framework::passwords::delete_generic_password(PREVIOUS_SERVICE, &account);
     }
     #[cfg(windows)]
-    vault::write(&key_account(server), token)?;
+    vault::write(server, token)?;
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = (server, token);
@@ -107,7 +107,7 @@ fn clear(server: &str) {
         }
     }
     #[cfg(windows)]
-    vault::delete(&key_account(server));
+    vault::delete(server);
     #[cfg(not(any(target_os = "macos", windows)))]
     let _ = server;
 }
@@ -124,21 +124,29 @@ mod vault {
     };
     use windows::core::{HSTRING, PWSTR};
 
-    /// `com.cubiecall.session/` and the account in hex: Credential Manager
-    /// matches names ignoring case, and two servers whose paths differ only
-    /// in case must not share a session.
-    fn target(account: &str) -> String {
-        let hex: String = account.bytes().map(|b| format!("{b:02x}")).collect();
-        format!("{}/{hex}", super::SESSION_SERVICE)
+    /// `com.cubiecall.session/<server>/<data dir>`, each part in hex:
+    /// Credential Manager matches names ignoring case, so two servers whose
+    /// paths differ only in case would share a session, and parts kept apart
+    /// can't run into each other as joined text could.
+    fn target(server: &str) -> String {
+        let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+        let origin = cubie_core::http::storage_origin(server.trim_end_matches('/'));
+        let data = crate::store::data_override().unwrap_or_default();
+        format!(
+            "{}/{}/{}",
+            super::SESSION_SERVICE,
+            hex(origin),
+            hex(&data.to_string_lossy())
+        )
     }
 
-    pub fn read(account: &str) -> Option<String> {
+    pub fn read(server: &str) -> Option<String> {
         let mut credential: *mut CREDENTIALW = std::ptr::null_mut();
         // SAFETY: on success CredReadW hands us a credential to free with
         // CredFree, its blob `CredentialBlobSize` bytes long.
         unsafe {
             CredReadW(
-                &HSTRING::from(target(account)),
+                &HSTRING::from(target(server)),
                 CRED_TYPE_GENERIC,
                 None,
                 &mut credential,
@@ -156,8 +164,8 @@ mod vault {
         }
     }
 
-    pub fn write(account: &str, token: &str) -> anyhow::Result<()> {
-        let mut name: Vec<u16> = target(account).encode_utf16().chain([0]).collect();
+    pub fn write(server: &str, token: &str) -> anyhow::Result<()> {
+        let mut name: Vec<u16> = target(server).encode_utf16().chain([0]).collect();
         let mut user: Vec<u16> = "Cubie".encode_utf16().chain([0]).collect();
         let mut blob = token.as_bytes().to_vec();
         let credential = CREDENTIALW {
@@ -175,9 +183,9 @@ mod vault {
         Ok(())
     }
 
-    pub fn delete(account: &str) {
+    pub fn delete(server: &str) {
         // SAFETY: a plain call; a missing credential just fails.
-        let _ = unsafe { CredDeleteW(&HSTRING::from(target(account)), CRED_TYPE_GENERIC, None) };
+        let _ = unsafe { CredDeleteW(&HSTRING::from(target(server)), CRED_TYPE_GENERIC, None) };
     }
 }
 pub(crate) use cubie_core::http::{RequestError, request};

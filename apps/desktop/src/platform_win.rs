@@ -616,27 +616,39 @@ fn apply_mask(hwnd: HWND, mask: &Mask) {
         size: (r.right - r.left, r.bottom - r.top),
     };
     // Cut once per size and radius: a region is redrawn when it's set.
-    let old = SHAPES.with(|s| s.borrow_mut().insert(key(hwnd), shape));
-    if old == Some(shape) {
+    if SHAPES.with(|s| s.borrow().get(&key(hwnd)) == Some(&shape)) {
         return;
     }
     // SAFETY: our own window. The system owns the region once it's set;
     // until then, and if setting it fails, it's ours to delete.
-    unsafe {
+    let cut = unsafe {
         // Square corners need no region, and none can go stale.
         if radius <= 0.0 {
-            SetWindowRgn(hwnd, None, true);
-            return;
+            SetWindowRgn(hwnd, None, true) != 0
+        } else {
+            let d = (2.0 * radius * window_scale(hwnd)).round() as i32;
+            let region = CreateRoundRectRgn(0, 0, shape.size.0 + 1, shape.size.1 + 1, d, d);
+            if region.is_invalid() {
+                false
+            } else if SetWindowRgn(hwnd, Some(region), true) == 0 {
+                let _ = DeleteObject(region.into());
+                false
+            } else {
+                true
+            }
         }
-        let d = (2.0 * radius * window_scale(hwnd)).round() as i32;
-        let region = CreateRoundRectRgn(0, 0, shape.size.0 + 1, shape.size.1 + 1, d, d);
-        if region.is_invalid() {
-            return;
+    };
+    // Not cut: keep the radius, with no size, so the next placement or
+    // move tries again.
+    let kept = if cut {
+        shape
+    } else {
+        Shape {
+            radius,
+            size: (-1, -1),
         }
-        if SetWindowRgn(hwnd, Some(region), true) == 0 {
-            let _ = DeleteObject(region.into());
-        }
-    }
+    };
+    SHAPES.with(|s| s.borrow_mut().insert(key(hwnd), kept));
 }
 
 /// Clip the window to `mask`. Win32 windows are created without shadows
@@ -916,11 +928,11 @@ fn monitors() -> Vec<(RECT, RECT, f64)> {
 }
 
 /// The displays as they are now, and how a position in pixels on one of
-/// them reads in points. A display's top-left corner is its pixel position
-/// over the main display's scale; inside it, distances are over its own
-/// scale, which is what GPUI sizes its windows by. Displays touching the
-/// main one meet it without gap or overlap, and every point belongs to one
-/// display both ways.
+/// them reads in points. Inside a display, distances are over its own scale,
+/// which is what GPUI sizes its windows by. Displays are laid out from the
+/// main one outwards, each joined to one already placed along the edge they
+/// share, so neighbours meet in points as they do in pixels: no gap for the
+/// widget to take for the desktop's edge, no overlap to lose windows in.
 struct Desktop {
     displays: Vec<Display>,
     /// The main display's height in points: AppKit's `y` counts up from its
@@ -937,6 +949,35 @@ struct Display {
     at: (f64, f64),
 }
 
+/// Where `d` goes in points if it shares an edge with `p`, already placed:
+/// against that edge, and along it by the pixels between their corners at
+/// `p`'s scale.
+fn joined(p: &Display, d: &Display) -> Option<(f64, f64)> {
+    let (pw, ph) = (
+        (p.whole.right - p.whole.left) as f64 / p.scale,
+        (p.whole.bottom - p.whole.top) as f64 / p.scale,
+    );
+    let (dw, dh) = (
+        (d.whole.right - d.whole.left) as f64 / d.scale,
+        (d.whole.bottom - d.whole.top) as f64 / d.scale,
+    );
+    let along_x = p.at.0 + (d.whole.left - p.whole.left) as f64 / p.scale;
+    let along_y = p.at.1 + (d.whole.top - p.whole.top) as f64 / p.scale;
+    let rows_meet = d.whole.top < p.whole.bottom && d.whole.bottom > p.whole.top;
+    let columns_meet = d.whole.left < p.whole.right && d.whole.right > p.whole.left;
+    if rows_meet && d.whole.left == p.whole.right {
+        Some((p.at.0 + pw, along_y))
+    } else if rows_meet && d.whole.right == p.whole.left {
+        Some((p.at.0 - dw, along_y))
+    } else if columns_meet && d.whole.top == p.whole.bottom {
+        Some((along_x, p.at.1 + ph))
+    } else if columns_meet && d.whole.bottom == p.whole.top {
+        Some((along_x, p.at.1 - dh))
+    } else {
+        None
+    }
+}
+
 impl Desktop {
     fn now() -> Self {
         Self::new(monitors())
@@ -946,24 +987,58 @@ impl Desktop {
     fn new(monitors: Vec<(RECT, RECT, f64)>) -> Self {
         let main = monitors
             .iter()
-            .find(|(_, whole, _)| whole.left == 0 && whole.top == 0)
-            .or(monitors.first())
-            .copied();
-        let (main_scale, height) = main.map_or((1.0, 0.0), |(_, whole, scale)| {
-            (scale, (whole.bottom - whole.top) as f64 / scale)
-        });
-        let displays = monitors
+            .position(|(_, whole, _)| whole.left == 0 && whole.top == 0)
+            .unwrap_or(0);
+        let mut displays: Vec<Display> = monitors
             .into_iter()
             .map(|(work, whole, scale)| Display {
                 whole,
                 work,
                 scale,
-                at: (
-                    whole.left as f64 / main_scale,
-                    whole.top as f64 / main_scale,
-                ),
+                at: (0.0, 0.0),
             })
             .collect();
+        let Some(&first) = displays.get(main) else {
+            return Self {
+                displays,
+                height: 0.0,
+            };
+        };
+        let height = (first.whole.bottom - first.whole.top) as f64 / first.scale;
+        let mut placed = vec![false; displays.len()];
+        placed[main] = true;
+        // Each pass places the displays touching one already placed; Windows
+        // keeps every display touching another, so this reaches them all.
+        loop {
+            let mut progress = false;
+            for i in 0..displays.len() {
+                if placed[i] {
+                    continue;
+                }
+                let d = displays[i];
+                let neighbour = (0..displays.len())
+                    .filter(|&j| placed[j])
+                    .find_map(|j| joined(&displays[j], &d));
+                if let Some(at) = neighbour {
+                    displays[i].at = at;
+                    placed[i] = true;
+                    progress = true;
+                }
+            }
+            if !progress {
+                break;
+            }
+        }
+        // Anything apart (it shouldn't happen): its pixels over the main
+        // display's scale.
+        for (i, d) in displays.iter_mut().enumerate() {
+            if !placed[i] {
+                d.at = (
+                    d.whole.left as f64 / first.scale,
+                    d.whole.top as f64 / first.scale,
+                );
+            }
+        }
         Self { displays, height }
     }
 
@@ -1026,17 +1101,20 @@ impl Desktop {
     /// read back as fractions, and it would place them again every time.
     fn to_whole_points(&self, r: RECT) -> Rect {
         let exact = self.to_points(r);
-        let whole = Rect {
-            x: exact.x.round(),
-            y: exact.y.round(),
-            w: exact.w.round(),
-            h: exact.h.round(),
-        };
-        if self.to_pixels(whole) == r {
-            whole
-        } else {
-            exact
+        let near = |v: f64| [v.round(), v.floor(), v.ceil()];
+        for w in near(exact.w) {
+            for h in near(exact.h) {
+                for x in near(exact.x) {
+                    for y in near(exact.y) {
+                        let whole = Rect { x, y, w, h };
+                        if self.to_pixels(whole) == r {
+                            return whole;
+                        }
+                    }
+                }
+            }
         }
+        exact
     }
 
     fn to_pixels(&self, r: Rect) -> RECT {
@@ -1078,31 +1156,75 @@ mod tests {
         }
     }
 
-    /// The main display at 100%, a 150% one to its right; then the other
-    /// way round.
-    fn desktops() -> [Desktop; 2] {
-        [
+    fn display(left: i32, top: i32, w: i32, h: i32, scale: f64) -> (RECT, RECT, f64) {
+        (rect(left, top, w, h - 40), rect(left, top, w, h), scale)
+    }
+
+    /// The main display (first) at 100% or 150% with a display at the other
+    /// scale to its right, left, above, and two in a row.
+    fn desktops() -> Vec<Desktop> {
+        vec![
             Desktop::new(vec![
-                (rect(0, 0, 1920, 1040), rect(0, 0, 1920, 1080), 1.0),
-                (rect(1920, 0, 2880, 1560), rect(1920, 0, 2880, 1620), 1.5),
+                display(0, 0, 1920, 1080, 1.0),
+                display(1920, 0, 2880, 1620, 1.5),
             ]),
             Desktop::new(vec![
-                (rect(0, 0, 2880, 1560), rect(0, 0, 2880, 1620), 1.5),
-                (rect(2880, 0, 1920, 1040), rect(2880, 0, 1920, 1080), 1.0),
+                display(0, 0, 2880, 1620, 1.5),
+                display(2880, 0, 1920, 1080, 1.0),
+            ]),
+            Desktop::new(vec![
+                display(0, 0, 1920, 1080, 1.0),
+                display(-2880, -300, 2880, 1620, 1.5),
+            ]),
+            Desktop::new(vec![
+                display(0, 0, 2880, 1620, 1.5),
+                display(400, -1080, 1920, 1080, 1.0),
+            ]),
+            Desktop::new(vec![
+                display(0, 0, 1920, 1080, 1.0),
+                display(1920, 0, 2880, 1620, 1.5),
+                display(4800, 0, 1920, 1080, 1.0),
             ]),
         ]
     }
 
+    /// Whether two displays meet along an edge in points as in pixels.
+    fn meet(desktop: &Desktop, a: &Display, b: &Display) -> bool {
+        let (ra, rb) = (desktop.whole(a), desktop.whole(b));
+        let near = |x: f64, y: f64| (x - y).abs() < 1e-9;
+        if a.whole.right == b.whole.left {
+            near(ra.right(), rb.x)
+        } else if a.whole.left == b.whole.right {
+            near(ra.x, rb.right())
+        } else if a.whole.bottom == b.whole.top {
+            near(ra.y, rb.top())
+        } else if a.whole.top == b.whole.bottom {
+            near(ra.top(), rb.y)
+        } else {
+            true
+        }
+    }
+
     #[test]
-    fn displays_meet_without_overlapping() {
+    fn displays_meet_without_gap_or_overlap() {
         for desktop in desktops() {
-            let [a, b] = [&desktop.displays[0], &desktop.displays[1]];
-            assert_eq!(desktop.whole(a).right(), desktop.whole(b).x);
-            // A pixel either side of the seam stays on its own display.
-            let seam = b.whole.left;
-            let left = desktop.point(POINT { x: seam - 1, y: 10 });
-            let right = desktop.point(POINT { x: seam, y: 10 });
-            assert!(left.0 < desktop.whole(b).x && right.0 >= desktop.whole(b).x);
+            for a in &desktop.displays {
+                for b in &desktop.displays {
+                    assert!(meet(&desktop, a, b), "{a:?} and {b:?}");
+                    if a.whole != b.whole {
+                        let (ra, rb) = (desktop.whole(a), desktop.whole(b));
+                        let overlap_x = ra.x.max(rb.x) < ra.right().min(rb.right()) - 1e-9;
+                        let overlap_y = ra.y.max(rb.y) < ra.top().min(rb.top()) - 1e-9;
+                        assert!(!(overlap_x && overlap_y), "{a:?} overlaps {b:?}");
+                    }
+                }
+            }
+            // A pixel either side of a seam stays on its own display.
+            for b in &desktop.displays[1..] {
+                let (x, y) = (b.whole.left, b.whole.top + 10);
+                let inside = desktop.point(POINT { x, y });
+                assert!(desktop.whole(b).x <= inside.0 && inside.0 < desktop.whole(b).right());
+            }
         }
     }
 
@@ -1122,28 +1244,30 @@ mod tests {
 
     #[test]
     fn whole_points_read_back_whole_at_fractional_scales() {
-        for scale in [1.25, 1.5, 1.75] {
-            let desktop = Desktop::new(vec![(
-                rect(0, 0, 2880, 1560),
-                rect(0, 0, 2880, 1620),
-                scale,
-            )]);
+        for (scale, height) in [(1.25, 1620), (1.5, 1620), (1.5, 1600), (1.75, 1620)] {
+            let desktop = Desktop::new(vec![display(0, 0, 2880, height, scale)]);
             for x in 95..110 {
-                let placed = Rect {
-                    x: x as f64,
-                    y: 301.0,
-                    w: 300.0,
-                    h: 52.0,
-                };
-                let pixels = desktop.to_pixels(placed);
-                assert_eq!(desktop.to_whole_points(pixels), placed, "x {x} at {scale}");
+                for (y, h) in [(301, 52), (300, 85), (299, 85), (120, 33)] {
+                    let placed = Rect {
+                        x: x as f64,
+                        y: y as f64,
+                        w: 300.0,
+                        h: h as f64,
+                    };
+                    let pixels = desktop.to_pixels(placed);
+                    assert_eq!(
+                        desktop.to_whole_points(pixels),
+                        placed,
+                        "x {x} y {y} h {h} at {scale}"
+                    );
+                }
             }
         }
     }
 
     #[test]
     fn y_counts_up_from_the_main_display_bottom() {
-        let [desktop, _] = desktops();
+        let desktop = &desktops()[0];
         let main = &desktop.displays[0];
         assert_eq!(desktop.whole(main).y, 0.0);
         let p = desktop.point(POINT { x: 10, y: 0 });
