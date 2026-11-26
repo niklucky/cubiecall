@@ -1,9 +1,13 @@
 //! Sparkle is embedded in packaged Mac builds and manages its own update UI.
 
-use std::cell::OnceCell;
+use std::{
+    cell::{Cell, OnceCell, RefCell},
+    rc::Rc,
+    time::Duration,
+};
 
 use anyhow::{Context as _, Result};
-use gpui::App;
+use gpui::{App, AsyncApp, Task};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyClass, AnyObject, Bool};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
@@ -12,20 +16,29 @@ use objc2_foundation::{NSBundle, NSMutableURLRequest, NSObject, NSString, NSURL}
 
 use crate::auth::{CUBIE, PRIMARY};
 
+struct UpdateState {
+    feed: String,
+    app: AsyncApp,
+    origin: Rc<Cell<&'static str>>,
+    scheduled_probe: RefCell<Option<Task<()>>>,
+    checking: Rc<Cell<bool>>,
+}
+
 define_class!(
     // SAFETY: NSObject has no subclassing requirements. Sparkle calls its
     // updater delegate on the main thread.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "CubieUpdateDelegate"]
-    #[ivars = String]
+    #[ivars = UpdateState]
     struct UpdateDelegate;
 
     impl UpdateDelegate {
         #[unsafe(method_id(feedURLStringForUpdater:))]
         fn feed_url(&self, _updater: &AnyObject) -> Retained<NSString> {
-            let url = update_url(self.ivars(), CUBIE.origin());
-            NSString::from_str(url.as_deref().unwrap_or(self.ivars()))
+            let state = self.ivars();
+            let url = update_url(&state.feed, state.origin.get());
+            NSString::from_str(url.as_deref().unwrap_or(&state.feed))
         }
 
         #[unsafe(method(updater:willDownloadUpdate:withRequest:))]
@@ -38,11 +51,62 @@ define_class!(
             let Some(current) = request.URL().and_then(|url| url.absoluteString()) else {
                 return;
             };
-            if let Some(url) = update_url(&current.to_string(), CUBIE.origin())
+            if let Some(url) = update_url(&current.to_string(), self.ivars().origin.get())
                 && let Some(url) = NSURL::URLWithString(&NSString::from_str(&url))
             {
                 request.setURL(Some(&url));
             }
+        }
+
+        #[unsafe(method(updater:willScheduleUpdateCheckAfterDelay:))]
+        fn schedule_probe(&self, _updater: &AnyObject, delay: f64) {
+            let state = self.ivars();
+            let origin = state.origin.clone();
+            // A probe can take up to six seconds. Give it time to finish
+            // before Sparkle's timer fires, including when the Mac is signed out.
+            let delay = Duration::try_from_secs_f64((delay - 8.0).max(0.0)).unwrap_or_default();
+            state.scheduled_probe.replace(Some(state.app.spawn(async move |cx| {
+                cx.background_executor().timer(delay).await;
+                origin.set(CUBIE.reachable_origin(origin.get()).await);
+            })));
+        }
+
+        #[unsafe(method(updaterWillNotScheduleUpdateCheck:))]
+        fn cancel_probe(&self, _updater: &AnyObject) {
+            self.ivars().scheduled_probe.replace(None);
+        }
+
+        #[unsafe(method(validateMenuItem:))]
+        fn validate_menu_item(&self, item: &NSMenuItem) -> Bool {
+            if self.ivars().checking.get() {
+                return Bool::NO;
+            }
+            UPDATER.with(|updater| {
+                updater.get().map_or(Bool::NO, |(controller, _)| {
+                    // SAFETY: Sparkle's controller validates this same menu action.
+                    unsafe { msg_send![&**controller, validateMenuItem: item] }
+                })
+            })
+        }
+
+        #[unsafe(method(checkForUpdates:))]
+        fn check_for_updates(&self, _sender: &NSMenuItem) {
+            let state = self.ivars();
+            if state.checking.replace(true) {
+                return;
+            }
+            let origin = state.origin.clone();
+            let checking = state.checking.clone();
+            state.app.spawn(async move |_| {
+                origin.set(CUBIE.reachable_origin(origin.get()).await);
+                checking.set(false);
+                UPDATER.with(|updater| {
+                    if let Some((controller, _)) = updater.get() {
+                        // SAFETY: Invoke Sparkle's original menu action on the main thread.
+                        let _: () = unsafe { msg_send![&**controller, checkForUpdates: None::<&AnyObject>] };
+                    }
+                });
+            }).detach();
         }
     }
 );
@@ -70,17 +134,20 @@ pub fn start(cx: &mut App) {
     cx.spawn(async move |cx| {
         // Even a signed-out Mac checks which host it can reach before
         // Sparkle makes its first feed request.
-        CUBIE.probe().await;
-        cx.update(|_| {
-            if let Err(error) = start_updater(&NSBundle::mainBundle(), feed) {
-                tracing::warn!("starting software updates: {error:#}");
-            }
-        });
+        let origin = CUBIE.reachable_origin(CUBIE.origin()).await;
+        if let Err(error) = start_updater(&NSBundle::mainBundle(), feed, origin, cx.clone()) {
+            tracing::warn!("starting software updates: {error:#}");
+        }
     })
     .detach();
 }
 
-fn start_updater(bundle: &NSBundle, feed: String) -> Result<()> {
+fn start_updater(
+    bundle: &NSBundle,
+    feed: String,
+    origin: &'static str,
+    app: AsyncApp,
+) -> Result<()> {
     let mtm = MainThreadMarker::new().context("Sparkle must run on the main thread")?;
     let frameworks = bundle
         .privateFrameworksPath()
@@ -92,7 +159,13 @@ fn start_updater(bundle: &NSBundle, feed: String) -> Result<()> {
         .map_err(|error| anyhow::anyhow!("load Sparkle.framework: {error}"))?;
     let class = AnyClass::get(c"SPUStandardUpdaterController")
         .context("missing Sparkle updater controller class")?;
-    let delegate = UpdateDelegate::alloc(mtm).set_ivars(feed);
+    let delegate = UpdateDelegate::alloc(mtm).set_ivars(UpdateState {
+        feed,
+        app,
+        origin: Rc::new(Cell::new(origin)),
+        scheduled_probe: RefCell::new(None),
+        checking: Rc::new(Cell::new(false)),
+    });
     // SAFETY: NSObject's plain init.
     let delegate: Retained<UpdateDelegate> = unsafe { msg_send![super(delegate), init] };
     // SAFETY: These selectors and types match Sparkle's public Objective-C API.
@@ -107,12 +180,12 @@ fn start_updater(bundle: &NSBundle, feed: String) -> Result<()> {
     };
     let controller = controller.context("could not initialize Sparkle updater controller")?;
     UPDATER.with(|updater| {
-        let (controller, _) = updater.get_or_init(|| (controller, delegate));
+        let (_, delegate) = updater.get_or_init(|| (controller, delegate));
         let item = NSMenuItem::new(mtm);
         item.setTitle(&NSString::from_str("Check for Updates…"));
-        // SAFETY: Sparkle's controller implements this action and stays retained in UPDATER.
+        // SAFETY: The delegate implements the action and stays retained in UPDATER.
         unsafe {
-            item.setTarget(Some(controller));
+            item.setTarget(Some(delegate));
             item.setAction(Some(sel!(checkForUpdates:)));
         }
         app_menu(mtm).insertItem_atIndex(&item, 0);

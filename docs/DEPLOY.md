@@ -66,7 +66,7 @@ On a replacement edge, install nginx and Certbot. Create `/var/www/cubie-acme`, 
 
 Run `make deploy` from the reviewed branch before merging its first API failover release or publishing its Mac build. The installer loads the origin nginx config before starting the updated API. CI updates the API and web app on a merge to `main`. Apply the edge nginx config separately.
 
-The production Mac app probes `cubiecall.com` first and switches to `cubiecall.ru` if needed. While on the reserve, it rechecks the primary on the next API request after a one-minute interval. Sparkle uses the selected domain for the signed feed and archive. Macs with an older version can update by downloading the ZIP from the reserve site or using the reserve Terminal command there. Audio and video still use LiveKit's ICE media ports on the origin. Networks that block those ports or the origin IP also need a TURN relay they can reach.
+The production Mac app probes `cubiecall.com` first and switches to `cubiecall.ru` if needed. While on the reserve, it starts a background primary check on the next API request after a one-minute interval. Sparkle refreshes its route for manual and scheduled checks and uses the selected domain for the signed feed and archive. Macs with an older version can update by downloading the ZIP from the reserve site or using its Terminal installer, which verifies the Cubie Developer ID signature. Audio and video still use LiveKit's ICE media ports on the origin. Networks that block those ports or the origin IP also need a TURN relay they can reach.
 
 ## How `make deploy` works
 
